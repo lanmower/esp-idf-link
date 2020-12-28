@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -e
 
+CODE_PATH="$1"
+
 . $IDF_PATH/export.sh
 
-cd {path}
+cd "${CODE_PATH}"
 
 idf.py build
