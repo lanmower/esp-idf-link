@@ -3,6 +3,10 @@ description: "This action build your firmware directly in github using Espressif
 branding:
   color: blue
   icon: check
+inputs:
+  path:
+    description: 'Relative path under $GITHUB_WORKSPACE to place the repository'
+    default: ''
 runs:
   using: "docker"
   image: "Dockerfile"
