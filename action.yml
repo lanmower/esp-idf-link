@@ -7,12 +7,8 @@ inputs:
   path:
     description: 'Relative path under $GITHUB_WORKSPACE to place the repository'
     default: ''
-  idfVersion:
-    description: 'ESP-IDF version tag of Docker image. E.g. latest, v4.2.1, release-v4.3'
-    default: 'docker://espressif/idf:latest'
 runs:
-  using: "docker"
-  image: ${{ inputs.idfVersion }}
+  image: 'docker://espressif/idf:latest'
   entrypoint: 'entrypoint.sh'
   args:
     - ${{ inputs.path }}
