@@ -8,6 +8,7 @@ inputs:
     description: 'Relative path under $GITHUB_WORKSPACE to place the repository'
     default: ''
 runs:
+  using: 'docker'
   image: 'docker://espressif/idf:latest'
   entrypoint: 'entrypoint.sh'
   args:
