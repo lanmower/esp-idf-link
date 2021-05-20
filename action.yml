@@ -10,6 +10,5 @@ inputs:
 runs:
   using: 'docker'
   image: 'Dockerfile'
-  entrypoint: 'CODE_PATH="$1"; . $IDF_PATH/export.sh; cd "${CODE_PATH}"; idf.py build'
   args:
     - ${{ inputs.path }}
