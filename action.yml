@@ -9,10 +9,10 @@ inputs:
     default: ''
   idfVersion:
     description: 'ESP-IDF version tag of Docker image. E.g. latest, v4.2.1, release-v4.3'
-    default: 'latest'
+    default: 'docker://espressif/idf:latest'
 runs:
   using: "docker"
-  image: 'docker://espressif/idf:${{ inputs.idfVersion }}'
+  image: ${{ inputs.idfVersion }}
   entrypoint: 'entrypoint.sh'
   args:
     - ${{ inputs.path }}
