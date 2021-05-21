@@ -1,5 +1,5 @@
-name: "espressif idf build"
-description: "This action build your firmware directly in github using Espressif idf SDK."
+name: "ESP-IDF build"
+description: "This action build your firmware for ESP32 directly in GitHub using Espressif ESP-IDF."
 branding:
   color: blue
   icon: check
