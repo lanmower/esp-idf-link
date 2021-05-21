@@ -6,16 +6,15 @@ param (
     $IdfTag
 )
 
+$IdfBranch = "branch-${IdfTag}"
+
 git checkout master
-git checkout -b "${IdfTag}"
+git checkout -b "${IdfBranch}"
 sed -i "1s!.*!FROM espressif/idf:${IdfTag}!" Dockerfile
 git add Dockerfile
-git commit -m "tools: add GitHub action for ESP-IDF ${IdfTag}"
-
-# Note: It's sufficient to define branch for GitHub action to pick correct @ref.
-# Having branch and tag name same leads to ambiguous ref
-#git tag "${IdfTag}"
-
-git push --set-upstream origin "${IdfTag}"
+git commit -m "tools: add GitHub action for ESP-IDF ${IdfBranch}"
+git tag "${IdfTag}"
+git push --set-upstream origin "${IdfBranch}"
 git push
+git push --tags
 git checkout master
