@@ -68,8 +68,8 @@ More information about supported versions of ESP-IDF: https://docs.espressif.com
 
 ## Add a new Docker tag for the action
 
-Docker image tags from https://hub.docker.com/r/espressif/idf/tags can be represented as a branch.
-It's sufficient to have just a branch name for GitHub action to recognize @ref.
+Docker image tags from https://hub.docker.com/r/espressif/idf/tags.
+Each Docker tag is stored in branch with prefix "branch-" and has tag same as in Docker.
 
 The new branch can be added by following the PowerShell script:
 
