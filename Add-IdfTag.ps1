@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param (
-    [Parameter(Mandatory=$true,
-    HelpMessage="Specify ESP-IDF tag name to create branch and tag of the action, tags should match https://hub.docker.com/r/espressif/idf/tags")]
+    [Parameter(Mandatory = $true,
+        HelpMessage = "Specify ESP-IDF tag name to create branch and tag of the action, tags should match https://hub.docker.com/r/espressif/idf/tags")]
     [String]
     $IdfTag
 )
@@ -17,4 +17,4 @@ git tag "${IdfTag}"
 git push --set-upstream origin "${IdfBranch}"
 git push
 git push --tags
-git checkout master
+git checkout main
