@@ -43,13 +43,19 @@ List based on: https://hub.docker.com/r/espressif/idf/tags
 
 ```
 latest
+release-v4.4
 release-v4.3
 release-v4.2
 release-v4.1
 release-v4.0
 release-v3.3
+v4.3.2
+v4.3.1
+v4.3
+v4.2.2
 v4.2.1
 v4.2
+v4.1.2
 v4.1.1
 v4.1
 v4.0.2
