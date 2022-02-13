@@ -18,62 +18,22 @@ jobs:
       with:
         submodules: 'recursive'
     - name: esp-idf build
-      uses: espressif/esp-idf-ci-action@latest
+      uses: espressif/esp-idf-ci-action@main
       with:
+        esp_idf_version: v4.4
         path: 'esp32-s2-hmi-devkit-1/examples/smart-panel'
 ```
 
-## How to specify a custom version of ESP-IDF
+## Parameters
 
-GitHub does not support the specification of the Docker image tag as a variable.
-It's the official limitation. To select the specific version of ESP-IDF you
-can reference a specific version of GitHub action:
+### `path`
 
-```
-uses: espressif/esp-idf-ci-action@latest
-uses: espressif/esp-idf-ci-action@4.2.1
-uses: espressif/esp-idf-ci-action@release-v4.3
-```
+Path to the project to be built
 
-Each of the tags marks the corresponding branch of this repository.
+### `esp_idf_version`
 
-## List of available tags
+The version of ESP-IDF for the action. Default value `latest`.
 
-List based on: https://hub.docker.com/r/espressif/idf/tags
-
-```
-latest
-release-v4.4
-release-v4.3
-release-v4.2
-release-v4.1
-release-v4.0
-release-v3.3
-v4.3.2
-v4.3.1
-v4.3
-v4.2.2
-v4.2.1
-v4.2
-v4.1.2
-v4.1.1
-v4.1
-v4.0.2
-v3.3.4
-v3.3.3
-v3.3.2
-v3.3.1
-```
+It must be one of the tags from Docker Hub: https://hub.docker.com/r/espressif/idf/tags
 
 More information about supported versions of ESP-IDF: https://docs.espressif.com/projects/esp-idf/en/latest/esp32/versions.html#support-periods
-
-## Add a new Docker tag for the action
-
-Docker image tags from https://hub.docker.com/r/espressif/idf/tags.
-Each Docker tag is stored in branch with prefix "branch-" and has tag same as in Docker.
-
-The new branch can be added by following the PowerShell script:
-
-```
-./Add-IdfTag.ps1 -IdfTag "v3.3.3"
-```
