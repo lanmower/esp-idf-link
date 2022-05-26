@@ -18,12 +18,16 @@ jobs:
       with:
         submodules: 'recursive'
     - name: esp-idf build
-      uses: espressif/esp-idf-ci-action@main
+      uses: espressif/esp-idf-ci-action@v1
       with:
         esp_idf_version: v4.4
         target: esp32s2
         path: 'esp32-s2-hmi-devkit-1/examples/smart-panel'
 ```
+
+## Version
+
+We recommend referencing this action as `espressif/esp-idf-ci-action@v1` and using `v1` instead of `main` to avoid breaking your workflows. `v1` tag always points to the latest compatible release.
 
 ## Parameters
 
@@ -54,5 +58,5 @@ Default: `idf.py build`
 Overriding this is useful for running other commands via github actions. Example:
 
 ```yaml
-   command: esptool.py merge_bin -o ../your_final_output.bin @flash_args
+command: esptool.py merge_bin -o ../your_final_output.bin @flash_args
 ```
