@@ -33,7 +33,7 @@ We recommend referencing this action as `espressif/esp-idf-ci-action@v1` and usi
 
 ### `path`
 
-Path to the project to be built
+Path to the project to be built relative to the root of your repository.
 
 ### `esp_idf_version`
 
