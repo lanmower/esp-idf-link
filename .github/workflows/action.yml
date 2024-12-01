@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Build Firmware
-        uses: ./.github/actions/espidf  # Path to your action
+        uses: ./.github/actions/espidf-build  # Path to your action
         with:
           path: 'link-esp-example'  # Update as needed
           esp_idf_version: 'v4.4.4'
