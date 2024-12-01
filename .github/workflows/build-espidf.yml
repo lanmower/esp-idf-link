@@ -1,0 +1,28 @@
+# .github/workflows/build-espidf.yml
+name: Build ESP32 Firmware
+
+on:
+  push:
+    branches:
+      - v1  # Specify the branch or branches you want to trigger on push
+  pull_request:
+    branches:
+      - v1  # Specify the branch or branches you want to trigger on pull requests
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Build Firmware
+        uses: ./.github/actions/espidf  # Path to your composite action
+        with:
+          path: 'link-esp-example'  # Update as needed
+          esp_idf_version: 'v4.4.4'
+          esp_idf_docker_image: 'espressif/idf'
+          extra_docker_args: ''       # Optional: add other Docker args if needed
+          target: 'esp32'             # Specify your target here
+          command: 'idf.py build'     # Command to run if different
