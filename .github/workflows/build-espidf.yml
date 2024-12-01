@@ -4,10 +4,10 @@ name: Build ESP32 Firmware
 on:
   push:
     branches:
-      - main  # Specify the branch or branches you want to trigger on push
+      - v1  # Specify the branch or branches you want to trigger on push
   pull_request:
     branches:
-      - main  # Specify the branch or branches you want to trigger on pull requests
+      - v1  # Specify the branch or branches you want to trigger on pull requests
 
 jobs:
   build:
