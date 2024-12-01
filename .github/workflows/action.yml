@@ -28,6 +28,7 @@ inputs:
     description: "Command to run inside the docker container (default: builds the project)"
     default: "idf.py build"
     required: false
+    
 runs:
   using: "composite"
   steps:
