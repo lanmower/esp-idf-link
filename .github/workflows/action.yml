@@ -1,27 +1,45 @@
-name: Build ESP32 Firmware
+# .github/actions/espidf/action.yml
+name: "Espressif IoT Development Framework (ESP-IDF)"
+description: "This action builds your firmware for ESP32 directly in GitHub using Espressif ESP-IDF Docker image."
+branding:
+  color: red
+  icon: wifi
+inputs:
+  path:
+    description: "Relative path under $GITHUB_WORKSPACE to place the repository"
+    default: "link-esp-example"
+    required: false
+  esp_idf_version:
+    description: "Version of ESP-IDF docker image to use"
+    default: "v4.4.4"
+    required: false
+  esp_idf_docker_image:
+    description: "Docker Repository to obtain the ESP-IDF image from"
+    default: "espressif/idf"
+    required: false
+  extra_docker_args:
+    description: "Additional arguments to pass to the docker run command"
+    default: ""
+    required: false
+  target:
+    description: "ESP32 variant to build for"
+    default: "esp32"
+    required: false
+  command:
+    description: "Command to run inside the docker container (default: builds the project)"
+    default: "idf.py build"
+    required: false
 
-on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-
-      - name: Build Firmware
-        uses: ./.github/actions/espidf-build.yaml  # Path to your action
-        with:
-          path: 'link-esp-example'  # Update as needed
-          esp_idf_version: 'v4.4.4'
-          esp_idf_docker_image: 'espressif/idf'
-          extra_docker_args: ''       # Optional: add other Docker args if needed
-          target: 'esp32'             # Specify your target here
-          command: 'idf.py build'     # Command to run if different
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        export IDF_TARGET=$(echo "${{ inputs.target }}" | tr '[:upper:]' '[:lower:]' | tr -d '_-')
+        docker run -t \
+        -e IDF_TARGET="${IDF_TARGET}" \
+        -v "${GITHUB_WORKSPACE}:/app/${{ github.repository }}" \
+        -w "/app/${{ github.repository }}/${{ inputs.path }}" \
+        ${{ inputs.extra_docker_args }} \
+        ${{ inputs.esp_idf_docker_image }}:${{ inputs.esp_idf_version }} \
+        /bin/bash -c 'git config --global --add safe.directory "*" && ${{ inputs.command }}'
+      shell: bash
