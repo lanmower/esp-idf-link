@@ -42,3 +42,11 @@ runs:
         ${{ inputs.esp_idf_docker_image }}:${{ inputs.esp_idf_version }} \
         /bin/bash -c 'git config --global --add safe.directory "*" && ${{ inputs.command }}'
       shell: bash
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
