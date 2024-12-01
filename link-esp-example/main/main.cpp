@@ -28,8 +28,7 @@ void IRAM_ATTR timer_group0_isr(void *userParam) {
   timer_group_clr_intr_status_in_isr(TIMER_GROUP_0, TIMER_0);
   timer_group_enable_alarm_in_isr(TIMER_GROUP_0, TIMER_0);
 
-  vTaskNotifyGiveFromIS
-  R(userParam, &xHigherPriorityTaskWoken);
+  vTaskNotifyGiveFromISR(userParam, &xHigherPriorityTaskWoken);
   if (xHigherPriorityTaskWoken) {
     portYIELD_FROM_ISR();
   }
@@ -51,12 +50,14 @@ void printTask(void *userParam) {
 }
 
 void timerGroup0Init(int timerPeriodUS, void *userParam) {
-  timer_config_t config = {.alarm_en = TIMER_ALARM_EN,
-                           .counter_en = TIMER_PAUSE,
-                           .intr_type = TIMER_INTR_LEVEL,
-                           .counter_dir = TIMER_COUNT_UP,
-                           .auto_reload = TIMER_AUTORELOAD_EN,
-                           .divider = 80};
+  timer_config_t config = {
+      .alarm_en = TIMER_ALARM_EN,
+      .counter_en = TIMER_PAUSE,
+      .intr_type = TIMER_INTR_LEVEL,
+      .counter_dir = TIMER_COUNT_UP,
+      .auto_reload = TIMER_AUTORELOAD_EN,
+      .divider = 80
+  };
 
   timer_init(TIMER_GROUP_0, TIMER_0, &config);
   timer_set_counter_value(TIMER_GROUP_0, TIMER_0, 0);
@@ -101,8 +102,6 @@ void tickTask(void *userParam) {
   while (true) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     const auto state = link.captureAudioSessionState();
-    const int beats =
-        std::floor(state.beatAtTime(link.clock().micros(), 1.)); // Calculate beats
     const int mticks =
         std::floor(state.beatAtTime(link.clock().micros(), 1.) * 2400);
     const int ticks =
@@ -133,10 +132,9 @@ void tickTask(void *userParam) {
       }
       uint8_t data[1] = {0xf8};
       #ifdef USB_MIDI
-        uint8_t data[4] = {0x0f, 0xf8, 0x00, 0x00};
-        uart_write_bytes(UART_PORT, (char *)data, 4);
+        uint8_t dataUsb[4] = {0x0f, 0xf8, 0x00, 0x00};
+        uart_write_bytes(UART_PORT, (char *)dataUsb, 4);
       #else
-        uint8_t data[1] = {0xf8};
         uart_write_bytes(UART_PORT, (char *)data, 1);
       #endif
     }
