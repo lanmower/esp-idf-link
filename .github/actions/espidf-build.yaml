@@ -1,3 +1,4 @@
+# .github/actions/espidf/action.yml
 name: "Espressif IoT Development Framework (ESP-IDF)"
 description: "This action builds your firmware for ESP32 directly in GitHub using Espressif ESP-IDF Docker image."
 branding:
