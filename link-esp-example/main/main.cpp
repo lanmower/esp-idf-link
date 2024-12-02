@@ -7,6 +7,7 @@
 #include <freertos/task.h>
 #include <nvs_flash.h>
 #include <protocol_examples_common.h>
+#include <esp_log.h>
 
 #include <ableton/Link.hpp>
 
@@ -16,11 +17,16 @@
 #define BUZZER GPIO_NUM_4 // Define the pin for the buzzer
 #define PRINT_LINK_STATE false
 
-#define UART_PORT UART_NUM_2
-#define TX_PIN 17  // Changed to use pin D1 (GPIO 17)
-#define RX_PIN 16  // Changed to use pin D2 (GPIO 16)
+#define USB_UART UART_NUM_0   // USB UART
+#define MIDI_UART UART_NUM_2  // Hardware MIDI UART
+#define USB_TX_PIN GPIO_NUM_1  // TXD0
+#define USB_RX_PIN GPIO_NUM_3  // RXD0
+#define MIDI_TX_PIN GPIO_NUM_17
+#define MIDI_RX_PIN GPIO_NUM_16
 #define USB_MIDI true
 #define LINK_TICK_PERIOD 100
+
+static const char *TAG = "LINK_APP";
 
 void IRAM_ATTR timer_group0_isr(void *userParam) {
   static BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -51,32 +57,31 @@ void printTask(void *userParam) {
 
 void timerGroup0Init(int timerPeriodUS, void *userParam) {
   timer_config_t config = {
-      .alarm_en = TIMER_ALARM_EN,
-      .counter_en = TIMER_PAUSE,
-      .intr_type = TIMER_INTR_LEVEL,
-      .counter_dir = TIMER_COUNT_UP,
-      .auto_reload = TIMER_AUTORELOAD_EN,
-      .divider = 80
+    .alarm_en = TIMER_ALARM_EN,
+    .counter_en = TIMER_PAUSE,
+    .intr_type = TIMER_INTR_LEVEL,
+    .counter_dir = TIMER_COUNT_UP,
+    .auto_reload = TIMER_AUTORELOAD_EN,
+    .divider = 80
   };
 
   timer_init(TIMER_GROUP_0, TIMER_0, &config);
   timer_set_counter_value(TIMER_GROUP_0, TIMER_0, 0);
   timer_set_alarm_value(TIMER_GROUP_0, TIMER_0, timerPeriodUS);
   timer_enable_intr(TIMER_GROUP_0, TIMER_0);
-  timer_isr_register(TIMER_GROUP_0, TIMER_0, &timer_group0_isr, userParam, 0,
-                     nullptr);
+  timer_isr_register(TIMER_GROUP_0, TIMER_0, &timer_group0_isr, userParam, 0, nullptr);
 
   timer_start(TIMER_GROUP_0, TIMER_0);
 }
 
 void initUartPort(uart_port_t port, int txPin, int rxPin) {
   uart_config_t uart_config = {
-      .baud_rate = 31250,
-      .data_bits = UART_DATA_8_BITS,
-      .parity = UART_PARITY_DISABLE,
-      .stop_bits = UART_STOP_BITS_1,
-      .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-      .rx_flow_ctrl_thresh = 122,
+    .baud_rate = 31250,
+    .data_bits = UART_DATA_8_BITS,
+    .parity = UART_PARITY_DISABLE,
+    .stop_bits = UART_STOP_BITS_1,
+    .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+    .rx_flow_ctrl_thresh = 122,
   };
 
   uart_param_config(port, &uart_config);
@@ -85,58 +90,98 @@ void initUartPort(uart_port_t port, int txPin, int rxPin) {
 }
 
 void tickTask(void *userParam) {
+  ESP_LOGI(TAG, "Initializing Ableton Link...");
   ableton::Link link(120.0f);
   link.enable(true);
 
-  initUartPort(UART_PORT, TX_PIN, RX_PIN);
+  ESP_LOGI(TAG, "Setting up UART...");
+  initUartPort(USB_UART, USB_TX_PIN, USB_RX_PIN);
+  initUartPort(MIDI_UART, MIDI_TX_PIN, MIDI_RX_PIN);
 
+  ESP_LOGI(TAG, "Initializing timer...");
   timerGroup0Init(LINK_TICK_PERIOD, xTaskGetCurrentTaskHandle());
 
   if (PRINT_LINK_STATE) {
     xTaskCreate(printTask, "print", 8192, &link, 1, nullptr);
   }
 
-  gpio_set_direction(LED, GPIO_MODE_OUTPUT); // Set LED pin as output
-  gpio_set_direction(BUZZER, GPIO_MODE_OUTPUT); // Set buzzer pin as output
+  gpio_set_direction(LED, GPIO_MODE_OUTPUT);
+  gpio_set_direction(BUZZER, GPIO_MODE_OUTPUT);
+
+  ESP_LOGI(TAG, "Waiting for Link peers...");
+  bool was_connected = false;
 
   while (true) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    
+    // Check peer status
+    bool is_connected = link.numPeers() > 0;
+    if (is_connected != was_connected) {
+      if (is_connected) {
+        ESP_LOGI(TAG, "Link peer connected!");
+      } else {
+        ESP_LOGI(TAG, "Link peer disconnected");
+      }
+      was_connected = is_connected;
+    }
+
     const auto state = link.captureAudioSessionState();
-    const int mticks =
-        std::floor(state.beatAtTime(link.clock().micros(), 1.) * 2400);
-    const int ticks =
-        std::floor(state.beatAtTime(link.clock().micros(), 1.) * 24);
+    const int beats = std::floor(state.beatAtTime(link.clock().micros(), 1.));
+    const int mticks = std::floor(state.beatAtTime(link.clock().micros(), 1.) * 2400);
+    const int ticks = std::floor(state.beatAtTime(link.clock().micros(), 1.) * 24);
     static int lastTicks;
     const auto phase = state.phaseAtTime(link.clock().micros(), 64.);
     static int length = 1;
-    length = (fmodf(phase, 4.) <= 0.1) ? 20 : length; // Set length based on phase
-    length = (fmodf(phase, 8.) <= 0.1) ? 50 : length; // Set length based on phase
-    length = (fmodf(phase, 16.) <= 0.1) ? 80 : length; // Set length based on phase
-    length = (fmodf(phase, 32.) <= 0.1) ? 120 : length; // Set length based on phase
-    length = (fmodf(phase, 4.) > 0.1) ? 2 : length; // Set length based on phase
-    gpio_set_level(LED, (mticks % 2400) < length); // Turn LED on
-    gpio_set_level(BUZZER, (mticks % 2400) < length); // Turn buzzer on
     
-    if (ticks > lastTicks) { // Compare with ticks derived from beats
-
-      if(mticks % 24 == 0 && fmodf(phase, 16.) <= 0.1) {
-        uint8_t data[1] = {0xfa};
-        uart_write_bytes(UART_PORT, (char *)data, 1);
-
-        uint8_t sppData[3]; // Array to hold SPP message
-        sppData[0] = 0xF2; // MIDI SPP command
-        int positionInBeats = 0;
-        sppData[1] = (positionInBeats & 0x7F); // Lower 7 bits of the position
-        sppData[2] = (positionInBeats >> 7) & 0x7F; // Upper 7 bits of the position
-        uart_write_bytes(UART_PORT, (char *)sppData, 3); // Send SPP message
+    if (is_connected) {
+      length = (fmodf(phase, 4.) <= 0.1) ? 20 : length;
+      length = (fmodf(phase, 8.) <= 0.1) ? 50 : length;
+      length = (fmodf(phase, 16.) <= 0.1) ? 80 : length;
+      length = (fmodf(phase, 32.) <= 0.1) ? 120 : length;
+      length = (fmodf(phase, 4.) > 0.1) ? 2 : length;
+      gpio_set_level(LED, (mticks % 2400) < length);
+      gpio_set_level(BUZZER, (mticks % 2400) < length);
+      
+      static bool was_playing = false;
+      bool is_playing = state.isPlaying();
+      
+      // Send MIDI Stop/Continue when play state changes
+      if (was_playing != is_playing) {
+        uint8_t status = is_playing ? 0xFB : 0xFC; // 0xFB = Continue, 0xFC = Stop
+        uint8_t data[1] = {status};
+        uart_write_bytes(USB_UART, (char *)data, 1);
+        uart_write_bytes(MIDI_UART, (char *)data, 1);
+        was_playing = is_playing;
       }
-      uint8_t data[1] = {0xf8};
-      #ifdef USB_MIDI
-        uint8_t dataUsb[4] = {0x0f, 0xf8, 0x00, 0x00};
-        uart_write_bytes(UART_PORT, (char *)dataUsb, 4);
-      #else
-        uart_write_bytes(UART_PORT, (char *)data, 1);
-      #endif
+      
+      if (ticks > lastTicks) {
+        if(mticks % 24 == 0 && fmodf(phase, 16.) <= 0.1) {
+          uint8_t data[1] = {0xfa};
+          uart_write_bytes(USB_UART, (char *)data, 1);
+          uart_write_bytes(MIDI_UART, (char *)data, 1);
+
+          uint8_t sppData[3];
+          sppData[0] = 0xF2;
+          int positionInBeats = 0;
+          sppData[1] = (positionInBeats & 0x7F);
+          sppData[2] = (positionInBeats >> 7) & 0x7F;
+          uart_write_bytes(USB_UART, (char *)sppData, 3);
+          uart_write_bytes(MIDI_UART, (char *)sppData, 3);
+        }
+        
+        #ifdef USB_MIDI
+          uint8_t data[4] = {0x0f, 0xf8, 0x00, 0x00};
+          uart_write_bytes(USB_UART, (char *)data, 4);
+          uart_write_bytes(MIDI_UART, (char *)data, 4);
+        #else
+          uint8_t data[1] = {0xf8};
+          uart_write_bytes(USB_UART, (char *)data, 1);
+          uart_write_bytes(MIDI_UART, (char *)data, 1);
+        #endif
+      }
+    } else {
+      gpio_set_level(LED, 0);
+      gpio_set_level(BUZZER, 0);
     }
     lastTicks = ticks;
   }
