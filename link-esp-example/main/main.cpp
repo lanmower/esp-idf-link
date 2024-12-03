@@ -110,12 +110,19 @@ void tickTask(void *userParam) {
 
   ESP_LOGI(TAG, "Waiting for Link peers...");
   bool was_connected = false;
+  int64_t start_wait_time = esp_timer_get_time();
+  bool force_start = false;
 
   while (true) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     
     // Check peer status
     bool is_connected = link.numPeers() > 0;
+    if (!is_connected && !force_start && (esp_timer_get_time() - start_wait_time >= 60000000)) {  // 60 seconds in microseconds
+      ESP_LOGI(TAG, "No peers found after 1 minute, starting anyway");
+      force_start = true;
+    }
+    
     if (is_connected != was_connected) {
       if (is_connected) {
         ESP_LOGI(TAG, "Link peer connected!");
@@ -133,7 +140,7 @@ void tickTask(void *userParam) {
     const auto phase = state.phaseAtTime(link.clock().micros(), 64.);
     static int length = 1;
     
-    if (is_connected) {
+    if (is_connected || force_start) {
       length = (fmodf(phase, 4.) <= 0.1) ? 20 : length;
       length = (fmodf(phase, 8.) <= 0.1) ? 50 : length;
       length = (fmodf(phase, 16.) <= 0.1) ? 80 : length;
@@ -155,7 +162,8 @@ void tickTask(void *userParam) {
       }
       
       if (ticks > lastTicks) {
-        if(mticks % 24 == 0 && fmodf(phase, 16.) <= 0.1) {
+        // Only send start and position messages exactly at the phase boundary
+        if(mticks % 24 == 0 && phase < 0.1 && fmodf(phase, 16.) <= 0.1) {
           uint8_t data[1] = {0xfa};
           uart_write_bytes(USB_UART, (char *)data, 1);
           uart_write_bytes(MIDI_UART, (char *)data, 1);
@@ -169,15 +177,18 @@ void tickTask(void *userParam) {
           uart_write_bytes(MIDI_UART, (char *)sppData, 3);
         }
         
-        #ifdef USB_MIDI
-          uint8_t data[4] = {0x0f, 0xf8, 0x00, 0x00};
-          uart_write_bytes(USB_UART, (char *)data, 4);
-          uart_write_bytes(MIDI_UART, (char *)data, 4);
-        #else
-          uint8_t data[1] = {0xf8};
-          uart_write_bytes(USB_UART, (char *)data, 1);
-          uart_write_bytes(MIDI_UART, (char *)data, 1);
-        #endif
+        // Ensure we only send timing clock if we haven't just sent a start message
+        else if (phase >= 0.1 || fmodf(phase, 16.) > 0.1) {
+          #ifdef USB_MIDI
+            uint8_t data[4] = {0x0f, 0xf8, 0x00, 0x00};
+            uart_write_bytes(USB_UART, (char *)data, 4);
+            uart_write_bytes(MIDI_UART, (char *)data, 4);
+          #else
+            uint8_t data[1] = {0xf8};
+            uart_write_bytes(USB_UART, (char *)data, 1);
+            uart_write_bytes(MIDI_UART, (char *)data, 1);
+          #endif
+        }
       }
     } else {
       gpio_set_level(LED, 0);
