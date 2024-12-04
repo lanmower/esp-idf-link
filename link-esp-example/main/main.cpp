@@ -62,21 +62,23 @@ void timerGroup0Init(int timerPeriodUS, void *userParam) {
     .intr_type = TIMER_INTR_LEVEL,
     .counter_dir = TIMER_COUNT_UP,
     .auto_reload = TIMER_AUTORELOAD_EN,
-    .divider = 80
+    .divider = 80  // A more stable value that still provides good precision
   };
 
   timer_init(TIMER_GROUP_0, TIMER_0, &config);
   timer_set_counter_value(TIMER_GROUP_0, TIMER_0, 0);
   timer_set_alarm_value(TIMER_GROUP_0, TIMER_0, timerPeriodUS);
   timer_enable_intr(TIMER_GROUP_0, TIMER_0);
-  timer_isr_register(TIMER_GROUP_0, TIMER_0, &timer_group0_isr, userParam, 0, nullptr);
+  timer_isr_register(TIMER_GROUP_0, TIMER_0, &timer_group0_isr, userParam, 
+                    ESP_INTR_FLAG_IRAM,  // Keep ISR in IRAM for consistent timing
+                    nullptr);
 
   timer_start(TIMER_GROUP_0, TIMER_0);
 }
 
 void initUartPort(uart_port_t port, int txPin, int rxPin) {
   uart_config_t uart_config = {
-    .baud_rate = 31250,
+    .baud_rate = (port == USB_UART) ? 256000 : 31250,
     .data_bits = UART_DATA_8_BITS,
     .parity = UART_PARITY_DISABLE,
     .stop_bits = UART_STOP_BITS_1,
@@ -198,6 +200,32 @@ void tickTask(void *userParam) {
   }
 }
 
+void midiForwardTask(void *userParam) {
+  const size_t BUF_SIZE = 128;
+  uint8_t data[BUF_SIZE];
+  
+  ESP_LOGI(TAG, "Starting MIDI forwarding task");
+  
+  while (true) {
+    // Read data from MIDI UART
+    int len = uart_read_bytes(MIDI_UART, data, BUF_SIZE, 20 / portTICK_PERIOD_MS);
+    if (len > 0) {
+      ESP_LOGD(TAG, "MIDI->USB: Forwarding %d bytes", len);
+      uart_write_bytes(USB_UART, (const char*)data, len);
+    }
+    
+    // Read data from USB UART
+    len = uart_read_bytes(USB_UART, data, BUF_SIZE, 20 / portTICK_PERIOD_MS);
+    if (len > 0) {
+      ESP_LOGD(TAG, "USB->MIDI: Forwarding %d bytes", len);
+      uart_write_bytes(MIDI_UART, (const char*)data, len);
+    }
+    
+    // Small delay to prevent tight loop
+    vTaskDelay(1);
+  }
+}
+
 extern "C" void app_main() {
   ESP_ERROR_CHECK(nvs_flash_init());
   ESP_ERROR_CHECK(esp_netif_init());
@@ -205,4 +233,5 @@ extern "C" void app_main() {
   ESP_ERROR_CHECK(example_connect());
 
   xTaskCreate(tickTask, "ticks", 8192, nullptr, 10, nullptr);
+  xTaskCreate(midiForwardTask, "midi_fwd", 2048, nullptr, 5, nullptr);
 }
