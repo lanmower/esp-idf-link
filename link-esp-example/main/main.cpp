@@ -1,17 +1,19 @@
+//idf 4.4.4
 #include <driver/gpio.h>
 #include <driver/timer.h>
 #include <driver/uart.h>
+#include <driver/ledc.h>
 #include <esp_event.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
-#include <nvs_flash.h>
-#include <protocol_examples_common.h>
 #include <esp_log.h>
+#include <nvs_flash.h>
+#include <esp_netif.h>
+#include "esp_wifi.h"
+#include "protocol_examples_common.h"
 
 #include <ableton/Link.hpp>
-
-#include "esp_wifi.h"
 
 #define LED GPIO_NUM_2  // Ensure this is the correct pin for the R32 D1
 #define BUZZER GPIO_NUM_4 // Define the pin for the buzzer
@@ -26,9 +28,29 @@
 #define USB_MIDI true
 #define LINK_TICK_PERIOD 100
 
+// PWM configuration for passive buzzer
+#define LEDC_MODE              LEDC_HIGH_SPEED_MODE  // Use high speed mode for better frequency accuracy
+#define LEDC_DUTY_RES         LEDC_TIMER_10_BIT  // Set duty resolution to 10 bits
+#define LEDC_DUTY             (512)              // 50% duty cycle (512 out of 1024)
+#define LEDC_TIMER            LEDC_TIMER_0
+#define LEDC_CHANNEL          LEDC_CHANNEL_0
+#define LEDC_OUTPUT_IO        BUZZER             // Define buzzer GPIO
+
+// Different frequencies for different beat positions (in Hz)
+#define FREQ_16BEAT            2093u  // C7 note
+#define FREQ_8BEAT             1568u  // G6 note
+#define FREQ_4BEAT             1319u  // E6 note
+#define FREQ_NORMAL            1047u  // C6 note
+
+// Different lengths for different beat positions (in ticks)
+#define LENGTH_NORMAL          1    // Short beep for regular beats
+#define LENGTH_16BEAT          20    // Longer beep for measure start
+#define LENGTH_8BEAT           10    // Medium-long beep for half measure
+#define LENGTH_4BEAT           5    // Medium beep for quarter measure
+
 static const char *TAG = "LINK_APP";
 
-void IRAM_ATTR timer_group0_isr(void *userParam) {
+void IRAM_ATTR timer_isr(void *userParam) {
   static BaseType_t xHigherPriorityTaskWoken = pdFALSE;
   
   timer_group_clr_intr_status_in_isr(TIMER_GROUP_0, TIMER_0);
@@ -43,14 +65,12 @@ void IRAM_ATTR timer_group0_isr(void *userParam) {
 void printTask(void *userParam) {
   while (true) {
     auto link = static_cast<ableton::Link *>(userParam);
-    const auto quantum = 4.0;
+    const auto quantum = 16.0;
     const auto sessionState = link->captureAppSessionState();
     const auto numPeers = link->numPeers();
     const auto time = link->clock().micros();
-    const auto beats = sessionState.beatAtTime(time, quantum);
-    std::cout << std::defaultfloat << "| peers: " << numPeers << " | "
-              << "tempo: " << sessionState.tempo() << " | " << std::fixed
-              << "beats: " << beats << " |" << std::endl;
+    const double current_beat = sessionState.beatAtTime(time, quantum);
+    ESP_LOGI(TAG, "| peers: %d | tempo: %f | beat: %f |", numPeers, sessionState.tempo(), current_beat);
     vTaskDelay(2000 / portTICK_PERIOD_MS);
   }
 }
@@ -69,7 +89,7 @@ void timerGroup0Init(int timerPeriodUS, void *userParam) {
   timer_set_counter_value(TIMER_GROUP_0, TIMER_0, 0);
   timer_set_alarm_value(TIMER_GROUP_0, TIMER_0, timerPeriodUS);
   timer_enable_intr(TIMER_GROUP_0, TIMER_0);
-  timer_isr_register(TIMER_GROUP_0, TIMER_0, &timer_group0_isr, userParam, 
+  timer_isr_register(TIMER_GROUP_0, TIMER_0, &timer_isr, userParam, 
                     ESP_INTR_FLAG_IRAM,  // Keep ISR in IRAM for consistent timing
                     nullptr);
 
@@ -78,17 +98,71 @@ void timerGroup0Init(int timerPeriodUS, void *userParam) {
 
 void initUartPort(uart_port_t port, int txPin, int rxPin) {
   uart_config_t uart_config = {
-    .baud_rate = (port == USB_UART) ? 256000 : 31250,
+    .baud_rate = 31250,
     .data_bits = UART_DATA_8_BITS,
     .parity = UART_PARITY_DISABLE,
     .stop_bits = UART_STOP_BITS_1,
     .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-    .rx_flow_ctrl_thresh = 122,
+    .rx_flow_ctrl_thresh = 0,
+    .source_clk = UART_SCLK_APB
   };
 
   uart_param_config(port, &uart_config);
   uart_set_pin(port, txPin, rxPin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
   uart_driver_install(port, 512, 0, 0, NULL, 0);
+}
+
+void setupBuzzer() {
+    // Configure LEDC timer for buzzer PWM
+    ledc_timer_config_t ledc_timer = {
+        .speed_mode = LEDC_MODE,
+        .duty_resolution = LEDC_DUTY_RES,
+        .timer_num = LEDC_TIMER,
+        .freq_hz = FREQ_NORMAL,  // Start with normal frequency
+        .clk_cfg = LEDC_AUTO_CLK
+    };
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+
+    // Configure LEDC channel
+    ledc_channel_config_t ledc_channel = {
+        .gpio_num = LEDC_OUTPUT_IO,
+        .speed_mode = LEDC_MODE,
+        .channel = LEDC_CHANNEL,
+        .intr_type = LEDC_INTR_DISABLE,
+        .timer_sel = LEDC_TIMER,
+        .duty = 0,
+        .hpoint = 0,
+        .flags = {0}  // Initialize flags to 0
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+}
+
+void setBuzzerState(bool on, uint32_t frequency = FREQ_NORMAL) {
+    static uint32_t lastFreq = FREQ_NORMAL;
+    
+    if (on) {
+        // Only update frequency if it changed
+        if (frequency != lastFreq) {
+            // Configure timer for passive buzzer
+            ledc_timer_config_t ledc_timer = {
+                .speed_mode = LEDC_MODE,
+                .duty_resolution = LEDC_DUTY_RES,
+                .timer_num = LEDC_TIMER,
+                .freq_hz = frequency,
+                .clk_cfg = LEDC_AUTO_CLK
+            };
+            ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+            lastFreq = frequency;
+        }
+        
+        // Set 50% duty cycle for passive buzzer to produce sound
+        ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
+        ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+    } else {
+        // Turn off by setting duty to 0
+        ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, 0);
+        ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+    }
 }
 
 void tickTask(void *userParam) {
@@ -109,18 +183,23 @@ void tickTask(void *userParam) {
 
   gpio_set_direction(LED, GPIO_MODE_OUTPUT);
   gpio_set_direction(BUZZER, GPIO_MODE_OUTPUT);
+  
+  // Setup buzzer PWM
+  setupBuzzer();
 
   ESP_LOGI(TAG, "Waiting for Link peers...");
   bool was_connected = false;
   int64_t start_wait_time = esp_timer_get_time();
   bool force_start = false;
 
+  int currentFreq = FREQ_NORMAL;
+
   while (true) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     
     // Check peer status
     bool is_connected = link.numPeers() > 0;
-    if (!is_connected && !force_start && (esp_timer_get_time() - start_wait_time >= 60000000)) {  // 60 seconds in microseconds
+    if (!is_connected && !force_start && (esp_timer_get_time() - start_wait_time >= 30000000)) {  // 60 seconds in microseconds
       ESP_LOGI(TAG, "No peers found after 1 minute, starting anyway");
       force_start = true;
     }
@@ -134,22 +213,54 @@ void tickTask(void *userParam) {
       was_connected = is_connected;
     }
 
-    const auto state = link.captureAudioSessionState();
-    const int beats = std::floor(state.beatAtTime(link.clock().micros(), 1.));
-    const int mticks = std::floor(state.beatAtTime(link.clock().micros(), 1.) * 2400);
-    const int ticks = std::floor(state.beatAtTime(link.clock().micros(), 1.) * 24);
-    static int lastTicks;
-    const auto phase = state.phaseAtTime(link.clock().micros(), 64.);
-    static int length = 1;
+    const auto state = link.captureAppSessionState();
+    const auto quantum = 16.0;
+    const auto time = link.clock().micros();
+    const auto phase = state.phaseAtTime(time, quantum);
+    const int mticks = std::floor(phase * 150);  // 150 ticks per beat
+    const int ticks = std::floor(state.beatAtTime(time, quantum) * 24);
+    
+    static int lastMTicks = 0;
+    static int lastTicks = 0;
+    static int length = LENGTH_NORMAL;
+    static int lastBeat = -1;  // Initialize to invalid beat
+    static int currentFreq = FREQ_NORMAL;
+    
+    // Calculate beat positions
+    const int currentBeat = static_cast<int>(std::floor(phase));
+    const int beatInQuantum = currentBeat % static_cast<int>(quantum);
+    
+    // Calculate precise timing within the beat
+    const double beatFraction = phase - std::floor(phase);
+    const int ticksInBeat = static_cast<int>(beatFraction * 150);  // 150 ticks per beat
+    
+    bool crossedBeat = (currentBeat != lastBeat);
     
     if (is_connected || force_start) {
-      length = (fmodf(phase, 4.) <= 0.1) ? 20 : length;
-      length = (fmodf(phase, 8.) <= 0.1) ? 50 : length;
-      length = (fmodf(phase, 16.) <= 0.1) ? 80 : length;
-      length = (fmodf(phase, 32.) <= 0.1) ? 120 : length;
-      length = (fmodf(phase, 4.) > 0.1) ? 2 : length;
-      gpio_set_level(LED, (mticks % 2400) < length);
-      gpio_set_level(BUZZER, (mticks % 2400) < length);
+      if (crossedBeat) {
+        // Update beat characteristics based on position in quantum
+        if (beatInQuantum == 0) {  // First beat of quantum (measure start)
+          length = LENGTH_16BEAT;
+          currentFreq = FREQ_16BEAT;
+        } else if (beatInQuantum == 8) {  // Middle of measure (8th beat)
+          length = LENGTH_8BEAT;
+          currentFreq = FREQ_8BEAT;
+        } else if (beatInQuantum == 4 || beatInQuantum == 12) {  // Quarter points
+          length = LENGTH_4BEAT;
+          currentFreq = FREQ_4BEAT;
+        } else {  // Regular beats
+          length = LENGTH_NORMAL;
+          currentFreq = FREQ_NORMAL;
+        }
+        lastBeat = currentBeat;
+      }
+      
+      // Determine if we should be playing based on position within beat
+      bool shouldPlay = ticksInBeat < length;
+      
+      // Set LED and buzzer states
+      gpio_set_level(LED, shouldPlay);
+      setBuzzerState(shouldPlay, currentFreq);
       
       static bool was_playing = false;
       bool is_playing = state.isPlaying();
@@ -163,39 +274,54 @@ void tickTask(void *userParam) {
         was_playing = is_playing;
       }
       
+      // Check for tick transitions to guarantee MIDI message execution
       if (ticks > lastTicks) {
-        // Only send start and position messages exactly at the phase boundary
-        if(mticks % 24 == 0 && phase < 0.1 && fmodf(phase, 16.) <= 0.1) {
-          uint8_t data[1] = {0xfa};
-          uart_write_bytes(USB_UART, (char *)data, 1);
-          uart_write_bytes(MIDI_UART, (char *)data, 1);
+        // Handle phase wrap-around and MIDI clock messages in a single place
+        if ((lastMTicks % 2400) > (mticks % 2400)) {
+          // Calculate the current position in 16th notes (6 MIDI clocks per 16th note)
+          uint16_t pos = (mticks / 6) % 32767; // Keep within 14-bit MIDI range
+          uint8_t pos_lsb = pos & 0x7F;        // Lower 7 bits
+          uint8_t pos_msb = (pos >> 7) & 0x7F; // Upper 7 bits
+          
+          if ((mticks / 2400) % 16 == 0) {
+            // Full restart every 16 beats
+            const uint8_t start_msg = 0xfa;
+            uart_write_bytes(USB_UART, (const char *)&start_msg, 1);
+            uart_write_bytes(MIDI_UART, (const char *)&start_msg, 1);
+          } else if ((mticks / 2400) % 4 == 0) {
+            // Send continue and SPP every 4 beats
+            const uint8_t continue_msg = 0xfb;
+            uart_write_bytes(USB_UART, (const char *)&continue_msg, 1);
+            uart_write_bytes(MIDI_UART, (const char *)&continue_msg, 1);
+          } else {
+            // Just continue on other beats
+            const uint8_t continue_msg = 0xfb;
+            uart_write_bytes(USB_UART, (const char *)&continue_msg, 1);
+            uart_write_bytes(MIDI_UART, (const char *)&continue_msg, 1);
+          }
 
-          uint8_t sppData[3];
-          sppData[0] = 0xF2;
-          int positionInBeats = 0;
-          sppData[1] = (positionInBeats & 0x7F);
-          sppData[2] = (positionInBeats >> 7) & 0x7F;
-          uart_write_bytes(USB_UART, (char *)sppData, 3);
-          uart_write_bytes(MIDI_UART, (char *)sppData, 3);
+          // Send SPP every 4 beats with correct position
+          if ((mticks / 2400) % 4 == 0) {
+            const uint8_t spp_msg[] = {0xF2, pos_lsb, pos_msb};
+            uart_write_bytes(USB_UART, (const char *)spp_msg, sizeof(spp_msg));
+            uart_write_bytes(MIDI_UART, (const char *)spp_msg, sizeof(spp_msg));
+          }
         }
         
-        // Ensure we only send timing clock if we haven't just sent a start message
-        else if (phase >= 0.1 || fmodf(phase, 16.) > 0.1) {
-          #ifdef USB_MIDI
-            uint8_t data[4] = {0x0f, 0xf8, 0x00, 0x00};
-            uart_write_bytes(USB_UART, (char *)data, 4);
-            uart_write_bytes(MIDI_UART, (char *)data, 4);
-          #else
-            uint8_t data[1] = {0xf8};
-            uart_write_bytes(USB_UART, (char *)data, 1);
-            uart_write_bytes(MIDI_UART, (char *)data, 1);
-          #endif
-        }
+        // Always send the timing clock after handling phase wrap
+        #ifdef USB_MIDI
+          const uint8_t usb_timing_msg[] = {0x0f, 0xf8, 0x00, 0x00};
+          uart_write_bytes(USB_UART, (const char *)usb_timing_msg, sizeof(usb_timing_msg));
+        #endif
+        
+        const uint8_t midi_timing_msg = 0xf8;
+        uart_write_bytes(MIDI_UART, (const char *)&midi_timing_msg, 1);
       }
     } else {
       gpio_set_level(LED, 0);
-      gpio_set_level(BUZZER, 0);
+      setBuzzerState(false);
     }
+    lastMTicks = mticks;
     lastTicks = ticks;
   }
 }
