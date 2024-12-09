@@ -67,15 +67,8 @@ The buzzer provides different tones for different beat positions:
 ## Configuration
 
 The project includes several configurable parameters:
-- Link tick period: 100ms
+- Link tick period: 100
 - PWM configuration for the buzzer
 - UART baud rates and buffer sizes
 - WiFi credentials (via menuconfig)
 
-## License
-
-[Add appropriate license information]
-
-## Contributing
-
-[Add contribution guidelines if applicable]
