@@ -15,8 +15,8 @@
 
 #include <ableton/Link.hpp>
 
-#define LED GPIO_NUM_2  // Ensure this is the correct pin for the R32 D1
-#define BUZZER GPIO_NUM_4 // Define the pin for the buzzer
+#define LED GPIO_NUM_4  // Ensure this is the correct pin for the R32 D1
+#define BUZZER GPIO_NUM_2 // Define the pin for the buzzer
 #define PRINT_LINK_STATE false
 
 #define USB_UART UART_NUM_0   // USB UART
@@ -70,7 +70,7 @@ void printTask(void *userParam) {
     const auto numPeers = link->numPeers();
     const auto time = link->clock().micros();
     const double current_beat = sessionState.beatAtTime(time, quantum);
-    ESP_LOGI(TAG, "| peers: %d | tempo: %f | beat: %f |", numPeers, sessionState.tempo(), current_beat);
+    //ESP_LOGI(TAG, "| peers: %d | tempo: %f | beat: %f |", numPeers, sessionState.tempo(), current_beat);
     vTaskDelay(2000 / portTICK_PERIOD_MS);
   }
 }
@@ -166,15 +166,15 @@ void setBuzzerState(bool on, uint32_t frequency = FREQ_NORMAL) {
 }
 
 void tickTask(void *userParam) {
-  ESP_LOGI(TAG, "Initializing Ableton Link...");
+  //ESP_LOGI(TAG, "Initializing Ableton Link...");
   ableton::Link link(120.0f);
   link.enable(true);
 
-  ESP_LOGI(TAG, "Setting up UART...");
+  //ESP_LOGI(TAG, "Setting up UART...");
   initUartPort(USB_UART, USB_TX_PIN, USB_RX_PIN);
   initUartPort(MIDI_UART, MIDI_TX_PIN, MIDI_RX_PIN);
 
-  ESP_LOGI(TAG, "Initializing timer...");
+  //ESP_LOGI(TAG, "Initializing timer...");
   timerGroup0Init(LINK_TICK_PERIOD, xTaskGetCurrentTaskHandle());
 
   if (PRINT_LINK_STATE) {
@@ -187,7 +187,7 @@ void tickTask(void *userParam) {
   // Setup buzzer PWM
   setupBuzzer();
 
-  ESP_LOGI(TAG, "Waiting for Link peers...");
+  //ESP_LOGI(TAG, "Waiting for Link peers...");
   bool was_connected = false;
   int64_t start_wait_time = esp_timer_get_time();
   bool force_start = false;
@@ -200,15 +200,15 @@ void tickTask(void *userParam) {
     // Check peer status
     bool is_connected = link.numPeers() > 0;
     if (!is_connected && !force_start && (esp_timer_get_time() - start_wait_time >= 30000000)) {  // 60 seconds in microseconds
-      ESP_LOGI(TAG, "No peers found after 1 minute, starting anyway");
+      //ESP_LOGI(TAG, "No peers found after 1 minute, starting anyway");
       force_start = true;
     }
     
     if (is_connected != was_connected) {
       if (is_connected) {
-        ESP_LOGI(TAG, "Link peer connected!");
+        //ESP_LOGI(TAG, "Link peer connected!");
       } else {
-        ESP_LOGI(TAG, "Link peer disconnected");
+        //ESP_LOGI(TAG, "Link peer disconnected");
       }
       was_connected = is_connected;
     }
@@ -216,23 +216,28 @@ void tickTask(void *userParam) {
     const auto state = link.captureAppSessionState();
     const auto quantum = 16.0;
     const auto time = link.clock().micros();
+    
+    // Calculate both regular and adjusted phases
     const auto phase = state.phaseAtTime(time, quantum);
-    const int mticks = std::floor(phase * 150);  // 150 ticks per beat
+    const auto adjustedPhase = phase;  // Changed from: std::fmod(phase - 0.25, quantum)
+    
+    // Calculate ticks with consistent timing
+    const int mticks = std::floor(phase * 150);
+    const int adjustedMticks = std::floor(adjustedPhase * 150);
     const int ticks = std::floor(state.beatAtTime(time, quantum) * 24);
     
     static int lastMTicks = 0;
+    static int lastAdjustedMTicks = 0;
     static int lastTicks = 0;
     static int length = LENGTH_NORMAL;
-    static int lastBeat = -1;  // Initialize to invalid beat
+    static int lastBeat = -1;
     static int currentFreq = FREQ_NORMAL;
     
-    // Calculate beat positions
+    // Use regular phase for LED and buzzer timing
     const int currentBeat = static_cast<int>(std::floor(phase));
     const int beatInQuantum = currentBeat % static_cast<int>(quantum);
-    
-    // Calculate precise timing within the beat
     const double beatFraction = phase - std::floor(phase);
-    const int ticksInBeat = static_cast<int>(beatFraction * 150);  // 150 ticks per beat
+    const int ticksInBeat = static_cast<int>(beatFraction * 150);
     
     bool crossedBeat = (currentBeat != lastBeat);
     
@@ -270,85 +275,56 @@ void tickTask(void *userParam) {
         uint8_t status = is_playing ? 0xFB : 0xFC; // 0xFB = Continue, 0xFC = Stop
         uint8_t data[1] = {status};
         uart_write_bytes(USB_UART, (char *)data, 1);
+        uart_wait_tx_done(USB_UART, 1);  // Changed from portMAX_DELAY
         uart_write_bytes(MIDI_UART, (char *)data, 1);
+        uart_wait_tx_done(MIDI_UART, 1);  // Changed from portMAX_DELAY
         was_playing = is_playing;
       }
       
-      // Check for tick transitions to guarantee MIDI message execution
+      // Check for tick transitions
       if (ticks > lastTicks) {
-        // Handle phase wrap-around and MIDI clock messages in a single place
-        if ((lastMTicks % 2400) > (mticks % 2400)) {
-          // Calculate the current position in 16th notes (6 MIDI clocks per 16th note)
-          uint16_t pos = (mticks / 6) % 32767; // Keep within 14-bit MIDI range
-          uint8_t pos_lsb = pos & 0x7F;        // Lower 7 bits
-          uint8_t pos_msb = (pos >> 7) & 0x7F; // Upper 7 bits
+        // Handle USB MIDI timing - simplified logic
+        if (adjustedMticks % 600 == 0) {  // Every 4 beats (150 ticks * 4)
+          uint16_t pos = (adjustedMticks / 6) % 32767;
+          uint8_t pos_lsb = pos & 0x7F;
+          uint8_t pos_msb = (pos >> 7) & 0x7F;
           
-          if ((mticks / 2400) % 16 == 0) {
-            // Full restart every 16 beats
-            const uint8_t start_msg = 0xfa;
-            uart_write_bytes(USB_UART, (const char *)&start_msg, 1);
-            uart_write_bytes(MIDI_UART, (const char *)&start_msg, 1);
-          } else if ((mticks / 2400) % 4 == 0) {
-            // Send continue and SPP every 4 beats
-            const uint8_t continue_msg = 0xfb;
-            uart_write_bytes(USB_UART, (const char *)&continue_msg, 1);
-            uart_write_bytes(MIDI_UART, (const char *)&continue_msg, 1);
-          } else {
-            // Just continue on other beats
-            const uint8_t continue_msg = 0xfb;
-            uart_write_bytes(USB_UART, (const char *)&continue_msg, 1);
-            uart_write_bytes(MIDI_UART, (const char *)&continue_msg, 1);
-          }
-
-          // Send SPP every 4 beats with correct position
-          if ((mticks / 2400) % 4 == 0) {
-            const uint8_t spp_msg[] = {0xF2, pos_lsb, pos_msb};
-            uart_write_bytes(USB_UART, (const char *)spp_msg, sizeof(spp_msg));
-            uart_write_bytes(MIDI_UART, (const char *)spp_msg, sizeof(spp_msg));
-          }
+          const uint8_t spp_msg[] = {0xF2, pos_lsb, pos_msb};
+          uart_write_bytes(USB_UART, (const char *)spp_msg, sizeof(spp_msg));
+          uart_wait_tx_done(USB_UART, 1);  // Changed from portMAX_DELAY
         }
         
-        // Always send the timing clock after handling phase wrap
+        // Handle UART MIDI timing with regular phase
+        if ((lastMTicks % 2400) > (mticks % 2400)) {
+            uint16_t pos = (mticks / 6) % 32767;
+            uint8_t pos_lsb = pos & 0x7F;
+            uint8_t pos_msb = (pos >> 7) & 0x7F;
+            
+            if ((mticks / 2400) % 4 == 0) {
+                const uint8_t spp_msg[] = {0xF2, pos_lsb, pos_msb};
+                uart_write_bytes(MIDI_UART, (const char *)spp_msg, sizeof(spp_msg));
+                uart_wait_tx_done(MIDI_UART, 1);  // Changed from portMAX_DELAY
+            }
+        }
+        
+        // Send timing clock messages
         #ifdef USB_MIDI
-          const uint8_t usb_timing_msg[] = {0x0f, 0xf8, 0x00, 0x00};
-          uart_write_bytes(USB_UART, (const char *)usb_timing_msg, sizeof(usb_timing_msg));
+            const uint8_t usb_timing_msg[] = {0x0f, 0xf8, 0x00, 0x00};
+            uart_write_bytes(USB_UART, (const char *)usb_timing_msg, sizeof(usb_timing_msg));
+            uart_wait_tx_done(USB_UART, 1);  // Changed from portMAX_DELAY
         #endif
         
         const uint8_t midi_timing_msg = 0xf8;
         uart_write_bytes(MIDI_UART, (const char *)&midi_timing_msg, 1);
+        uart_wait_tx_done(MIDI_UART, 1);  // Changed from portMAX_DELAY
       }
     } else {
       gpio_set_level(LED, 0);
       setBuzzerState(false);
     }
     lastMTicks = mticks;
+    lastAdjustedMTicks = adjustedMticks;
     lastTicks = ticks;
-  }
-}
-
-void midiForwardTask(void *userParam) {
-  const size_t BUF_SIZE = 128;
-  uint8_t data[BUF_SIZE];
-  
-  ESP_LOGI(TAG, "Starting MIDI forwarding task");
-  
-  while (true) {
-    // Read data from MIDI UART
-    int len = uart_read_bytes(MIDI_UART, data, BUF_SIZE, 20 / portTICK_PERIOD_MS);
-    if (len > 0) {
-      ESP_LOGD(TAG, "MIDI->USB: Forwarding %d bytes", len);
-      uart_write_bytes(USB_UART, (const char*)data, len);
-    }
-    
-    // Read data from USB UART
-    len = uart_read_bytes(USB_UART, data, BUF_SIZE, 20 / portTICK_PERIOD_MS);
-    if (len > 0) {
-      ESP_LOGD(TAG, "USB->MIDI: Forwarding %d bytes", len);
-      uart_write_bytes(MIDI_UART, (const char*)data, len);
-    }
-    
-    // Small delay to prevent tight loop
-    vTaskDelay(1);
   }
 }
 
@@ -359,5 +335,4 @@ extern "C" void app_main() {
   ESP_ERROR_CHECK(example_connect());
 
   xTaskCreate(tickTask, "ticks", 8192, nullptr, 10, nullptr);
-  xTaskCreate(midiForwardTask, "midi_fwd", 2048, nullptr, 5, nullptr);
 }
