@@ -291,11 +291,20 @@ void tickTask(void *userParam) {
         uart_write_bytes(MIDI_UART, (const char *)&timing_msg, 1);
         uart_wait_tx_done(MIDI_UART, 1);
 
-        // Reset phase at measure boundaries - just send Start to maintain rhythm
-        if (beatInQuantum == 15 && ticksInBeat >= 140) {  // Just before measure boundary
-          const uint8_t start_msg = MIDI_START;
-          uart_write_bytes(MIDI_UART, (const char *)&start_msg, 1);
-          uart_wait_tx_done(MIDI_UART, 1);
+        // Reset phase at measure boundaries - send Start earlier with timing reinforcement
+        if (beatInQuantum == 15) {
+          if (ticksInBeat >= 120) {  // Send Start even earlier (was 130)
+            const uint8_t start_msg = MIDI_START;
+            uart_write_bytes(MIDI_UART, (const char *)&start_msg, 1);
+            uart_wait_tx_done(MIDI_UART, 1);
+            
+            // Send timing clock immediately after Start
+            uart_write_bytes(MIDI_UART, (const char *)&timing_msg, 1);
+            uart_wait_tx_done(MIDI_UART, 1);
+          } else if (ticksInBeat >= 140) {  // Send extra timing clock closer to boundary
+            uart_write_bytes(MIDI_UART, (const char *)&timing_msg, 1);
+            uart_wait_tx_done(MIDI_UART, 1);
+          }
         }
 
         // Handle USB UART timing separately (keep existing USB code with preemptive timing)
