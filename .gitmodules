@@ -1,0 +1,3 @@
+[submodule "components/link-esp"]
+	path = components/link-esp
+	url = https://github.com/mathiasbredholt/link-esp.git
