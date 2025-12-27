@@ -134,21 +134,8 @@ bool handle_arp_active(const ableton::Link::SessionState& state,
         return false;
     }
     
-    // Get the current quantum phase for synchronization
+    // Get the current beat for Link synchronization
     const double sessionBeat = state.beatAtTime(time, LINK_QUANTUM);
-    const double phaseWithinQuantum = state.phaseAtTime(time, LINK_QUANTUM);
-    const int quantumNumber = static_cast<int>(std::floor(sessionBeat / LINK_QUANTUM));
-    
-    // For specific debugging, uncomment this block
-    /*
-    static int beatCounter = 0;
-    if (++beatCounter > 60) {
-        ESP_LOGI(TAG, "Arp MIDI playback: file=%s, beat=%.2f, phase=%.2f, quantum=%d",
-                g_midi_player.getCurrentFileName().c_str(),
-                sessionBeat, phaseWithinQuantum, quantumNumber);
-        beatCounter = 0;
-    }
-    */
     
     // Process the MIDI file player with the current Link state
     // This ensures the arpeggiator stays in sync with the Link session
@@ -163,11 +150,6 @@ bool handle_arp_adjusting_pads(const ableton::Link::SessionState& state,
                                const std::chrono::microseconds& time,
                                const bool pad_pressed_this_tick[],
                                std::array<bool, 4>& pads_used) {
-    static int last_pressed_pad = -1;  // Track which pad was last pressed
-    static uint64_t last_press_time = 0;  // Track when the pad was last pressed
-    const uint64_t current_time = esp_timer_get_time() / 1000;  // Current time in ms
-    const uint64_t DOUBLE_PRESS_WINDOW = 2000;  // Window for considering a double press in ms (increased from 1000)
-    
     // PERFORMANCE: Removed verbose debug logging
     
     // Check if any pads are actually pressed (quick validation)

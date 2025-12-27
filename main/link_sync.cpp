@@ -29,57 +29,23 @@ static bool IRAM_ATTR midi_note_gptimer_callback(gptimer_handle_t timer, const g
     return xHigherPriorityTaskWoken == pdTRUE;
 }
 
-// Common function to detect quantum boundaries and calculate phase information
-// This ensures all effects stay in phrase with Link
+// Simple quantum boundary detection using phase reset
 QuantumInfo detectQuantumBoundary(const ableton::Link::SessionState& state,
                                  const std::chrono::microseconds& time) {
     QuantumInfo info;
 
-    // Get the current beat position in the session timeline
     info.sessionBeat = state.beatAtTime(time, LINK_QUANTUM);
-
-    // Calculate phase within the quantum (0.0 to LINK_QUANTUM)
-    // This ensures the phase is always aligned with quantum boundaries
     info.phaseWithinQuantum = state.phaseAtTime(time, LINK_QUANTUM);
-
-    // Calculate the current quantum number (which quantum we're in)
     info.currentQuantumNumber = static_cast<int>(std::floor(info.sessionBeat / LINK_QUANTUM));
-
-    // Calculate the exact quantum boundary beat
-    double exactQuantumBoundary = info.currentQuantumNumber * LINK_QUANTUM;
-
-    // Calculate how far we are from the quantum boundary in beats
-    double beatsFromBoundary = info.sessionBeat - exactQuantumBoundary;
-
-    // Detect quantum boundary crossing with improved precision
-    // We consider a boundary crossed if:
-    // 1. The quantum number changed, OR
-    // 2. We're very close to the boundary (within 0.01 beats) coming from the previous quantum
-    bool nearBoundary = (beatsFromBoundary < 0.01) && (beatsFromBoundary >= 0.0);
-    info.crossedQuantumBoundary = ((info.currentQuantumNumber != s_last_quantum_number && s_last_quantum_number != -1) ||
-                                  (nearBoundary && info.currentQuantumNumber > s_last_quantum_number));
-
-    // Update the static last quantum number
-    if (info.crossedQuantumBoundary || info.currentQuantumNumber > s_last_quantum_number) {
-        s_last_quantum_number = info.currentQuantumNumber;
-    }
-
-    // Calculate the current beat within the quantum
-    int currentBeat = static_cast<int>(std::floor(info.phaseWithinQuantum));
-    info.beatInQuantum = currentBeat % static_cast<int>(LINK_QUANTUM);
-
-    // Calculate the fraction of the current beat (0.0 to 1.0)
+    info.beatInQuantum = static_cast<int>(std::floor(info.phaseWithinQuantum));
     info.beatFraction = info.phaseWithinQuantum - std::floor(info.phaseWithinQuantum);
 
-    // Log quantum boundary crossing with more detailed information
-    if (info.crossedQuantumBoundary) {
-        ESP_LOGI(TAG_LINK, "Quantum boundary crossed: %d, Beat: %.2f, Phase: %.2f, BeatsFromBoundary: %.4f",
-                 info.currentQuantumNumber, info.sessionBeat, info.phaseWithinQuantum, beatsFromBoundary);
+    // Simple crossing detection: quantum number changed
+    info.crossedQuantumBoundary = (info.currentQuantumNumber != s_last_quantum_number && s_last_quantum_number != -1);
 
-        // If we're near but not exactly at the boundary, force alignment
-        if (beatsFromBoundary > 0.001) {
-            ESP_LOGW(TAG_LINK, "Not precisely at quantum boundary - consider realignment");
-        }
+    if (info.crossedQuantumBoundary) {
+        s_last_quantum_number = info.currentQuantumNumber;
+        ESP_LOGI(TAG_LINK, "Quantum boundary %d, beat %.2f", info.currentQuantumNumber, info.sessionBeat);
     }
 
     return info;
@@ -173,167 +139,75 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
         was_connected = is_connected;
     }
 
-    // Get quantum boundary and phase information using the common function
     QuantumInfo quantumInfo = detectQuantumBoundary(state, time);
 
-    // Extract values from the quantum info for use in this function
     const double sessionBeat = quantumInfo.sessionBeat;
     const double phase = quantumInfo.phaseWithinQuantum;
-    const int currentBeat = static_cast<int>(std::floor(phase));
     const int beatInQuantum = quantumInfo.beatInQuantum;
     const bool crossedQuantumBoundary = quantumInfo.crossedQuantumBoundary;
 
-    // Calculate MIDI ticks (24 per quarter note)
-    const int ticks = std::floor(sessionBeat * 24);
-
-    // If we crossed a quantum boundary, force realignment of the session state
-    // This ensures all systems stay perfectly in phrase with the quantum
-    if (crossedQuantumBoundary) {
-        // Calculate the exact quantum boundary beat
-        double exactQuantumBoundary = quantumInfo.currentQuantumNumber * LINK_QUANTUM;
-
-        // Create a copy of the session state for modification
-        auto sessionStateCopy = state;
-
-        // Force the beat to the exact quantum boundary
-        // This ensures all systems are perfectly aligned with the quantum
-        sessionStateCopy.forceBeatAtTime(exactQuantumBoundary, time, LINK_QUANTUM);
-
-        // We can't commit the session state here because it's a const reference
-        // But this calculation ensures our phase calculations are aligned with quantum boundaries
-
-        ESP_LOGD(TAG_LINK, "Forced quantum alignment at boundary: %.2f", exactQuantumBoundary);
-    }
+    // Calculate MIDI timing clocks (24 per quarter note)
+    const int midiClocks = static_cast<int>(sessionBeat * 24);
 
     // Detect beat boundary crossing
-    bool crossedBeat = (currentBeat != lastBeat);
+    bool crossedBeat = (beatInQuantum != lastBeat);
 
     // Metronome and MIDI Sync Logic
     if (is_connected || force_start) {
-        // Calculate the exact position within the quantum for precise timing
-        double exactPositionInQuantum = phase;
-        double exactBeatInQuantum = std::floor(exactPositionInQuantum);
-        double exactFractionOfBeat = exactPositionInQuantum - exactBeatInQuantum;
-
-        // If we crossed a quantum boundary, force a reset of the metronome state
+        // Metronome frequency based on beat position (emphasize 16, 8, 4, 1)
         if (crossedQuantumBoundary) {
-            // Special handling for quantum boundary - use the highest tone
             length = LENGTH_16BEAT;
             currentBuzzerFreq = FREQ_16BEAT;
-            lastBeat = currentBeat;
-
-            // Force the buzzer on at quantum boundaries for better alignment
-            set_buzzer_state(true, currentBuzzerFreq);
-
-            ESP_LOGI(TAG_LINK, "Metronome reset at quantum boundary (Beat: %.2f, Phase: %.2f)",
-                     sessionBeat, phase);
-
-            // Force realignment of all timed systems at quantum boundaries
-            // This is a good place to add any additional quantum boundary synchronization
-        }
-        else if (crossedBeat) {
-            // Update metronome beep length/frequency based on beat position within quantum
-            // Use exact beat position for more precise timing
-            int exactBeatPosition = static_cast<int>(exactBeatInQuantum);
-
-            // Determine the importance of this beat within the quantum
-            if (exactBeatPosition % static_cast<int>(LINK_QUANTUM) == 0) {
-                length = LENGTH_16BEAT;
-                currentBuzzerFreq = FREQ_16BEAT;
-            }
-            else if (exactBeatPosition % 8 == 0) {
+            ESP_LOGI(TAG_LINK, "Quantum boundary at beat %.1f", sessionBeat);
+        } else if (crossedBeat) {
+            if (beatInQuantum % 8 == 0) {
                 length = LENGTH_8BEAT;
                 currentBuzzerFreq = FREQ_8BEAT;
-            }
-            else if (exactBeatPosition % 4 == 0) {
+            } else if (beatInQuantum % 4 == 0) {
                 length = LENGTH_4BEAT;
                 currentBuzzerFreq = FREQ_4BEAT;
-            }
-            else {
+            } else {
                 length = LENGTH_NORMAL;
                 currentBuzzerFreq = FREQ_NORMAL;
             }
-
-            lastBeat = currentBeat;
-
-            ESP_LOGD(TAG_LINK, "Beat crossed: %d (in quantum: %d), Exact: %.4f",
-                     currentBeat, beatInQuantum, exactPositionInQuantum);
         }
 
-        // Control metronome buzzer with precise timing
-        // Only if we didn't just cross a quantum boundary (which has its own buzzer logic)
-        if (!crossedQuantumBoundary) {
-            // Use exact fraction of beat for more precise timing
-            bool shouldPlay = exactFractionOfBeat < (static_cast<double>(length) / 150.0);
-            set_buzzer_state(shouldPlay, currentBuzzerFreq);
+        if (crossedBeat || crossedQuantumBoundary) {
+            lastBeat = beatInQuantum;
         }
 
-        // Handle MIDI Start/Stop based on Link play state
+        // Buzzer timing: play for 'length' milliseconds at beat boundary
+        bool shouldPlay = (phase - beatInQuantum) < (static_cast<double>(length) / 1000.0);
+        set_buzzer_state(shouldPlay, currentBuzzerFreq);
+
         bool is_playing = state.isPlaying();
 
-        // If we crossed a quantum boundary and we're playing,
-        // send a MIDI realign message to ensure all connected MIDI devices are in phrase
-        if (crossedQuantumBoundary && is_playing) {
-            // Calculate the exact quantum boundary beat
-            double exactQuantumBoundary = quantumInfo.currentQuantumNumber * LINK_QUANTUM;
-
-            // Send MIDI Stop followed by Start to force realignment at quantum boundaries
-            const uint8_t stop_msg = MIDI_STOP;
-            const uint8_t start_msg = MIDI_START;
-
-            // Send Stop message - PERFORMANCE: Use non-blocking UART write
-            uart_write_bytes(MIDI_UART, (const char *)&stop_msg, 1);
-            
-            // Short delay between messages, but non-blocking
-            esp_rom_delay_us(500); // microsecond delay instead of vTaskDelay
-
-            // Send Start message - PERFORMANCE: Use non-blocking UART write
-            uart_write_bytes(MIDI_UART, (const char *)&start_msg, 1);
-
-            // Send Song Position Pointer message to ensure exact alignment
-            // SPP is in MIDI beats (16th notes), so multiply by 4
-            uint16_t spp_pos = static_cast<uint16_t>(exactQuantumBoundary * 4) % 16384;
-            uint8_t spp_lsb = spp_pos & 0x7F;
-            uint8_t spp_msb = (spp_pos >> 7) & 0x7F;
-            const uint8_t spp_msg[] = {0xF2, spp_lsb, spp_msb};
-            uart_write_bytes(MIDI_UART, (const char *)spp_msg, sizeof(spp_msg));
-
-            ESP_LOGI(TAG_LINK, "Sent MIDI realignment at quantum boundary (Beat: %.2f, SPP: %d)",
-                     exactQuantumBoundary, spp_pos);
-        }
-
-        // Regular play state change handling
+        // Send MIDI Start/Stop when play state changes
         if (was_playing != is_playing) {
             const uint8_t msg = is_playing ? MIDI_START : MIDI_STOP;
-            if (is_playing) { // Send Stop first on Start for alignment
-                 const uint8_t stop_msg = MIDI_STOP;
-                 uart_write_bytes(MIDI_UART, (const char *)&stop_msg, 1);
-                 // PERFORMANCE: Use non-blocking delay
-                 esp_rom_delay_us(500);
-            }
             uart_write_bytes(MIDI_UART, (const char *)&msg, 1);
-            ESP_LOGI(TAG_LINK, "Sent MIDI %s", is_playing ? "Start" : "Stop");
+            ESP_LOGI(TAG_LINK, "MIDI %s at beat %.1f", is_playing ? "START" : "STOP", sessionBeat);
             was_playing = is_playing;
         }
 
-        // Send MIDI Timing Clock and SPP if a new tick occurred
-        // Send MIDI clock on every tick to maintain proper tempo
-        if (ticks > lastTicks) {
+        // Send MIDI Timing Clock (24 per quarter note)
+        if (midiClocks > lastTicks) {
             const uint8_t timing_msg = MIDI_TIMING_CLOCK;
             uart_write_bytes(MIDI_UART, (const char *)&timing_msg, 1);
 
-            // PERFORMANCE: Reduce SPP frequency - send it less often
-            if (ticks % 600 == 0) { // Reduced from 150 to 600 ticks (4x less frequent)
-                uint16_t pos = (ticks / 6) % 32767;
-                uint8_t pos_lsb = pos & 0x7F;
-                uint8_t pos_msb = (pos >> 7) & 0x7F;
-                const uint8_t spp_msg[] = {0xF2, pos_lsb, pos_msb};
+            // Send Song Position Pointer periodically (every 4 beats to avoid spam)
+            // SPP = beat position * 4 (since SPP is in sixteenth notes)
+            if (beatInQuantum % 4 == 0 && crossedBeat) {
+                uint16_t spp_beats = static_cast<uint16_t>(sessionBeat * 4) & 0x3FFF;
+                uint8_t spp_lsb = spp_beats & 0x7F;
+                uint8_t spp_msb = (spp_beats >> 7) & 0x7F;
+                const uint8_t spp_msg[] = {0xF2, spp_lsb, spp_msb};
                 uart_write_bytes(MIDI_UART, (const char *)spp_msg, sizeof(spp_msg));
             }
         }
     } else {
-        set_buzzer_state(false); // Ensure buzzer is off if not connected/started
+        set_buzzer_state(false);
     }
 
-    lastTicks = ticks; // Update lastTicks regardless of whether control logic ran
+    lastTicks = midiClocks;
 }

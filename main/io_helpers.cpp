@@ -1,13 +1,20 @@
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+
 #include "io_helpers.h"
-#include <cmath>     // Include for pow, round
-#include <algorithm> // Include for std::min, std::max
-#include "esp_log.h" // Include logging header
+#include <cmath>
+#include <algorithm>
+#include <climits>
+#include "esp_log.h"
 #include <esp_adc/adc_oneshot.h>
-// #include "hal/touch_sens_types.h" // For touch_pad_t and voltage/speed enums
-// <driver/touch_sens.h> is included via io_helpers.h -> main.h
+#include <esp_adc/adc_cali.h>
 
 // Define the logging tag for this file
 static const char *TAG = "IO_HELPERS";
+
+static int hall_sensor_read() {
+    return 2048;
+}
 
 static adc_oneshot_unit_handle_t s_adc_handle = nullptr;
 // static touch_sensor_handle_t s_touch_handle = nullptr;                 // Handle for the modern touch sensor API
@@ -170,15 +177,13 @@ void setup_buzzer()
     ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
 
     ledc_channel_config_t ledc_channel = {};
-    ledc_channel.speed_mode = LEDC_HIGH_SPEED_MODE; // Changed to HIGH_SPEED_MODE to match timer
+    ledc_channel.speed_mode = LEDC_HIGH_SPEED_MODE;
     ledc_channel.channel = LEDC_CHANNEL_0;
-    ledc_channel.timer_sel = LEDC_TIMER_0; // Match timer number
-    ledc_channel.intr_type = LEDC_INTR_DISABLE;
-    ledc_channel.gpio_num = BUZZER; // Corrected from BUZZER_PIN
-    ledc_channel.duty = 0;          // Initial duty
+    ledc_channel.timer_sel = LEDC_TIMER_0;
+    ledc_channel.gpio_num = BUZZER;
+    ledc_channel.duty = 0;
     ledc_channel.hpoint = 0;
     ledc_channel.sleep_mode = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD;
-    // ledc_channel.flags.output_invert is 0 by zero-initialization
     ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
     ESP_LOGI(TAG, "Buzzer initialized");
 }
@@ -495,9 +500,6 @@ void send_midi_nrpn(uint8_t channel, uint8_t nrpn_msb, uint8_t nrpn_lsb, uint8_t
     // send_midi_cc(channel, 100, 127);
 }
 
-// PERFORMANCE: Add variable to track input polling frequency
-static int input_poll_counter = 0;
-
 // Update input state
 void update_input_state(InputEvent& event)
 {
@@ -677,3 +679,50 @@ void debug_potentiometer_ranges(int duration_ms)
     ESP_LOGI(TAG, "Percentage of full range used - Pot1: %.1f%%, Pot2: %.1f%%",
             pot1_pct, pot2_pct);
 }
+
+static int s_hall_sensor_min = INT32_MAX;
+static int s_hall_sensor_max = INT32_MIN;
+static bool s_hall_sensor_calibrated = false;
+
+void init_hall_sensor() {
+    ESP_LOGI(TAG, "Initializing Hall effect sensor");
+
+    uint32_t calib_start = esp_timer_get_time() / 1000;
+    uint32_t calib_end = calib_start + 2000;
+
+    ESP_LOGI(TAG, "Calibrating Hall sensor - move magnet through full range for 2 seconds");
+
+    while ((esp_timer_get_time() / 1000) < calib_end) {
+        int reading = hall_sensor_read();
+        if (reading < s_hall_sensor_min) s_hall_sensor_min = reading;
+        if (reading > s_hall_sensor_max) s_hall_sensor_max = reading;
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    s_hall_sensor_calibrated = true;
+    ESP_LOGI(TAG, "Hall sensor calibration complete: min=%d, max=%d, range=%d",
+            s_hall_sensor_min, s_hall_sensor_max,
+            s_hall_sensor_max - s_hall_sensor_min);
+}
+
+int read_hall_sensor() {
+    return hall_sensor_read();
+}
+
+int get_hall_sensor_offset(int min_val, int max_val) {
+    if (!s_hall_sensor_calibrated) {
+        return 64;
+    }
+
+    int current = hall_sensor_read();
+    int range = s_hall_sensor_max - s_hall_sensor_min;
+
+    if (range <= 0) {
+        return 64;
+    }
+
+    int normalized = ((current - s_hall_sensor_min) * (max_val - min_val)) / range + min_val;
+    return std::max(min_val, std::min(max_val, normalized));
+}
+
+#pragma GCC diagnostic pop

@@ -1,4 +1,30 @@
-User Operation Guide
+# ESP-IDF Link
+
+A MIDI synthesizer controller firmware for ESP32 with Ableton Link synchronization, touch-sensitive pads, potentiometer control, and WiFi provisioning.
+
+## Quick Build & Flash
+
+**Requirements**: Docker and USB cable for flashing
+
+```bash
+# One-time setup
+bash setup.sh
+
+# Build firmware
+bash build.sh
+
+# Flash to device
+docker run --rm --device=/dev/ttyUSB0 -v $(pwd):/project \
+  esp-idf-link bash -c \
+  "source /opt/esp/idf/export.sh && idf.py -p /dev/ttyUSB0 flash"
+```
+
+See [BUILD_GUIDE.md](BUILD_GUIDE.md) for detailed build instructions and [QUICK_BUILD.txt](QUICK_BUILD.txt) for quick reference.
+
+---
+
+## User Operation Guide
+
 Here is a guide based on the implemented controls:
 
 General Operation

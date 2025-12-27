@@ -1,0 +1,10 @@
+.gitignore
+.github
+*.md
+build/
+.vscode
+.DS_Store
+*.swp
+*.swo
+*~
+.env

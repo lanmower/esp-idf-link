@@ -1,0 +1,79 @@
+ESP-IDF Link - Docker-Based Build - Quick Reference
+===================================================
+
+REQUIREMENTS:
+  - Docker installed and running
+  - USB cable for device flashing (optional)
+
+FIRST TIME SETUP:
+  bash setup.sh
+
+BUILD PROJECT:
+  bash build.sh
+
+BUILD WITH DOCKER-COMPOSE:
+  docker-compose run --rm build
+
+FLASH TO DEVICE (replace /dev/ttyUSB0 with your port):
+  docker run --rm --device=/dev/ttyUSB0 \
+    -v $(pwd):/project \
+    esp-idf-link \
+    bash -c "source /opt/esp/idf/export.sh && idf.py -p /dev/ttyUSB0 flash"
+
+  OR with docker-compose:
+  docker-compose run --rm flash
+
+MONITOR SERIAL OUTPUT:
+  docker run --rm -it --device=/dev/ttyUSB0 \
+    -v $(pwd):/project \
+    esp-idf-link \
+    bash -c "source /opt/esp/idf/export.sh && idf.py -p /dev/ttyUSB0 monitor"
+
+  OR with docker-compose:
+  docker-compose run --rm monitor
+
+INTERACTIVE SHELL IN CONTAINER:
+  docker-compose run --rm shell
+
+CLEAN BUILD:
+  rm -rf build/
+  bash build.sh
+
+FULL DOCKER IMAGE REBUILD:
+  docker build --no-cache -t esp-idf-link .
+  bash build.sh
+
+CUSTOM BUILD DIRECTORY:
+  BUILD_DIR=/custom/path bash build.sh
+
+BUILD AND FLASH IN ONE COMMAND:
+  bash build.sh && docker run --rm --device=/dev/ttyUSB0 \
+    -v $(pwd):/project \
+    esp-idf-link \
+    bash -c "source /opt/esp/idf/export.sh && idf.py -p /dev/ttyUSB0 flash"
+
+DOCKER CLEANUP:
+  docker image rm esp-idf-link:latest
+  docker image prune  # Clean unused images
+
+KEY DIRECTORIES:
+  - Project source:    Current directory
+  - Build artifacts:   ./build/
+  - Docker image:      esp-idf-link:latest
+
+ADVANTAGES:
+  ✓ No local ESP-IDF installation needed
+  ✓ Pre-built WiFi binaries included
+  ✓ Works on Windows, Mac, and Linux
+  ✓ No filesystem permission issues on WSL2
+  ✓ Consistent reproducible environment
+  ✓ Easy cleanup - just delete the image
+
+TROUBLESHOOTING:
+  - Docker not found:         Install from https://www.docker.com/
+  - Daemon not running:       Start Docker Desktop
+  - Permission on /dev:       sudo usermod -a -G dialout $USER
+  - Slow on WSL2:             Use /home/user paths instead of /mnt/c
+  - Build fails:              docker build --no-cache -t esp-idf-link .
+
+For detailed help, see BUILD_GUIDE.md

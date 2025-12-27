@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  build:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: esp-idf-link:latest
+    container_name: esp-idf-link-build
+    volumes:
+      - .:/project
+    working_dir: /project
+    environment:
+      - IDF_TARGET=esp32
+    command: bash -c "source /opt/esp/idf/export.sh && idf.py build"
+
+  shell:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: esp-idf-link:latest
+    container_name: esp-idf-link-shell
+    volumes:
+      - .:/project
+    working_dir: /project
+    environment:
+      - IDF_TARGET=esp32
+    stdin_open: true
+    tty: true
+    command: bash
+
+  flash:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: esp-idf-link:latest
+    container_name: esp-idf-link-flash
+    volumes:
+      - .:/project
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0
+    working_dir: /project
+    environment:
+      - IDF_TARGET=esp32
+    command: bash -c "source /opt/esp/idf/export.sh && idf.py -p /dev/ttyUSB0 flash"
+
+  monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: esp-idf-link:latest
+    container_name: esp-idf-link-monitor
+    volumes:
+      - .:/project
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0
+    working_dir: /project
+    environment:
+      - IDF_TARGET=esp32
+    stdin_open: true
+    tty: true
+    command: bash -c "source /opt/esp/idf/export.sh && idf.py -p /dev/ttyUSB0 monitor"

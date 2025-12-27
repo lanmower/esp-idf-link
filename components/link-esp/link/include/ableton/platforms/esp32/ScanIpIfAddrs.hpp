@@ -37,7 +37,7 @@ struct ScanIpIfAddrs
   {
     std::vector<::asio::ip::address> addrs;
     // Get first network interface
-    esp_netif_t* esp_netif = esp_netif_next(NULL);
+    esp_netif_t* esp_netif = esp_netif_next_unsafe(NULL);
     while (esp_netif)
     {
       // Check if interface is active
@@ -48,7 +48,7 @@ struct ScanIpIfAddrs
         addrs.emplace_back(::asio::ip::address_v4(ntohl(ip_info.ip.addr)));
       }
       // Get next network interface
-      esp_netif = esp_netif_next(esp_netif);
+      esp_netif = esp_netif_next_unsafe(esp_netif);
     }
     return addrs;
   }

@@ -14,6 +14,8 @@ public:
     void sendNoteOff(uint8_t note, uint8_t velocity = 64) override;
     void sendAllNotesOff() override;
     void sendControlChange(uint8_t controller, uint8_t value) override;
+    void sendModWheel(uint8_t value) override;
+    void sendPitchBend(int16_t value) override;
     void setSidechainLevel(uint8_t level) override;
     void activateDelay() override;
     void setDelayTime(uint8_t value) override;

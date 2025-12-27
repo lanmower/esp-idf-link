@@ -13,6 +13,8 @@ public:
     virtual void sendNoteOff(uint8_t note, uint8_t velocity = 64) = 0;
     virtual void sendAllNotesOff() = 0; // Good practice
     virtual void sendControlChange(uint8_t controller, uint8_t value) = 0; // Send arbitrary CC
+    virtual void sendModWheel(uint8_t value) = 0; // CC 1
+    virtual void sendPitchBend(int16_t value) = 0; // 14-bit pitch bend
 
     // --- Sidechain ---
     virtual void setSidechainPattern(uint8_t pattern_index) = 0; // TODO: Implement in derived classes

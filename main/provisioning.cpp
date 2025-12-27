@@ -63,7 +63,6 @@ static esp_err_t provisioning_config_handler(httpd_req_t *req) {
 
     ESP_LOGI(TAG, "Query: %s", buf);
 
-    // Parse s= (SSID)
     char* s_ptr = strstr(buf, "s=");
     if (s_ptr) {
         s_ptr += 2;
@@ -75,7 +74,6 @@ static esp_err_t provisioning_config_handler(httpd_req_t *req) {
         url_decode(ssid_raw, ssid, sizeof(ssid));
     }
 
-    // Parse p= (Password)
     char* p_ptr = strstr(buf, "p=");
     if (p_ptr) {
         p_ptr += 2;
@@ -92,12 +90,26 @@ static esp_err_t provisioning_config_handler(httpd_req_t *req) {
         return ESP_OK;
     }
 
+    printf("[PROV] Received SSID=%s (len=%zu)\n", ssid, strlen(ssid));
+    fflush(stdout);
     ESP_LOGI(TAG, "Saving: SSID=%s", ssid);
-    wifi_config_set_credentials(ssid, password);
 
+    esp_err_t ret = wifi_config_set_credentials(ssid, password);
+    if (ret != ESP_OK) {
+        printf("[PROV] ERROR: Credential save failed: %d\n", ret);
+        fflush(stdout);
+        ESP_LOGE(TAG, "Failed to save credentials: %s", esp_err_to_name(ret));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Save failed");
+        return ESP_OK;
+    }
+
+    printf("[PROV] SUCCESS: Credentials saved, sending response\n");
+    fflush(stdout);
     const char* resp_str = "Saved";
     httpd_resp_send(req, resp_str, strlen(resp_str));
 
+    printf("[PROV] Setting provisioning_complete=true\n");
+    fflush(stdout);
     g_provisioning_complete = true;
     return ESP_OK;
 }

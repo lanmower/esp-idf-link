@@ -1,10 +1,28 @@
 #!/bin/bash
 
-export IDF_PATH='/opt/esp/idf' 
-'/opt/esp/python_env/idf5.4_py3.12_env/bin/python' '/opt/esp/idf/tools/idf_monitor.py' \
-  -p /dev/ttyUSB0 \
-  -b 115200 \
-  --toolchain-prefix xtensa-esp32-elf- \
-  --make ''/opt/esp/python_env/idf5.4_py3.12_env/bin/python' '/opt/esp/idf/tools/idf.py'' \
-  --target esp32 \
-  '/workspaces/esp-idf-link/build/link-idf-example.elf'
+DEVICE="${1:-/dev/ttyUSB0}"
+BAUD="${2:-115200}"
+
+if [ ! -e "$DEVICE" ]; then
+    echo "Device $DEVICE not found, attempting to reload USB driver..."
+    sudo modprobe -r usbserial 2>/dev/null
+    sleep 1
+    sudo modprobe ch341 2>/dev/null
+    sleep 2
+    
+    if [ ! -e "$DEVICE" ]; then
+        echo "✗ Error: Device still not found after driver reload"
+        echo ""
+        echo "Available serial devices:"
+        ls -la /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || echo "  (none found)"
+        echo ""
+        echo "Usage: $0 [device] [baud]"
+        echo "Example: $0 /dev/ttyUSB0 115200"
+        exit 1
+    fi
+fi
+
+sudo chmod 666 "$DEVICE"
+echo "Monitoring $DEVICE at $BAUD baud (Ctrl+C to exit)..."
+stty -F "$DEVICE" "$BAUD" raw -echo
+cat "$DEVICE"

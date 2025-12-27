@@ -7,7 +7,7 @@
 #include "effect_arp.h" // For arp specific actions/state
 #include "effect_filter.h" // For filter specific actions/state and g_filter_lfo_patched
 #include "effect_sidechain.h" // For sidechain specific actions/state
-#include "io_helpers.h" // For set_buzzer_state
+#include "io_helpers.h" // For set_buzzer_state, get_hall_sensor_offset
 #include "esp_log.h"
 #include "esp_timer.h" // For timing constants
 
@@ -84,10 +84,6 @@ void process_state_event(const InputEvent& event,
     // Commented out unused variables
     // bool pad_pressed[4] = {false, false, false, false};
     // bool pad_released[4] = {false, false, false, false};
-
-    // --- Record when we process this event for accurate timing of subsequent events ---
-    static uint64_t last_event_timestamp_us = 0;
-    last_event_timestamp_us = event.timestamp_us;
 
     // --- 1. Synth switching logic --- (Needs access to synth globals)
     // Remove the old all-pads-held logic for synth switching
@@ -664,6 +660,23 @@ void process_state_event(const InputEvent& event,
     // Note: dispatch_pot_controls is defined in effect_handler.cpp
     if (pots_moved_this_tick) { // Only dispatch if there was actual movement
         dispatch_pot_controls(pot1_delta, pot2_delta);
+    }
+
+    // --- 5.5. Handle Modwheel with Hall Effect Sensor Offset ---
+    // Only send modwheel when NOT adjusting other parameters (no effect is being adjusted)
+    // This prevents pot1 from being used for both modwheel AND effect parameters
+    static int s_last_modwheel_value = -1;
+    if (pots_moved_this_tick && g_current_control_context == ControlContext::NONE && g_current_synth) {
+        int raw_modwheel = event.pot_value[0];
+        int hall_offset = get_hall_sensor_offset(0, 127);
+        int modwheel_with_offset = std::max(0, std::min(127, raw_modwheel + (hall_offset - 64)));
+
+        if (modwheel_with_offset != s_last_modwheel_value) {
+            g_current_synth->sendModWheel(modwheel_with_offset);
+            s_last_modwheel_value = modwheel_with_offset;
+            ESP_LOGD("STATE_MACHINE", "Modwheel: raw=%d, hall_offset=%d, combined=%d",
+                    raw_modwheel, hall_offset, modwheel_with_offset);
+        }
     }
 
     // --- 6. Dispatch Secondary Pad Taps ---

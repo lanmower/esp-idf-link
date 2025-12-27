@@ -36,4 +36,9 @@ void debug_potentiometer_ranges(int duration_ms);
 // Helper function to read ADC values
 esp_err_t read_adc(int pot_index, int* adc_value);
 
+// Hall effect sensor functions
+void init_hall_sensor();
+int read_hall_sensor();
+int get_hall_sensor_offset(int min_val, int max_val);
+
 #endif // IO_HELPERS_H 

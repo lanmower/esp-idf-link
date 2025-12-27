@@ -8,6 +8,9 @@
 #include "synth_interface.h"
 #include "synth_mininova.h" // Include the implementation header
 #include "synth_microkorg.h" // Include the MicroKorg header
+#include "network_midi.h"
+#include "wifi_config.h"
+#include "provisioning.h"
 #include "esp_log.h" // Include logging header
 #include <stdio.h>
 #include "esp_spiffs.h"
@@ -26,6 +29,8 @@ void init_spiffs();
 
 // Define the logging tag for this file
 static const char *TAG = "MAIN";
+
+bool g_provisioning_complete = false;
 
 // --- Global Variable Definitions ---
 // Synth Interface Pointer
@@ -65,6 +70,7 @@ void tickTask(void *userParam) {
     // --- Initialization ---
     init_uart_midi();
     init_adc();
+    init_hall_sensor();
     ESP_LOGE("MAIN", "Calling init_touch_pads()...");
     init_touch_pads();
     ESP_LOGE("MAIN", "init_touch_pads() finished.");
@@ -417,24 +423,89 @@ void init_spiffs() {
 
 // --- app_main --- (Entry point)
 extern "C" void app_main() {
-    // Set log level for touch sensor driver to verbose for detailed debugging
+    printf("\n\n===== APP MAIN STARTED =====\n\n");
+    fflush(stdout);
+
+    printf("[1] Setting log level...\n");
+    fflush(stdout);
     esp_log_level_set("touch", ESP_LOG_VERBOSE);
 
+    printf("[2] Initializing NVS...\n");
+    fflush(stdout);
     ESP_ERROR_CHECK(nvs_flash_init());
+    printf("[3] Initializing netif...\n");
+    fflush(stdout);
     ESP_ERROR_CHECK(esp_netif_init());
+    printf("[4] Creating event loop...\n");
+    fflush(stdout);
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    ESP_ERROR_CHECK(example_connect());
 
-    // Initialize SPIFFS for MIDI files
+    printf("[5] Initializing WiFi config...\n");
+    fflush(stdout);
+    wifi_config_init();
+    printf("[6] Attempting WiFi connect...\n");
+    fflush(stdout);
+
+    printf("[6a] Calling wifi_config_connect()...\n");
+    fflush(stdout);
+    esp_err_t connect_result = wifi_config_connect();
+    printf("[6b] wifi_config_connect() returned: %d (ESP_OK=%d)\n", connect_result, ESP_OK);
+    fflush(stdout);
+
+    if (connect_result == ESP_OK) {
+        int wait_count = 0;
+        while (!wifi_is_connected() && wait_count < 40) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+            wait_count++;
+        }
+
+        if (wifi_is_connected()) {
+            ESP_LOGI(TAG, "WiFi connected successfully");
+        } else {
+            ESP_LOGW(TAG, "WiFi connection timeout, starting provisioning mode");
+            goto provisioning_mode;
+        }
+    } else {
+        goto provisioning_mode;
+    }
+
+    goto wifi_ok;
+
+provisioning_mode:
+    {
+        ESP_LOGI(TAG, "Entering WiFi provisioning mode");
+        wifi_start_hotspot("Link-Device", "");
+        provisioning_start_server();
+
+        while (!g_provisioning_complete) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+
+        provisioning_stop_server();
+        wifi_stop_hotspot();
+        ESP_LOGI(TAG, "Waiting for WiFi driver to stabilize...");
+        vTaskDelay(pdMS_TO_TICKS(2000));
+
+        ESP_LOGI(TAG, "Attempting WiFi connection with saved credentials");
+        wifi_config_connect();
+        int wait_count = 0;
+        while (!wifi_is_connected() && wait_count < 60) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+            wait_count++;
+        }
+
+        if (wifi_is_connected()) {
+            ESP_LOGI(TAG, "WiFi connected after provisioning");
+        } else {
+            ESP_LOGE(TAG, "WiFi connection failed after provisioning (waited 30s), continuing without WiFi");
+        }
+    }
+
+wifi_ok:
     init_spiffs();
-    
-    // Copy MIDI files from data directory to SPIFFS
     copy_midi_files_to_spiffs();
+    network_midi_init();
 
-    // Initializations for tickTask are handled within tickTask itself
-
-    // Increased stack size for safety after adding complexity
-    // Priority 15 to ensure it runs above most other tasks
     xTaskCreate(tickTask, "tickTask", 10240, nullptr, 15, nullptr);
 
     ESP_LOGI(TAG, "app_main finished, tickTask running.");

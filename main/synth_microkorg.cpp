@@ -20,6 +20,21 @@ void SynthMicroKorg::sendControlChange(uint8_t controller, uint8_t value) {
     send_midi_cc(midi_channel, controller, value);
 }
 
+void SynthMicroKorg::sendModWheel(uint8_t value) {
+    ESP_LOGD(TAG_MICROKORG, "Setting Modwheel (CC 1): %d", value);
+    send_midi_cc(midi_channel, 1, value);
+}
+
+void SynthMicroKorg::sendPitchBend(int16_t value) {
+    uint8_t pitch_bend_msg[] = {
+        static_cast<uint8_t>(0xE0 | (midi_channel - 1)),
+        static_cast<uint8_t>(value & 0x7F),
+        static_cast<uint8_t>((value >> 7) & 0x7F)
+    };
+    send_midi_message(pitch_bend_msg, sizeof(pitch_bend_msg));
+    ESP_LOGD(TAG_MICROKORG, "Pitch Bend: %d (LSB: %d, MSB: %d)", value, pitch_bend_msg[1], pitch_bend_msg[2]);
+}
+
 void SynthMicroKorg::sendNoteOn(uint8_t note, uint8_t velocity) {
     // Clamp values before sending
     note = clamp_value(note, (uint8_t)0, (uint8_t)127);
