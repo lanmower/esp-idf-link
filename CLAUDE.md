@@ -47,3 +47,10 @@ The CH341 kernel module must be loaded. This is now configured system-wide:
 - System esptool 4.7.0 has missing stub_flasher_32.json. Fixed by upgrading to user-installed 5.1.0
 - esptool binary doesn't use PYTHONPATH, so script uses `python3.12 -m esptool` instead
 - System requires `sudo modprobe ch341` before first use (set up in `/etc/modprobe.d/wsl-ch340.conf`)
+
+## Build Performance Issue (Critical)
+- Docker Compose builds hang indefinitely when rebuilding only source files (>30min timeout)
+- `docker run` directly also hangs (timeout after 3min)
+- Appears to be Docker Desktop / volume mount issue in WSL2
+- Workaround: Use pre-built binary and iterate via serial testing
+- Root cause: Unknown - possibly Docker Desktop WSL2 integration issue with build caching/volumes
