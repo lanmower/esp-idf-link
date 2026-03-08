@@ -6,14 +6,10 @@ idf_component_register(SRCS
     "link_sync.cpp"
     "io_helpers.cpp"
     "input_handler.cpp"
-    "effect_handler.cpp"
-    "effect_arp.cpp"
-    "effect_filter.cpp"
-    "effect_sidechain.cpp"
     "synth_mininova.cpp"
     "synth_microkorg.cpp"
     "state_machine.cpp"
-    "midi_file.cpp"
+    "bass_engine.cpp"
     "wifi_config.cpp"
     "provisioning.cpp"
     "network_midi.cpp"
@@ -39,7 +35,6 @@ idf_component_register(SRCS
         esp_driver_gpio
         esp_driver_uart
         esp_driver_ledc
-        spiffs
 )
 
 # Set C++ standard to C++17 for this component

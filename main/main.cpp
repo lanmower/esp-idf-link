@@ -3,67 +3,34 @@
 #include "io_helpers.h"
 #include "link_sync.h"
 #include "input_handler.h"
-#include "effect_handler.h"
-#include "state_machine.h" // Include the new state machine header
+#include "state_machine.h"
+#include "bass_engine.h"
 #include "synth_interface.h"
-#include "synth_mininova.h" // Include the implementation header
-#include "synth_microkorg.h" // Include the MicroKorg header
+#include "synth_mininova.h"
 #include "network_midi.h"
 #include "wifi_config.h"
 #include "provisioning.h"
-#include "esp_log.h" // Include logging header
+#include "esp_log.h"
 #include <stdio.h>
-#include "esp_spiffs.h"
 #include "esp_timer.h"
 #include "freertos/task.h"
 #include "protocol_examples_common.h"
-#include <sys/stat.h>
-#include <dirent.h>
-// Effect headers are NOT needed here anymore, included via state_machine.cpp
-// #include "effect_arp.h"
-// #include "effect_sidechain.h"
-// #include "effect_filter.h"
-
-// Function forward declarations
-void init_spiffs();
 
 // Define the logging tag for this file
 static const char *TAG = "MAIN";
 
 bool g_provisioning_complete = false;
 
-// --- Global Variable Definitions ---
-// Synth Interface Pointer
+// Required globals (still declared extern in main.h)
 SynthInterface* g_current_synth = nullptr;
+SynthType       g_synth_type    = SYNTH_MININOVA;
 
-// Add a variable to track which synth is active
-// enum SynthType { SYNTH_MININOVA, SYNTH_MICROKORG }; // Now declared in main.h
-SynthType g_synth_type = SYNTH_MININOVA; // Removed static
+// Double Tap Timing Constants
+const uint64_t DOUBLE_TAP_TIME_MS = 300;
+const uint64_t HOLD_TIME_MS       = 200;
 
 // Link Object
 std::unique_ptr<ableton::Link> g_link;
-
-// Control States (Potentiometers & Touch Pads)
-// int current_pot_val[2] = {0, 0};
-// bool current_touch_state[4] = {false, false, false, false};
-// int last_pot_val[2] = {-1, -1};
-// bool last_touch_state[4] = {false, false, false, false};
-// bool previous_touch_state[4] = {false, false, false, false};
-
-// Interaction State Variables
-// bool touch_held_state[4] = {false, false, false, false};
-// uint64_t pad_press_time[4] = {0, 0, 0, 0};
-// uint64_t pad_release_time[4] = {0, 0, 0, 0};
-// bool pot1_moved_while_held = false;
-// bool pot2_moved_while_held = false;
-
-// Double Tap Timing Constants (Defined in main.h, used across handlers)
-const uint64_t DOUBLE_TAP_TIME_MS = 300;
-const uint64_t HOLD_TIME_MS = 200;
-
-// MIDI Send Optimization State
-// (Defined in respective .cpp files where they are exclusively used,
-// e.g., sidechain state in effect_sidechain.cpp)
 
 // --- tickTask --- (Main application loop)
 void tickTask(void *userParam) {
@@ -76,22 +43,8 @@ void tickTask(void *userParam) {
     ESP_LOGE("MAIN", "init_touch_pads() finished.");
     setup_buzzer();
 
-    // Initialize the Synth Interface (Mininova implementation)
-    // Use MIDI channel 1 by default
-    g_current_synth = new SynthMininova(1);
-    g_synth_type = SYNTH_MININOVA;
-    if (!g_current_synth) {
-        ESP_LOGE(TAG, "Failed to initialize synth interface!");
-        // Handle error appropriately - maybe halt or enter error state
-        while(1) { vTaskDelay(pdMS_TO_TICKS(1000)); }
-    }
-    ESP_LOGI(TAG, "Synth Interface Initialized (Mininova)");
-
     // Initialize Inputs (Reads initial state)
     initialize_inputs();
-
-    // Initialize Effects (Resets latches, pot params etc)
-    initialize_effects();
 
     TaskHandle_t current_task_handle = xTaskGetCurrentTaskHandle();
     init_link_timer(current_task_handle); // <<--- RE-ENABLING Link GPTimer
@@ -142,7 +95,6 @@ void tickTask(void *userParam) {
     // Variables to track notification source
     uint32_t ulNotifiedValue;
     const uint32_t MAIN_TIMER_NOTIFICATION = 1; // Link timer notification value
-    const uint32_t MIDI_TIMER_NOTIFICATION = 2; // MIDI timer notification value
 
     // --- Main Loop ---
     while (true) {
@@ -157,8 +109,6 @@ void tickTask(void *userParam) {
         const auto time = g_link->clock().micros();
         const auto state = g_link->captureAppSessionState();
 
-        // Check if this is a MIDI note timer notification or main timer
-        bool is_midi_timer_notification = (ulNotifiedValue == MIDI_TIMER_NOTIFICATION);
         bool is_main_timer_notification = (ulNotifiedValue == MAIN_TIMER_NOTIFICATION);
 
         // Handle regular tick processing only on main timer notifications
@@ -180,23 +130,15 @@ void tickTask(void *userParam) {
             lastTicks = current_ticks_local; // Update the static lastTicks
         }
 
-        // --- Process MIDI Notes only on MIDI timer to avoid starving metronome ---
-        // This ensures metronome gets priority on main timer notifications
-        if (is_midi_timer_notification && g_midi_player_active) {
-            // Process MIDI notes specifically - no control handling, just note playback
-            g_midi_player.process(state, time);
-        }
-        
-        // --- Process other high-frequency MIDI-related tasks here ---
-        // Handle any other MIDI-specific processing that needs to happen at high frequency
-        // ...
+        // Bass engine note scheduling is handled inside process_state_event.
 
     } // End while(true)
 } // End tickTask
 
+// ── Dead code removed: copy_file / copy_midi_files_to_spiffs / init_spiffs ──
+// (SPIFFS and MIDI file playback replaced by bass_engine.cpp)
 
-
-// Function to copy a file from source to destination
+#if 0
 bool copy_file(const char* src_path, const char* dest_path) {
     FILE* src_file = fopen(src_path, "rb");
     if (!src_file) {
@@ -420,6 +362,7 @@ void init_spiffs() {
         list_dir(dir);
     }
 }
+#endif // 0
 
 // --- app_main --- (Entry point)
 extern "C" void app_main() {
@@ -502,8 +445,6 @@ provisioning_mode:
     }
 
 wifi_ok:
-    init_spiffs();
-    copy_midi_files_to_spiffs();
     network_midi_init();
 
     xTaskCreate(tickTask, "tickTask", 10240, nullptr, 15, nullptr);

@@ -3,8 +3,6 @@
 #include "esp_log.h"
 #include <cmath> // For std::abs
 #include "link_sync.h"
-#include "effect_handler.h"
-#include "touch_handler.h" // Include for NUM_TOUCH_PADS
 #include "main.h"          // Include for NUM_POTS, NUM_TOUCH_PADS etc.
 #include "esp_timer.h"     // For esp_timer_get_time()
 

@@ -43,3 +43,7 @@ components/
 *.exe
 *.out
 *.app
+.glootie-stop-verified
+.gm-stop-verified
+
+.code-search/
