@@ -63,6 +63,7 @@ private:
     };
     static MS mn(int note, float len, int vel, int fcc,
                  float pb = 0.f, float ts = 0.f);
+    static void msInit(MS m[16]);
 
     // Phrase generation
     void regeneratePhrase();

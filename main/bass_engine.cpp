@@ -84,7 +84,7 @@ BassEngine::MS BassEngine::mn(int note, float len, int vel, int fcc,
     return {note, len, vel, fcc, pb, ts};
 }
 
-static void msInit(BassEngine::MS m[16]) {
+void BassEngine::msInit(MS m[16]) {
     for (int i = 0; i < 16; i++) m[i] = {-1, 0.f, 0, 0, 0.f, 0.f};
 }
 
