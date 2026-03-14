@@ -67,7 +67,7 @@ void tickTask(void *userParam) {
         const auto time = g_link->clock().micros();
         const auto state = g_link->captureAppSessionState();
 
-        if (ulNotifiedValue == 1) {
+        if (ulNotifiedValue & 1) {
             int ticks = lastTicks;
             handle_link_sync(was_connected, start_wait_time, force_start,
                              ticks, length, lastBeat, currentBuzzerFreq, was_playing,

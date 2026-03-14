@@ -1,31 +1,31 @@
 #include "link_sync.h"
-#include "io_helpers.h" // For set_buzzer_state
-#include <cmath> // For floor
+#include "io_helpers.h"
+#include <cmath>
 #include <driver/gptimer.h>
-#include "esp_rom_sys.h" // For esp_rom_delay_us
+#include "esp_rom_sys.h"
+#include "esp_timer.h"
 
 // Add logging tag
 static const char *TAG_LINK = "LINK_SYNC";
 
-// Static variables for quantum boundary detection
 static int s_last_quantum_number = -1;
 static gptimer_handle_t s_link_gptimer = nullptr;
 static gptimer_handle_t s_midi_note_gptimer = nullptr;
+static esp_timer_handle_t s_buzzer_off_timer = nullptr;
+
+static void buzzer_off_cb(void*) {
+    set_buzzer_state(false);
+}
 
 static bool IRAM_ATTR link_gptimer_callback(gptimer_handle_t timer, const gptimer_alarm_event_data_t *event_data, void *user_data) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    // Use 1 as notification value for the main timer
-    xTaskNotifyFromISR(static_cast<TaskHandle_t>(user_data), 1, eSetValueWithOverwrite, &xHigherPriorityTaskWoken);
+    xTaskNotifyFromISR(static_cast<TaskHandle_t>(user_data), 1, eSetBits, &xHigherPriorityTaskWoken);
     return xHigherPriorityTaskWoken == pdTRUE;
 }
 
 static bool IRAM_ATTR midi_note_gptimer_callback(gptimer_handle_t timer, const gptimer_alarm_event_data_t *event_data, void *user_data) {
-    // Add specialized handling for MIDI note processing
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    
-    // Use 2 as notification value to distinguish from the main timer which uses 1
-    xTaskNotifyFromISR(static_cast<TaskHandle_t>(user_data), 2, eSetValueWithOverwrite, &xHigherPriorityTaskWoken);
-    
+    xTaskNotifyFromISR(static_cast<TaskHandle_t>(user_data), 2, eSetBits, &xHigherPriorityTaskWoken);
     return xHigherPriorityTaskWoken == pdTRUE;
 }
 
@@ -109,6 +109,11 @@ void init_link_timer(TaskHandle_t task_handle) {
     ESP_ERROR_CHECK(gptimer_enable(s_midi_note_gptimer));
     ESP_ERROR_CHECK(gptimer_start(s_midi_note_gptimer));
     ESP_LOGI(TAG_LINK, "MIDI Note GPTimer Initialized (Period: %d us)", MIDI_PROCESS_PERIOD);
+
+    esp_timer_create_args_t buzzer_timer_args = {};
+    buzzer_timer_args.callback = buzzer_off_cb;
+    buzzer_timer_args.name = "buzzer_off";
+    ESP_ERROR_CHECK(esp_timer_create(&buzzer_timer_args, &s_buzzer_off_timer));
 }
 
 // Main Link Synchronization Logic (called from tickTask)
@@ -118,9 +123,9 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
 {
     // Check peer status & force start timeout
     bool is_connected = g_link->numPeers() > 0;
-    if (!is_connected && !force_start && (esp_timer_get_time() - start_wait_time >= 10000000)) {
+    if (!is_connected && !force_start && (esp_timer_get_time() - start_wait_time >= 5000000)) {
         force_start = true;
-        ESP_LOGW(TAG_LINK, "No Link peers found for 10s, forcing start.");
+        ESP_LOGW(TAG_LINK, "No Link peers found for 5s, forcing start.");
     }
 
     // Handle connection changes (send MIDI Stop/Start)
@@ -174,11 +179,11 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
 
         if (crossedBeat || crossedQuantumBoundary) {
             lastBeat = beatInQuantum;
+            // Edge-triggered buzzer: fire on beat crossing, schedule off
+            set_buzzer_state(true, currentBuzzerFreq);
+            esp_timer_stop(s_buzzer_off_timer);
+            esp_timer_start_once(s_buzzer_off_timer, (int64_t)length * 1000);
         }
-
-        // Buzzer timing: play for 'length' milliseconds at beat boundary
-        bool shouldPlay = (phase - beatInQuantum) < (static_cast<double>(length) / 1000.0);
-        set_buzzer_state(shouldPlay, currentBuzzerFreq);
 
         bool is_playing = state.isPlaying();
 
@@ -190,24 +195,22 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
             was_playing = is_playing;
         }
 
-        // Send MIDI Timing Clock (24 per quarter note)
-        if (midiClocks > lastTicks) {
+        // Send all missed MIDI Timing Clocks (24 per quarter note)
+        while (lastTicks < midiClocks) {
+            lastTicks++;
             const uint8_t timing_msg = MIDI_TIMING_CLOCK;
             uart_write_bytes(MIDI_UART, (const char *)&timing_msg, 1);
+        }
 
-            // Send Song Position Pointer periodically (every 4 beats to avoid spam)
-            // SPP = beat position * 4 (since SPP is in sixteenth notes)
-            if (beatInQuantum % 4 == 0 && crossedBeat) {
-                uint16_t spp_beats = static_cast<uint16_t>(sessionBeat * 4) & 0x3FFF;
-                uint8_t spp_lsb = spp_beats & 0x7F;
-                uint8_t spp_msb = (spp_beats >> 7) & 0x7F;
-                const uint8_t spp_msg[] = {0xF2, spp_lsb, spp_msb};
-                uart_write_bytes(MIDI_UART, (const char *)spp_msg, sizeof(spp_msg));
-            }
+        // Song Position Pointer on beat boundary (every 4 beats)
+        if (beatInQuantum % 4 == 0 && crossedBeat) {
+            uint16_t spp_beats = static_cast<uint16_t>(sessionBeat * 4) & 0x3FFF;
+            uint8_t spp_lsb = spp_beats & 0x7F;
+            uint8_t spp_msb = (spp_beats >> 7) & 0x7F;
+            const uint8_t spp_msg[] = {0xF2, spp_lsb, spp_msb};
+            uart_write_bytes(MIDI_UART, (const char *)spp_msg, sizeof(spp_msg));
         }
     } else {
         set_buzzer_state(false);
     }
-
-    lastTicks = midiClocks;
 }
