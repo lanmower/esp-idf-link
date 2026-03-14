@@ -44,14 +44,13 @@ if [ ! -e "$DEVICE" ]; then
 fi
 
 echo "Flashing to $DEVICE..."
-sudo bash -c "PYTHONPATH=/home/user/.local/lib/python3.12/site-packages:\$PYTHONPATH python3.12 -m esptool \
-    --chip esp32 --port '$DEVICE' -b 460800 \
+sudo PYTHONPATH=/home/user/.local/lib/python3.12/site-packages python3.12 /home/user/.local/bin/esptool \
+    --chip esp32 --port "$DEVICE" -b 460800 \
     --before default-reset --after hard-reset \
-    write-flash \
-    --flash-mode dio --flash-size 4MB --flash-freq 40m \
+    write-flash --flash-mode dio --flash-size 4MB --flash-freq 40m \
     0x1000 build/bootloader/bootloader.bin \
     0x8000 build/partition_table/partition-table.bin \
-    0x20000 build/link-idf-example.bin"
+    0x20000 build/link-idf-example.bin
 
 echo ""
 echo "✓ Flash complete!"
