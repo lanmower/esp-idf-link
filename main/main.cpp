@@ -14,6 +14,7 @@
 #include "esp_timer.h"
 #include "freertos/task.h"
 #include "protocol_examples_common.h"
+#include "esp_mac.h"
 
 static const char *TAG = "MAIN";
 
@@ -85,6 +86,16 @@ extern "C" void app_main() {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(wifi_config_init());
+
+    // Stagger scan start using last MAC byte so devices don't race to both become AP.
+    // Range: 0-3825ms. Devices with different MACs will scan at different times.
+    uint8_t mac[6];
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    uint32_t scan_delay_ms = mac[5] * 15;
+    if (scan_delay_ms > 0) {
+        ESP_LOGI(TAG, "MAC-based scan delay: %"PRIu32"ms", scan_delay_ms);
+        vTaskDelay(pdMS_TO_TICKS(scan_delay_ms));
+    }
 
     ESP_LOGI(TAG, "Scanning for 'ticker' network...");
     bool found = wifi_scan_for_ssid("ticker");
