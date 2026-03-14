@@ -40,14 +40,7 @@ void tickTask(void *userParam) {
     g_link = std::make_unique<ableton::Link>(120.0);
     g_link->enable(true);
 
-    auto sessionState = g_link->captureAppSessionState();
-    const auto time = g_link->clock().micros();
-    const double beat = sessionState.beatAtTime(time, LINK_QUANTUM);
-    const double boundary = std::floor(beat / LINK_QUANTUM) * LINK_QUANTUM;
-    sessionState.forceBeatAtTime(boundary, time, LINK_QUANTUM);
-    g_link->commitAppSessionState(sessionState);
-
-    ESP_LOGI(TAG, "Link init complete, aligned to %.1f", boundary);
+    ESP_LOGI(TAG, "Link init complete");
 
     bool was_connected = false;
     int64_t start_wait_time = esp_timer_get_time();
