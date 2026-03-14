@@ -7,9 +7,6 @@
 #include "esp_log.h"
 #include "soc/rtc.h"
 
-// Set a balanced frequency for MIDI processing - fast enough for accuracy but not overwhelming
-#define MIDI_PROCESS_PERIOD 250 // 4000Hz - reduced from 25kHz to give more CPU time to metronome
-
 // --- Quantum Boundary Detection Info Struct ---
 // Used for consistent phase calculations across all effect implementations
 struct QuantumInfo {

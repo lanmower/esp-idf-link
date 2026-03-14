@@ -41,7 +41,7 @@
 // #define LINK_TICK_PERIOD 100 // Original: 100us period (10 kHz) for Link Timer
 // #define LINK_TICK_PERIOD 10000 // New Value: 10ms period (100 Hz) for Link Timer - to reduce system load
 // #define LINK_TICK_PERIOD 130 // 3840hz  (80x 96hz)
-#define LINK_TICK_PERIOD 500 // 2000hz - balanced for metronome accuracy with MIDI processing
+#define LINK_TICK_PERIOD 250 // 4000hz - tighter beat detection, halves worst-case jitter
 #define NUM_POTS 2         // Number of potentiometers
 #define NUM_TOUCH_PADS 4 // Number of touch pads
 

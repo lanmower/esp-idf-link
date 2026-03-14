@@ -10,7 +10,6 @@ static const char *TAG_LINK = "LINK_SYNC";
 
 static int s_last_quantum_number = -1;
 static gptimer_handle_t s_link_gptimer = nullptr;
-static gptimer_handle_t s_midi_note_gptimer = nullptr;
 static esp_timer_handle_t s_buzzer_off_timer = nullptr;
 
 static void buzzer_off_cb(void*) {
@@ -23,11 +22,6 @@ static bool IRAM_ATTR link_gptimer_callback(gptimer_handle_t timer, const gptime
     return xHigherPriorityTaskWoken == pdTRUE;
 }
 
-static bool IRAM_ATTR midi_note_gptimer_callback(gptimer_handle_t timer, const gptimer_alarm_event_data_t *event_data, void *user_data) {
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    xTaskNotifyFromISR(static_cast<TaskHandle_t>(user_data), 2, eSetBits, &xHigherPriorityTaskWoken);
-    return xHigherPriorityTaskWoken == pdTRUE;
-}
 
 // Simple quantum boundary detection using phase reset
 QuantumInfo detectQuantumBoundary(const ableton::Link::SessionState& state,
@@ -84,34 +78,6 @@ void init_link_timer(TaskHandle_t task_handle) {
     ESP_ERROR_CHECK(gptimer_enable(s_link_gptimer));
     ESP_ERROR_CHECK(gptimer_start(s_link_gptimer));
     ESP_LOGI(TAG_LINK, "Link GPTimer Initialized (Period: %d us)", LINK_TICK_PERIOD);
-    
-    // Initialize the MIDI note processing timer with higher frequency
-    gptimer_config_t midi_timer_config = {};
-    midi_timer_config.clk_src = GPTIMER_CLK_SRC_APB;
-    midi_timer_config.direction = GPTIMER_COUNT_UP;
-    midi_timer_config.resolution_hz = 1000000; // 1 MHz = 1us tick
-    midi_timer_config.intr_priority = 1;       // Lower priority than metronome timer
-    midi_timer_config.flags.intr_shared = 0;
-    
-    ESP_ERROR_CHECK(gptimer_new_timer(&midi_timer_config, &s_midi_note_gptimer));
-    
-    gptimer_event_callbacks_t midi_cbs = {
-        .on_alarm = midi_note_gptimer_callback,
-    };
-    ESP_ERROR_CHECK(gptimer_register_event_callbacks(s_midi_note_gptimer, &midi_cbs, task_handle));
-    
-    ESP_ERROR_CHECK(gptimer_set_raw_count(s_midi_note_gptimer, 0));
-    gptimer_alarm_config_t midi_alarm_config = {
-        .alarm_count = MIDI_PROCESS_PERIOD,
-        .reload_count = 0,
-        .flags = {
-            .auto_reload_on_alarm = 1
-        }
-    };
-    ESP_ERROR_CHECK(::gptimer_set_alarm_action(s_midi_note_gptimer, &midi_alarm_config));
-    ESP_ERROR_CHECK(gptimer_enable(s_midi_note_gptimer));
-    ESP_ERROR_CHECK(gptimer_start(s_midi_note_gptimer));
-    ESP_LOGI(TAG_LINK, "MIDI Note GPTimer Initialized (Period: %d us)", MIDI_PROCESS_PERIOD);
 
     esp_timer_create_args_t buzzer_timer_args = {};
     buzzer_timer_args.callback = buzzer_off_cb;
