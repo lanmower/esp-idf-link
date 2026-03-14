@@ -93,7 +93,7 @@ extern "C" void app_main() {
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     uint32_t scan_delay_ms = mac[5] * 15;
     if (scan_delay_ms > 0) {
-        ESP_LOGI(TAG, "MAC-based scan delay: %"PRIu32"ms", scan_delay_ms);
+        ESP_LOGI(TAG, "MAC-based scan delay: %" PRIu32 "ms", scan_delay_ms);
         vTaskDelay(pdMS_TO_TICKS(scan_delay_ms));
     }
 
