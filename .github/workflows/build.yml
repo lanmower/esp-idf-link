@@ -15,6 +15,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build firmware
         shell: bash
@@ -22,11 +23,15 @@ jobs:
           . /opt/esp/idf/export.sh
           idf.py build
 
-      - name: Upload firmware
-        uses: actions/upload-artifact@v4
-        with:
-          name: firmware
-          path: |
-            build/link-idf-example.bin
-            build/bootloader/bootloader.bin
-            build/partition_table/partition-table.bin
+      - name: Commit binaries
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}"
+          git add -f build/link-idf-example.bin build/bootloader/bootloader.bin build/partition_table/partition-table.bin
+          git diff --cached --quiet && echo "No binary changes" && exit 0
+          git commit -m "ci: update firmware binaries [skip ci]"
+          git push origin HEAD:${{ github.ref_name }}
