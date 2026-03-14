@@ -471,7 +471,7 @@ void BassEngine::playNote(const NoteSlot& n, double bpm) {
     send_midi_message(noteOn, 3);
 
     // CC74 (brightness / filter)
-    send_midi_cc(0, 74, (uint8_t)fcc);
+    send_midi_cc(1, 74, (uint8_t)fcc);
 
     // Pitch bend
     if (n.pitchBend != 0.f) {

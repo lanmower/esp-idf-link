@@ -102,6 +102,7 @@ extern "C" void app_main() {
             wifi_start_link_ap("ticker");
         } else {
             ESP_LOGI(TAG, "Joined 'ticker' network");
+            wifi_join_link_multicast();
         }
     } else {
         ESP_LOGI(TAG, "No 'ticker' found — hosting AP");

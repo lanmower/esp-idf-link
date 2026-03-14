@@ -6,6 +6,9 @@
 #include <lwip/ip_addr.h>
 #include <esp_mac.h>
 
+// Ableton Link peer discovery multicast group
+#define LINK_MCAST_ADDR "224.76.78.75"
+
 static const char* TAG = "WIFI";
 static bool g_wifi_connected = false;
 static bool g_ap_active = false;
@@ -99,7 +102,30 @@ esp_err_t wifi_start_link_ap(const char* ssid) {
 
     g_ap_active = true;
     ESP_LOGI(TAG, "Link AP '%s' on ch6, 192.168.4.1, max 8 clients", ssid);
+
+    // Join Ableton Link multicast group so AP receives discovery frames from STA clients
+    esp_ip4_addr_t mcast = {};
+    mcast.addr = ipaddr_addr(LINK_MCAST_ADDR);
+    esp_err_t mc_err = esp_netif_join_ip4_multicast_group(g_ap_netif, &mcast);
+    if (mc_err == ESP_OK) {
+        ESP_LOGI(TAG, "Joined Link multicast group %s on AP netif", LINK_MCAST_ADDR);
+    } else {
+        ESP_LOGW(TAG, "Failed to join Link multicast group: %s", esp_err_to_name(mc_err));
+    }
     return ESP_OK;
+}
+
+void wifi_join_link_multicast() {
+    // Join Ableton Link multicast on the active STA netif (call after IP is obtained)
+    if (!g_sta_netif) return;
+    esp_ip4_addr_t mcast = {};
+    mcast.addr = ipaddr_addr(LINK_MCAST_ADDR);
+    esp_err_t mc_err = esp_netif_join_ip4_multicast_group(g_sta_netif, &mcast);
+    if (mc_err == ESP_OK) {
+        ESP_LOGI(TAG, "Joined Link multicast group %s on STA netif", LINK_MCAST_ADDR);
+    } else {
+        ESP_LOGW(TAG, "Failed to join Link multicast group on STA: %s", esp_err_to_name(mc_err));
+    }
 }
 
 bool wifi_is_connected() { return g_wifi_connected; }

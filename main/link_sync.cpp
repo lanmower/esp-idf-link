@@ -118,9 +118,9 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
 {
     // Check peer status & force start timeout
     bool is_connected = g_link->numPeers() > 0;
-    if (!is_connected && !force_start && (esp_timer_get_time() - start_wait_time >= 3000000)) {
+    if (!is_connected && !force_start && (esp_timer_get_time() - start_wait_time >= 10000000)) {
         force_start = true;
-        ESP_LOGW(TAG_LINK, "No Link peers found for 60s, forcing start.");
+        ESP_LOGW(TAG_LINK, "No Link peers found for 10s, forcing start.");
     }
 
     // Handle connection changes (send MIDI Stop/Start)
