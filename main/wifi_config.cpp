@@ -4,6 +4,7 @@
 #include <esp_event.h>
 #include <esp_netif.h>
 #include <lwip/ip_addr.h>
+#include <esp_mac.h>
 
 static const char* TAG = "WIFI";
 static bool g_wifi_connected = false;
