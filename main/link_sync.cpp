@@ -40,12 +40,15 @@ QuantumInfo detectQuantumBoundary(const ableton::Link::SessionState& state,
     info.beatInQuantum = static_cast<int>(std::floor(info.phaseWithinQuantum));
     info.beatFraction = info.phaseWithinQuantum - std::floor(info.phaseWithinQuantum);
 
-    // Simple crossing detection: quantum number changed
-    info.crossedQuantumBoundary = (info.currentQuantumNumber != s_last_quantum_number && s_last_quantum_number != -1);
-
-    if (info.crossedQuantumBoundary) {
+    if (s_last_quantum_number == -1) {
         s_last_quantum_number = info.currentQuantumNumber;
+        info.crossedQuantumBoundary = false;
+    } else if (info.currentQuantumNumber != s_last_quantum_number) {
+        s_last_quantum_number = info.currentQuantumNumber;
+        info.crossedQuantumBoundary = true;
         ESP_LOGI(TAG_LINK, "Quantum boundary %d, beat %.2f", info.currentQuantumNumber, info.sessionBeat);
+    } else {
+        info.crossedQuantumBoundary = false;
     }
 
     return info;
@@ -132,6 +135,12 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     if (is_connected != was_connected) {
         ESP_LOGI(TAG_LINK, "Link peers changed: %d", g_link->numPeers());
         if (is_connected) {
+            // Log phase so we can verify Link alignment between devices
+            auto qi = detectQuantumBoundary(state, time);
+            ESP_LOGI(TAG_LINK, "Link connected — beat=%.3f phase=%.3f quantum=%d",
+                     qi.sessionBeat, qi.phaseWithinQuantum, qi.currentQuantumNumber);
+            // Reset lastBeat to avoid spurious trigger from Link phase adjustment
+            lastBeat = qi.beatInQuantum;
             const uint8_t stop_msg[] = {MIDI_STOP};
             uart_write_bytes(MIDI_UART, (const char *)stop_msg, 1);
             uart_wait_tx_done(MIDI_UART, portMAX_DELAY);

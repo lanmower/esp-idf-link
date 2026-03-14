@@ -37,6 +37,8 @@ void tickTask(void *userParam) {
     TaskHandle_t current_task_handle = xTaskGetCurrentTaskHandle();
     init_link_timer(current_task_handle);
 
+    // Brief settle so the network interface is stable before Link opens its multicast socket
+    vTaskDelay(pdMS_TO_TICKS(500));
     g_link = std::make_unique<ableton::Link>(120.0);
     g_link->enable(true);
 
