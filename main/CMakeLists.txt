@@ -11,7 +11,7 @@ idf_component_register(SRCS
     "state_machine.cpp"
     "bass_engine.cpp"
     "wifi_config.cpp"
-    "provisioning.cpp"
+
     "network_midi.cpp"
     REQUIRES
         # Required IDF components
@@ -24,7 +24,7 @@ idf_component_register(SRCS
         log
         freertos
         esp_adc
-        esp_http_server
+
         esp_driver_gptimer
         # esp_driver_touch_sens # Moved to PRIV_REQUIRES
         # Required 3rd-party components
