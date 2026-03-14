@@ -90,79 +90,130 @@ void BassEngine::msInit(MS m[16]) {
 
 // ── Genre generators ───────────────────────────────────────────────────────
 
+// FUNK
+// ctrl1 = pocket density: how many syncopated groove hits fire
+// ctrl2 = melodic spice: 0=root+5th pocket, 1=chromatic approach notes + tritone stabs
 void BassEngine::genFunk(MS m[16], int root, int scIdx, float c1, float c2) {
     msInit(m);
-    m[0] = mn(root, 0.4f, 127, 110);
+    // Strong downbeat always — length shortens with density for more percussive feel
+    m[0] = mn(root, 0.5f - c1*0.2f, 127, 110);
 
-    static const int GROOVES[4][4] = {{3,7,10,14},{2,5,8,14},{3,6,11,14},{2,5,9,13}};
+    // Four groove templates weighted toward syncopation
+    static const int GROOVES[4][4] = {{3,7,10,14},{2,6,9,13},{3,5,10,13},{2,7,11,14}};
     const int* groove = GROOVES[ri(4)];
+
+    // Spicy note palette: scale tones + approach notes
+    // Low spice: 5th, minor 7th  |  High spice: b5, b2, maj7 (approach notes)
+    static const int POCKET[]  = {0, 5, 7, 10};          // root, 4th, 5th, m7
+    static const int SPICE[]   = {6, 1, 11, 10, 3};      // b5, b2, maj7, m7, m3
+    static const int APPROACH[] = {-1, 1, -2, 2};        // chromatic approaches to root
 
     for (int k = 0; k < 4; k++) {
         int s = groove[k];
-        if (!rc(0.3f + c1*0.7f)) continue;
-        bool isPop = rc(0.1f + c1*0.5f);
+        if (!rc(0.25f + c1*0.75f)) continue;
+
         int n = root;
-        if (isPop) {
-            n += 12;
-        } else if (rc(c2*0.9f)) {
-            static const int filth[] = {6,1,10,3};
-            n += r_arr(filth);
+        bool isApproach = rc(c2 * 0.5f);
+        if (isApproach) {
+            // Chromatic approach into root on the very next step
+            n += r_arr(APPROACH);
+            m[s] = mn(n, 0.13f, 90, 40);
+        } else if (rc(c2)) {
+            n += SPICE[ri(5)];
+            m[s] = mn(n, 0.2f, 110, int(60 + c2*50));
         } else {
-            static const int pocket[] = {0,0,5,7};
-            n += r_arr(pocket);
+            n += POCKET[ri(4)];
+            m[s] = mn(n, 0.25f, 105, 80);
         }
-        m[s] = mn(n, 0.25f, isPop?127:105, isPop?120:80);
-        if (s > 0 && m[s-1].note < 0 && rc(0.3f + c2*0.6f))
-            m[s-1] = mn(root, 0.1f, 45, 20);
+        // Ghost note one step before with higher c1
+        if (s > 1 && m[s-1].note < 0 && rc(c1 * 0.6f))
+            m[s-1] = mn(root, 0.1f, 40, 15);
     }
-    if (c2 > 0.3f && rc(c2) && m[15].note < 0)
-        m[15] = mn(root+6, 0.2f, 100, 75);
+    // Tritone pickup on step 15 at high spice
+    if (c2 > 0.5f && rc(c2 - 0.3f) && m[15].note < 0)
+        m[15] = mn(root + 6, 0.15f, 95, 70);
 }
 
+// ITALO
+// ctrl1 = melodic drive: 0=pure root drone, 1=active pitch movement on every offbeat
+// ctrl2 = articulation: 0=legato pumping (long notes), 1=staccato attack (short, filter open)
 void BassEngine::genItalo(MS m[16], int root, int scIdx, float c1, float c2) {
     msInit(m);
-    int sc2 = sc(scIdx, 2);
-    int sc1v = sc(scIdx, 1);
-    int sc4  = sc(scIdx, 4);
-    int degs[3] = {12, sc2 ? sc2 : 3, sc1v ? sc1v : sc4 ? sc4 : 7};
+    int sc2v = sc(scIdx, 2);
+    int sc4v = sc(scIdx, 4);
+    int sc6v = sc(scIdx, 6);
+    // Walking note sequence built from scale degrees
+    int walk[4] = {0, sc2v ? sc2v : 3, sc4v ? sc4v : 7, sc6v ? sc6v : 10};
 
     for (int s = 0; s < 16; s++) {
         bool isAccent = (s % 4 == 0);
-        float len = 0.6f - c2*0.45f;
-        int vel = isAccent ? 120 : (s%2==0 ? 100 : 80);
+        float len = 0.65f - c2 * 0.5f;          // legato→staccato
+        int fcc = isAccent ? int(80 + c2*47) : int(50 + c2*60);  // filter opens on staccato
+        int vel = isAccent ? 125 : (s%2==0 ? 105 : 85);
+
         int n = root;
-        if (c1 > 0.1f && s%2 != 0) {
-            int deg = degs[ri(3)];
-            if (rc(c1)) n += deg;
+        if (s % 2 != 0) {
+            // Offbeats: walk through scale at high c1, hold root at low c1
+            float walkChance = c1 * 0.9f;
+            if (rc(walkChance)) {
+                int step = (s / 2) % 4;
+                n += walk[step];
+                // At very high c1, occasional chromatic approach from above
+                if (c1 > 0.7f && rc((c1 - 0.7f) * 2.0f))
+                    n = root + (walk[step] > 0 ? walk[step] - 1 : 11);
+            }
         }
-        m[s] = mn(n, len, vel, vel-20);
+        m[s] = mn(n, len, vel, fcc);
     }
 }
 
+// SYNTHPOP
+// ctrl1 = harmonic reach: 0=root+octave patterns, 1=wide modal arpeggios with tension tones
+// ctrl2 = syncopation: 0=straight 16ths, 1=highly gapped/syncopated
 void BassEngine::genSynthpop(MS m[16], int root, int scIdx, float c1, float c2) {
     msInit(m);
-    // Three arp patterns and gap patterns
-    static const int ARPS[3][4] = {{0,0,12,0},{0,3,7,0},{0,12,0,7}};
-    static const int GAPS[2][4] = {{3,7,11,15},{1,5,9,13}};
-    const int* arp = ARPS[ri(3)];
-    const int* gaps = GAPS[ri(2)];
-
     int sc2v = sc(scIdx, 2);
+    int sc4v = sc(scIdx, 4);
     int sc5v = sc(scIdx, 5);
+    int sc6v = sc(scIdx, 6);
+
+    // Arp shapes: low c1 = octave-based, high c1 = rich modal shapes
+    // Each shape is 4 intervals cycling across 16 steps
+    int shape[4];
+    if (c1 < 0.33f) {
+        // Simple octave movement
+        const int S[4] = {0, 0, 12, 0};
+        memcpy(shape, S, sizeof(shape));
+    } else if (c1 < 0.66f) {
+        // Scale-based arpeggio using 3rd and 5th
+        shape[0] = 0;
+        shape[1] = sc2v ? sc2v : 3;
+        shape[2] = sc4v ? sc4v : 7;
+        shape[3] = 12;
+    } else {
+        // Wider reach: 5th, octave, and modal tension tones
+        shape[0] = 0;
+        shape[1] = sc4v ? sc4v : 7;
+        shape[2] = sc6v ? sc6v : 10;
+        shape[3] = sc5v ? sc5v+12 : 9;  // high tension interval
+    }
+
+    // Gap template: more gaps at high c2
+    bool gap[16] = {};
+    int numGaps = int(2 + c2 * 6);
+    static const int GAP_SLOTS[8] = {1, 3, 5, 7, 9, 11, 13, 15};
+    for (int g = 0; g < numGaps && g < 8; g++) {
+        if (rc(0.5f + c2 * 0.4f)) gap[GAP_SLOTS[g]] = true;
+    }
 
     for (int s = 0; s < 16; s++) {
-        // Syncopated gaps
-        bool isGap = false;
-        for (int g = 0; g < 4; g++) if (gaps[g] == s) { isGap = true; break; }
-        if (isGap && rc(0.3f + c2*0.7f)) continue;
-        if (s >= 14 && rc(c2)) continue;
-
-        int interval = arp[(s/2) % 4];
-        // Twilight tension on back half
-        if (s >= 8 && rc(c1*0.9f))
-            interval = rc(0.5f) ? (sc2v ? sc2v : 3) : (sc5v ? sc5v : 8);
-
-        m[s] = mn(root + interval, 0.7f, 105, 90);
+        if (gap[s]) continue;
+        int interval = shape[(s / 2) % 4];
+        // At high c1 and back half: inject modal tension note
+        if (s >= 10 && c1 > 0.5f && rc((c1 - 0.4f) * 1.5f))
+            interval = sc5v ? sc5v : 8;
+        int fcc = int(70 + c1 * 50);
+        m[s] = mn(root + interval, 0.65f, s%4==0 ? 115 : 95, fcc);
     }
 }
 
@@ -200,38 +251,71 @@ void BassEngine::genPsytrance(MS m[16], int root, int scIdx, float c1, float c2)
     }
 }
 
+// PROG
+// ctrl1 = note density: 0=sparse long held tones, 1=dense rhythmic hits
+// ctrl2 = harmonic adventure: 0=root/5th only, 1=chromatic passing tones + tritone subs
 void BassEngine::genProg(MS m[16], int root, int scIdx, float c1, float c2) {
     msInit(m);
-    static const int PATS[3][5] = {{2,5,8,11,14},{2,6,10,14,-1},{3,6,9,12,14}};
-    const int* pat = PATS[ri(3)];
-    int patLen = 5;
-
     int sc2v = sc(scIdx, 2);
+    int sc3v = sc(scIdx, 3);
+    int sc4v = sc(scIdx, 4);
     int sc6v = sc(scIdx, 6);
 
+    // Density controls which pattern template to use
+    static const int PAT_SPARSE[4]  = {0, 8, -1, -1};
+    static const int PAT_MID[5]     = {0, 5, 8, 12, -1};
+    static const int PAT_DENSE[7]   = {0, 2, 5, 7, 9, 11, 14};
+    const int* pat;
+    int patLen;
+    if (c1 < 0.35f)      { pat = PAT_SPARSE; patLen = 4; }
+    else if (c1 < 0.7f)  { pat = PAT_MID;    patLen = 5; }
+    else                 { pat = PAT_DENSE;   patLen = 7; }
+
+    int safeNotes[4]  = {0, sc4v?sc4v:7, 12, sc2v?sc2v:3};
+    int spiceNotes[4] = {sc3v?sc3v:5, sc6v?sc6v:10, 6, sc2v?sc2v+12:15};
+
     for (int idx = 0; idx < patLen; idx++) {
-        if (pat[idx] < 0) break;
         int s = pat[idx];
-        bool tie = (idx+1 < patLen && pat[idx+1] >= 0 && pat[idx+1] - s <= 2);
-        int jump = rc(c2) ? r_arr((const int[3]){sc2v?sc2v:3, sc6v?sc6v:10, -12}) : 0;
-        float len = tie ? 0.6f + c1*1.5f : 0.4f + c1*0.4f;
-        m[s] = mn(root + jump, len, 115, 60);
+        if (s < 0) break;
+        bool nextClose = (idx+1 < patLen && pat[idx+1] >= 0 && pat[idx+1] - s <= 2);
+        float len = nextClose ? 0.5f + c1*0.8f : 1.0f - c1*0.6f;
+        int n = root;
+        if (rc(c2)) {
+            n += (c2 > 0.6f && rc(c2 - 0.4f)) ? spiceNotes[ri(4)] : safeNotes[ri(4)];
+        }
+        int vel = (s == 0 || s == 8) ? 120 : int(95 + c1*20);
+        m[s] = mn(n, len, vel, int(50 + c2*60));
     }
 }
 
+// AFROHOUSE
+// ctrl1 = groove density: 0=two-note minimal (beat 1+3), 1=all five syncopated hits
+// ctrl2 = sub-bass texture: 0=upper register bright, 1=sub-octave drops + closed filter
 void BassEngine::genAfrohouse(MS m[16], int root, int scIdx, float c1, float c2) {
     msInit(m);
     static const int PATS[3][5] = {{3,6,8,11,14},{0,4,7,12,14},{2,5,8,10,13}};
     const int* pat = PATS[ri(3)];
     int sc2v = sc(scIdx, 2);
+    int sc4v = sc(scIdx, 4);
+    // Spice: pentatonic shapes + chromatic neighbours
+    int spice[4] = {sc2v?sc2v:3, sc4v?sc4v:7, sc2v?sc2v+7:10, 5};
 
     for (int idx = 0; idx < 5; idx++) {
         int s = pat[idx];
-        if (rc(c1) && s != 0 && s != 8) continue;
+        bool isAnchor = (s == 0 || s == 8);
+        // Low c1 = sparse (only anchor beats), high c1 = all hits
+        if (!isAnchor && !rc(c1 * 1.1f)) continue;
+
         int n = root;
-        if (idx%2 != 0 && rc(0.4f)) n += sc2v;
-        if (rc(c2)) n -= 12;
-        m[s] = mn(n, 0.5f, 105, (int)(70 - c2*30));
+        // Melodic movement on offbeats
+        if (!isAnchor && rc(0.5f))
+            n += spice[ri(4)];
+        // Sub-bass drop at high c2
+        if (rc(c2 * 0.8f))
+            n -= 12;
+
+        int fcc = int(90 - c2 * 55);  // filter closes with sub-bass
+        m[s] = mn(n, isAnchor ? 0.7f : 0.45f, isAnchor ? 115 : 100, fcc);
     }
 }
 
@@ -262,24 +346,68 @@ void BassEngine::genUkg(MS m[16], int root, int scIdx, float c1, float c2) {
     }
 }
 
+// GFUNK
+// ctrl1 = slide intensity: 0=clean held tones, 1=chromatic slides + pitch bends on every hit
+// ctrl2 = melodic richness: 0=root-centric (just root+octave), 1=full upper-register melody
 void BassEngine::genGfunk(MS m[16], int root, int scIdx, float c1, float c2) {
     msInit(m);
+    int sc2v = sc(scIdx, 2);
     int sc3v = sc(scIdx, 3);
     int sc4v = sc(scIdx, 4);
-    int sc2v = sc(scIdx, 2);
+    int sc5v = sc(scIdx, 5);
 
-    m[0] = mn(root, 1.5f, 120, 90);
+    // Downbeats always present, length modulated by slide intensity
+    float downLen = 1.8f - c1 * 0.8f;
+    m[0] = mn(root, downLen, 122, 88);
+    m[8] = mn(root, downLen - 0.2f, 118, 82);
 
-    if (rc(0.2f + c2*0.8f)) m[3] = mn(root+12, 0.5f, 100, 70);
-    if (rc(0.4f + c2*0.6f)) m[6] = mn(root+(sc2v?sc2v:3), 0.75f, 110, 80);
-    m[8] = mn(root, 1.5f, 115, 85);
+    // Octave pop: always at high c2, sometimes at low c2
+    if (rc(0.15f + c2 * 0.85f))
+        m[3] = mn(root + 12, 0.45f, 105, int(65 + c2*40), c1 > 0.4f ? -2.f : 0.f);
 
-    if (rc(c1 + 0.3f)) {
-        m[13] = mn(root+(sc3v?sc3v:5), 0.5f, 100, 80);
-        float slideSize = rc(0.5f) ? -2.f : 3.f;
-        m[14] = mn(root+(sc4v?sc4v:7), 1.0f, 120, 100, slideSize*c1*3.f);
-    } else {
-        if (rc(0.5f)) m[14] = mn(root-12, 1.0f, 110, 80, 2.f);
+    // Mid-bar melodic fill driven by c2
+    if (rc(0.3f + c2 * 0.7f)) {
+        int melody[4] = {sc2v?sc2v:3, sc3v?sc3v:5, sc4v?sc4v:7, sc5v?sc5v:9};
+        m[6] = mn(root + melody[ri(4)], 0.7f, 112, int(70 + c2*45));
+    }
+
+    // Slide run into next phrase at high c1
+    if (rc(0.25f + c1 * 0.75f)) {
+        float slideDown = -(1.f + c1 * 2.f);
+        float slideUp   =  (1.f + c1 * 3.f);
+        m[13] = mn(root + (sc3v?sc3v:5), 0.5f, 102, 82, 0.f);
+        m[14] = mn(root + (sc4v?sc4v:7), 1.2f, 122, 105, rc(0.6f) ? slideUp : slideDown);
+    } else if (rc(0.5f)) {
+        m[14] = mn(root - 12, 0.9f, 108, 78, c1 * 2.5f);
+    }
+
+    // At high c2: add a high inner melody note
+    if (c2 > 0.6f && rc(c2 - 0.4f)) {
+        int hiNote = root + (sc5v?sc5v+12:21);
+        m[11] = mn(hiNote, 0.5f, 95, int(60 + c2*60), c1 > 0.5f ? 2.f : 0.f);
+    }
+}
+
+// ── Anchor: prevent drift from tonal center ────────────────────────────────
+// Ensures step 0 and step 8 stay on strong tones; clamps all notes to a
+// singable range (root-2 semitones to root+14) so continuity blending
+// can't walk notes into incoherent register extremes.
+void BassEngine::anchorMotif(MS m[16], int root, int scIdx) {
+    int sc4v = sc(scIdx, 4);  // 5th degree — strong mid-bar landing tone
+
+    // Step 0: must be root (or very close)
+    if (m[0].note < 0 || std::abs(m[0].note - root) > 2)
+        m[0] = mn(root, 0.5f, 120, 90);
+
+    // Step 8 (mid-phrase downbeat): root or 5th
+    if (m[8].note < 0)
+        m[8] = mn(root + (rc(0.4f) ? sc4v : 0), 0.5f, 112, 85);
+
+    // Clamp all notes within a musically sane range around the root
+    for (int i = 0; i < 16; i++) {
+        if (m[i].note < 0) continue;
+        while (m[i].note > root + 15) m[i].note -= 12;
+        while (m[i].note < root - 3)  m[i].note += 12;
     }
 }
 
@@ -404,6 +532,9 @@ void BassEngine::regeneratePhrase() {
     }
     memcpy(m_prevMotA, motA, sizeof(motA));
     m_hasPrevMotA = true;
+
+    // Anchor to tonal center after blend (prevents drift over time)
+    anchorMotif(motA, ROOT, m_scaleIdx);
 
     // Transforms — complexity arc: simpler early, richer over time
     // phraseCount mod 8 cycles through an arc: simplify → modal → drift → full
