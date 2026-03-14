@@ -369,32 +369,53 @@ void BassEngine::regeneratePhrase() {
 
     const GenreCfg& cfg = GCFG[m_genre];
 
-    // Pick scale and chord progression
-    m_scaleIdx = cfg.scales[ri(2)];
-    m_progIdx  = ri(3);
+    // Hold scale for 2-4 phrases for harmonic continuity, then change
+    if (m_scaleHoldCount <= 0) {
+        m_scaleIdx      = cfg.scales[ri(2)];
+        m_scaleHoldCount = 2 + ri(3); // hold 2-4 phrases
+    } else {
+        m_scaleHoldCount--;
+    }
+    m_progIdx = ri(3);
     const int* prog = cfg.progs[m_progIdx];
 
-    // Generate motif A
+    // Generate motif A — blend with previous if available for continuity
     MS motA[16], motB[16], motC[16], motD[16];
+    MS freshA[16];
     switch (m_genre) {
-        case GENRE_FUNK:      genFunk     (motA, ROOT, m_scaleIdx, m_ctrl1, m_ctrl2); break;
-        case GENRE_ITALO:     genItalo    (motA, ROOT, m_scaleIdx, m_ctrl1, m_ctrl2); break;
-        case GENRE_SYNTHPOP:  genSynthpop (motA, ROOT, m_scaleIdx, m_ctrl1, m_ctrl2); break;
-        case GENRE_PSYTRANCE: genPsytrance(motA, ROOT, m_scaleIdx, m_ctrl1, m_ctrl2); break;
-        case GENRE_PROG:      genProg     (motA, ROOT, m_scaleIdx, m_ctrl1, m_ctrl2); break;
-        case GENRE_AFROHOUSE: genAfrohouse(motA, ROOT, m_scaleIdx, m_ctrl1, m_ctrl2); break;
-        case GENRE_UKG:       genUkg      (motA, ROOT, m_scaleIdx, m_ctrl1, m_ctrl2); break;
-        case GENRE_GFUNK:     genGfunk    (motA, ROOT, m_scaleIdx, m_ctrl1, m_ctrl2); break;
+        case GENRE_FUNK:      genFunk     (freshA, ROOT, m_scaleIdx, m_ctrl1, m_ctrl2); break;
+        case GENRE_ITALO:     genItalo    (freshA, ROOT, m_scaleIdx, m_ctrl1, m_ctrl2); break;
+        case GENRE_SYNTHPOP:  genSynthpop (freshA, ROOT, m_scaleIdx, m_ctrl1, m_ctrl2); break;
+        case GENRE_PSYTRANCE: genPsytrance(freshA, ROOT, m_scaleIdx, m_ctrl1, m_ctrl2); break;
+        case GENRE_PROG:      genProg     (freshA, ROOT, m_scaleIdx, m_ctrl1, m_ctrl2); break;
+        case GENRE_AFROHOUSE: genAfrohouse(freshA, ROOT, m_scaleIdx, m_ctrl1, m_ctrl2); break;
+        case GENRE_UKG:       genUkg      (freshA, ROOT, m_scaleIdx, m_ctrl1, m_ctrl2); break;
+        case GENRE_GFUNK:     genGfunk    (freshA, ROOT, m_scaleIdx, m_ctrl1, m_ctrl2); break;
     }
 
-    // Transforms
-    static const int XFORMS[4] = {0, 1, 2, 3};
-    transformMotif(motA, motB, XFORMS[ri(4)], ROOT, m_scaleIdx);
-    transformMotif(motA, motC, XFORMS[ri(4)], ROOT, m_scaleIdx);
-    transformMotif(motA, motD, 3,              ROOT, m_scaleIdx); // drift for D
+    // Blend with previous motif for continuity: keep ~40% of slots from prev phrase
+    if (m_hasPrevMotA) {
+        for (int i = 0; i < 16; i++) {
+            bool keepPrev = (m_prevMotA[i].note >= 0) && rc(0.4f);
+            motA[i] = keepPrev ? m_prevMotA[i] : freshA[i];
+        }
+    } else {
+        memcpy(motA, freshA, sizeof(motA));
+    }
+    memcpy(m_prevMotA, motA, sizeof(motA));
+    m_hasPrevMotA = true;
 
-    // Phrase structure
-    float varVal = 0.35f; // fixed mid-variance
+    // Transforms — complexity arc: simpler early, richer over time
+    // phraseCount mod 8 cycles through an arc: simplify → modal → drift → full
+    int arc = m_phraseCount % 8;
+    int xformB = (arc < 2) ? 0 : (arc < 5) ? 2 : ri(4); // simplify → modal → random
+    int xformC = (arc < 3) ? 0 : (arc < 6) ? 1 : ri(4); // simplify → subDrop → random
+    transformMotif(motA, motB, xformB, ROOT, m_scaleIdx);
+    transformMotif(motA, motC, xformC, ROOT, m_scaleIdx);
+    transformMotif(motA, motD, 3,      ROOT, m_scaleIdx);
+
+    // Phrase structure driven by ctrl2: low = repetitive (AAAD), high = complex (ABAC)
+    float varVal = m_ctrl2;
     const char* structure;
     float rnd = rand01();
     if      (varVal < 0.2f) structure = "AAAD";
@@ -520,8 +541,11 @@ void BassEngine::setGenre(int genre_idx) {
             send_midi_message(noteOff, 3);
         }
         m_activeNotes.clear();
-        m_phraseCount = 0;
-        m_lastPos     = -1.0;
+        m_phraseCount    = 0;
+        m_lastPos        = -1.0;
+        m_hasPrevMotA    = false;
+        m_scaleHoldCount = 0;
+        m_regenPending   = false;
         regeneratePhrase();
     }
     ESP_LOGI(TAG, "Genre set to %d", m_genre);
@@ -529,12 +553,12 @@ void BassEngine::setGenre(int genre_idx) {
 
 void BassEngine::setCtrl1(float v) {
     m_ctrl1 = v;
-    if (m_active) regeneratePhrase();
+    if (m_active) m_regenPending = true;
 }
 
 void BassEngine::setCtrl2(float v) {
     m_ctrl2 = v;
-    if (m_active) regeneratePhrase();
+    if (m_active) m_regenPending = true;
 }
 
 void BassEngine::stop() {
@@ -558,9 +582,10 @@ void BassEngine::process(const ableton::Link::SessionState& state,
     // 256 steps = 64 beats (16 bars × 4 beats/bar).
     double phrasePos = std::fmod(beat * 4.0, 256.0);
 
-    // Detect phrase wrap → regenerate
+    // Detect phrase wrap → regenerate (also flush any pending ctrl change)
     if (m_lastPos >= 0.0 && phrasePos < m_lastPos - 128.0) {
         regeneratePhrase();
+        m_regenPending = false;
     }
 
     if (m_lastPos < 0.0) {

@@ -104,14 +104,18 @@ private:
     struct ActiveNote { int note; double offPos; };
     std::vector<ActiveNote> m_activeNotes;
 
-    int    m_genre       = GENRE_FUNK;
-    float  m_ctrl1       = 0.5f;
-    float  m_ctrl2       = 0.5f;
-    bool   m_active      = false;
-    int    m_phraseCount = 0;
-    double m_lastPos     = -1.0;
-    int    m_scaleIdx    = 0;
-    int    m_progIdx     = 0;
+    int    m_genre          = GENRE_FUNK;
+    float  m_ctrl1          = 0.5f;
+    float  m_ctrl2          = 0.5f;
+    bool   m_active         = false;
+    int    m_phraseCount    = 0;
+    double m_lastPos        = -1.0;
+    int    m_scaleIdx       = 0;
+    int    m_progIdx        = 0;
+    bool   m_regenPending   = false;   // deferred regen at phrase boundary
+    int    m_scaleHoldCount = 0;       // phrases remaining on current scale
+    MS     m_prevMotA[16]   = {};      // motif A from previous phrase for continuity
+    bool   m_hasPrevMotA    = false;
 };
 
 extern BassEngine g_bassEngine;
