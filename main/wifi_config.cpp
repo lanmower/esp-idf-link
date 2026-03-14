@@ -3,11 +3,22 @@
 #include <esp_log.h>
 #include <esp_event.h>
 #include <esp_netif.h>
+#include <esp_netif_net_stack.h>
 #include <lwip/ip_addr.h>
+#include <lwip/igmp.h>
+#include <lwip/netif.h>
 #include <esp_mac.h>
 
-// Ableton Link peer discovery multicast group
-#define LINK_MCAST_ADDR "224.76.78.75"
+// Ableton Link peer discovery multicast group (224.76.78.75)
+static const ip4_addr_t LINK_MCAST = { .addr = PP_HTONL(LWIP_MAKEU32(224, 76, 78, 75)) };
+
+static void igmp_join_link(esp_netif_t* netif) {
+    if (!netif) return;
+    struct netif* lwip_netif = (struct netif*)esp_netif_get_netif_impl(netif);
+    if (!lwip_netif) return;
+    err_t err = igmp_joingroup_netif(lwip_netif, &LINK_MCAST);
+    ESP_LOGI("WIFI", "IGMP join 224.76.78.75: %s", err == ERR_OK ? "ok" : "failed");
+}
 
 static const char* TAG = "WIFI";
 static bool g_wifi_connected = false;
@@ -102,30 +113,12 @@ esp_err_t wifi_start_link_ap(const char* ssid) {
 
     g_ap_active = true;
     ESP_LOGI(TAG, "Link AP '%s' on ch6, 192.168.4.1, max 8 clients", ssid);
-
-    // Join Ableton Link multicast group so AP receives discovery frames from STA clients
-    esp_ip4_addr_t mcast = {};
-    mcast.addr = ipaddr_addr(LINK_MCAST_ADDR);
-    esp_err_t mc_err = esp_netif_join_ip4_multicast_group(g_ap_netif, &mcast);
-    if (mc_err == ESP_OK) {
-        ESP_LOGI(TAG, "Joined Link multicast group %s on AP netif", LINK_MCAST_ADDR);
-    } else {
-        ESP_LOGW(TAG, "Failed to join Link multicast group: %s", esp_err_to_name(mc_err));
-    }
+    igmp_join_link(g_ap_netif);
     return ESP_OK;
 }
 
 void wifi_join_link_multicast() {
-    // Join Ableton Link multicast on the active STA netif (call after IP is obtained)
-    if (!g_sta_netif) return;
-    esp_ip4_addr_t mcast = {};
-    mcast.addr = ipaddr_addr(LINK_MCAST_ADDR);
-    esp_err_t mc_err = esp_netif_join_ip4_multicast_group(g_sta_netif, &mcast);
-    if (mc_err == ESP_OK) {
-        ESP_LOGI(TAG, "Joined Link multicast group %s on STA netif", LINK_MCAST_ADDR);
-    } else {
-        ESP_LOGW(TAG, "Failed to join Link multicast group on STA: %s", esp_err_to_name(mc_err));
-    }
+    igmp_join_link(g_sta_netif);
 }
 
 bool wifi_is_connected() { return g_wifi_connected; }
