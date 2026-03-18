@@ -1,7 +1,7 @@
 // bass_engine.cpp
 // C++ port of the 8-genre bass algorithm from the HTML prototype.
-// Phrase = 256 steps (16 bars × 16 steps).  1 step = 1/16 note.
-// Link beat → phrase pos:  pos = fmod(beat * 4.0, 256.0)
+// Phrase = 1024 steps (64 bars × 16 steps).  1 step = 1/16 note.
+// Link beat → phrase pos:  pos = fmod(beat * 4.0, 1024.0)
 
 #include "bass_engine.h"
 #include "io_helpers.h"
@@ -60,8 +60,8 @@ static const GenreCfg GCFG[8] = {
     // mostly static with phrygian tension flicks (hypnotic repetition is the point)
     {4, 0.00f, {6,2}, {{0,0,1,0},{0,1,0,7},{0,0,10,1}}},
     // PROG (124 BPM, swing 0.01s → 0.083 steps)
-    // i→bVI→bII→V | i→bIII→V→bVII | i→IV→bII→bVI  (bold chromaticism, Squarepusher/Meshuggah)
-    {4, 0.08f, {1,2}, {{0,8,1,7},{0,3,7,10},{0,5,1,8}}},
+    // i→bVI→V→bVII | i→bIII→V→bVII | i→IV→bVI→bIII (dark modal, no bII cross-intervals)
+    {4, 0.08f, {1,2}, {{0,8,7,10},{0,3,7,10},{0,5,8,3}}},
     // AFROHOUSE (122 BPM, swing 0.035s → 0.285 steps)
     // hypnotic minimal root motion, occasional bVI/bVII colour
     {4, 0.29f, {1,2}, {{0,0,10,7},{0,8,0,10},{0,5,0,3}}},
@@ -70,7 +70,8 @@ static const GenreCfg GCFG[8] = {
     {2, 0.44f, {1,3}, {{0,8,5,10},{0,3,10,7},{0,5,8,3}}},
     // GFUNK (95 BPM, swing 0.045s → 0.285 steps)
     // i→IV→i→bVII | i→V→IV→bIII | i→bIII→V→IV  (Dre / Warren G feel-good dark)
-    {1, 0.29f, {3,3}, {{0,5,0,10},{0,7,5,3},{0,3,7,5}}},
+    // Scales: dorian + harmonicMinor — richer than straight pentatonic
+    {1, 0.29f, {0,7}, {{0,5,0,10},{0,7,5,3},{0,3,7,5}}},
 };
 
 // ── Random helpers ─────────────────────────────────────────────────────────
@@ -125,20 +126,23 @@ void BassEngine::genFunk(MS m[16], int root, int scIdx, float c1, float c2) {
     for (int k = 0; k < 5; k++) {
         if (groove[k] < 0) break;
         int s = groove[k];
-        if (!rc(0.35f + c1 * 0.65f)) continue;
+        // c1 full range: 0=almost silent (1 hit/bar), 1=every slot fires
+        if (!rc(c1)) continue;
         int n = root;
         float roll = rand01();
-        if (c2 > 0.65f && roll < 0.25f) n = root + 12;            // octave pop
-        else if (roll < 0.35f + c2 * 0.4f) n = root + pit5;       // 5th
-        else if (pit3 > 0 && c2 > 0.3f && rc(c2 * 0.5f)) n = root + pit3; // b3 colour
-        int vel = (s % 8 == 0) ? 118 : int(85 + c1 * 28);
-        m[s] = mn(n, 0.22f, vel, int(80 + c2 * 40));
-        if (s > 0 && m[s-1].note < 0 && rc(c1 * 0.4f))
+        // c2 full range: 0=root only, 1=active harmonic movement (5th, octave, b3)
+        if (c2 > 0.7f && roll < 0.3f)        n = root + 12;
+        else if (c2 > 0.35f && roll < 0.55f) n = root + pit5;
+        else if (pit3 > 0 && c2 > 0.5f && rc(c2 - 0.3f)) n = root + pit3;
+        int vel = (s % 8 == 0) ? 118 : int(80 + c1 * 35);
+        int fcc = int(60 + c2 * 60);  // filter wide open at high harmonic depth
+        m[s] = mn(n, 0.22f, vel, fcc);
+        if (s > 0 && m[s-1].note < 0 && rc(c1 * 0.35f))
             m[s-1] = mn(root, 0.08f, 28, 15);
     }
-    // Sub-bass drop on beat 3 at high density
-    if (c1 > 0.6f && m[8].note < 0)
-        m[8] = mn(root - 12, 0.4f, 115, int(35 + c2 * 40));
+    // Sub-bass drop on beat 3: c1>0.5 gives occasional, c1>0.8 gives consistent
+    if (m[8].note < 0 && rc(c1 * c1))
+        m[8] = mn(root - 12, 0.4f, 115, int(30 + c2 * 40));
 }
 
 // ITALO — dark Giorgio Moroder driving pulse, space is the groove
@@ -271,8 +275,8 @@ void BassEngine::genProg(MS m[16], int root, int scIdx, float c1, float c2) {
         bool isAnchor = (s == 0 || s == 8);
         // Anchors = root; inner hits cycle through harmonic sequence deterministically
         int n = root + (isAnchor ? 0 : cycle[idx % 4]);
-        // At high c2 add tritone sub on non-anchor for prog tension
-        if (!isAnchor && c2 > 0.6f && rc(c2 - 0.4f)) n = root + 6;
+        // Tritone accent: only on last hit of dense pattern, very sparse — prog colour not mud
+        if (!isAnchor && idx == patLen-1 && c2 > 0.75f && rc(0.2f)) n = root + 6;
         int vel = isAnchor ? 120 : int(95 + c1*20);
         m[s] = mn(n, len, vel, int(50 + c2*60));
     }
@@ -445,8 +449,8 @@ void BassEngine::transformMotif(const MS src[16], MS dst[16], int type,
 }
 
 // ── Turnarounds ────────────────────────────────────────────────────────────
-// tStart = 248 (= 16 bars × 16 steps – 8 trailing steps)
-static const float T = 248.f;
+// tStart = 1016 (= 64 bars × 16 steps – 8 trailing steps)
+static const float T = 1016.f;
 
 void BassEngine::addNote(float pos, int note, float len, int vel, int fcc, float pb) {
     // Remove any existing note at this exact position
@@ -559,8 +563,8 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
     // Psytrance monotony override
     bool psy_bind = (m_genre == GENRE_PSYTRANCE && m_ctrl1 >= 0.98f);
 
-    // Build 16-bar phrase
-    for (int bar = 0; bar < 16; bar++) {
+    // Build 64-bar phrase (256 beats = 1024 steps)
+    for (int bar = 0; bar < 64; bar++) {
         int rootOffset = prog[bar % 4];
         if (psy_bind) rootOffset = 0;
 
@@ -610,7 +614,7 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
     std::sort(m_phrase.begin(), m_phrase.end(),
               [](const NoteSlot& a, const NoteSlot& b) { return a.pos < b.pos; });
 
-    ESP_LOGI(TAG, "Phrase[%d] genre=%d scale=%d prog=%d notes=%d",
+    ESP_LOGI(TAG, "Phrase[%d] genre=%d scale=%d prog=%d notes=%d bars=64",
              m_phraseCount, m_genre, m_scaleIdx, m_progIdx, (int)m_phrase.size());
 }
 
@@ -717,22 +721,21 @@ void BassEngine::process(const ableton::Link::SessionState& state,
     double beat = state.beatAtTime(time, 16.0);
     if (beat < 0.0) return;
 
-    // Map beat to position within 256-step phrase.
-    // 256 steps = 64 beats (16 bars × 4 beats/bar).
-    double phrasePos = std::fmod(beat * 4.0, 256.0);
+    // Map beat to position within 1024-step phrase.
+    // 1024 steps = 256 beats (64 bars × 4 beats/bar).
+    double phrasePos = std::fmod(beat * 4.0, 1024.0);
 
-    // Detect phrase wrap → advance arc and regenerate
-    bool phraseWrapped = (m_lastPos >= 0.0 && phrasePos < m_lastPos - 128.0);
-    if (phraseWrapped) {
+    // Phrase wrap: advance arc and regenerate if pending
+    if (m_lastPos >= 0.0 && phrasePos < m_lastPos - 512.0) {
         regeneratePhrase(true);
         m_regenPending = false;
         m_lastBar = -1;
     }
 
-    // At any bar boundary: apply pending ctrl changes immediately (hot-swap, no arc advance)
+    // Bar-boundary hot-swap: apply user-triggered ctrl changes within ~1 bar
     int currentBar = static_cast<int>(phrasePos / 16);
     if (m_regenPending && m_lastBar >= 0 && currentBar != m_lastBar) {
-        regeneratePhrase(false);
+        regeneratePhrase(false);  // no arc advance — just apply new knob values
         m_regenPending = false;
     }
     m_lastBar = currentBar;

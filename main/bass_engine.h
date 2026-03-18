@@ -5,8 +5,8 @@
 #include <ableton/Link.hpp>
 #include <chrono>
 
-// A single note event in the 256-step phrase buffer.
-// pos: position in steps (0.0 – 255.75), fractional for sub-step placement.
+// A single note event in the 1024-step phrase buffer.
+// pos: position in steps (0.0 – 1023.75), fractional for sub-step placement.
 struct NoteSlot {
     float pos;
     int   note;       // MIDI note number
