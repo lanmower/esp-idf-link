@@ -110,13 +110,15 @@ void BassEngine::genFunk(MS m[16], int root, int scIdx, float c1, float c2) {
     m[0] = mn(root, 0.35f, 127, 118);
 
     // Locked groove templates — rhythmic identity is the hook, not note variety
+    // c1 selects groove character deterministically: same dial = same groove skeleton
     static const int GROOVES[4][5] = {
         {3, 6, 10, 13, -1},
         {2, 5,  9, 12, 15},
         {3, 7, 10, 14, -1},
         {2, 6, 11, 13, -1},
     };
-    const int* groove = GROOVES[ri(4)];
+    int gIdx = (c1 < 0.3f) ? 0 : (c1 < 0.6f) ? 1 : (c1 < 0.85f) ? 2 : 3;
+    const int* groove = GROOVES[gIdx];
 
     // 3 pitch choices: root | 5th | minor-3rd colour (never major 3rd — guards mixolydian)
     int pit5 = sc4v ? sc4v : 7;
@@ -281,23 +283,25 @@ void BassEngine::genProg(MS m[16], int root, int scIdx, float c1, float c2) {
 // ctrl2 = sub-bass texture: 0=upper register bright, 1=sub-octave drops + closed filter
 void BassEngine::genAfrohouse(MS m[16], int root, int scIdx, float c1, float c2) {
     msInit(m);
+    // c1 selects groove skeleton deterministically — the pattern IS the hook
     static const int PATS[3][5] = {{3,6,8,11,14},{0,4,7,12,14},{2,5,8,10,13}};
-    const int* pat = PATS[ri(3)];
+    int pIdx = (c1 < 0.4f) ? 0 : (c1 < 0.75f) ? 1 : 2;
+    const int* pat = PATS[pIdx];
     int sc4v = sc(scIdx, 4);
     int sc6v = sc(scIdx, 6);
-    // Afrohouse: root + 5th only, rare b7 — hypnotic minimal, never melodic scatter
-    int spice[3] = {sc4v?sc4v:7, sc4v?sc4v:7, sc6v?sc6v:10};
 
     for (int idx = 0; idx < 5; idx++) {
         int s = pat[idx];
         bool isAnchor = (s == 0 || s == 8);
-        // Low c1 = sparse (only anchor beats), high c1 = all hits
         if (!isAnchor && !rc(c1 * 1.1f)) continue;
 
         int n = root;
-        // Melodic movement on offbeats
-        if (!isAnchor && rc(0.5f))
-            n += spice[ri(3)];
+        // Position-driven spice: first half of bar → 5th, second half → b7
+        // Creates a consistent hook interval: predictable color at each position
+        if (!isAnchor) {
+            int spiceNote = (s % 16 < 8) ? (sc4v?sc4v:7) : (sc6v?sc6v:10);
+            if (rc(c2 * 0.65f)) n += spiceNote;
+        }
         // Sub-bass: only when note is still root — melodic+sub collision = mud
         if (n == root && rc(c2 * 0.8f))
             n -= 12;
@@ -315,12 +319,14 @@ void BassEngine::genUkg(MS m[16], int root, int scIdx, float c1, float c2) {
     int sc4v = sc(scIdx, 4);  // 5th
     int pit5 = sc4v ? sc4v : 7;
 
+    // c2 selects groove skeleton deterministically — gap density drives pattern choice
     static const int PATS[3][6] = {
         {0, 3,  8, 10, 13, -1},
         {2, 5,  8, 11, 14, -1},
         {0, 7, 10, 13, 15, -1},
     };
-    const int* pat = PATS[ri(3)];
+    int pIdx = (c2 < 0.35f) ? 0 : (c2 < 0.7f) ? 1 : 2;
+    const int* pat = PATS[pIdx];
 
     for (int idx = 0; idx < 6; idx++) {
         if (pat[idx] < 0) break;
@@ -521,11 +527,14 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
         case GENRE_GFUNK:     genGfunk    (freshA, ROOT, m_scaleIdx, m_ctrl1, m_ctrl2); break;
     }
 
-    // Blend with previous motif for continuity: keep ~40% of slots from prev phrase
+    // Blend: rhythm (which positions fire) always comes from freshA — preserves the hook.
+    // Only blend pitches where both phrases have a note, for harmonic smoothness.
     if (m_hasPrevMotA) {
         for (int i = 0; i < 16; i++) {
-            bool keepPrev = (m_prevMotA[i].note >= 0) && rc(0.4f);
-            motA[i] = keepPrev ? m_prevMotA[i] : freshA[i];
+            if (freshA[i].note >= 0 && m_prevMotA[i].note >= 0 && rc(0.4f))
+                motA[i] = m_prevMotA[i];  // carry pitch/vel from prev, rhythm from fresh
+            else
+                motA[i] = freshA[i];
         }
     } else {
         memcpy(motA, freshA, sizeof(motA));
