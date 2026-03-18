@@ -397,11 +397,20 @@ void BassEngine::anchorMotif(MS m[16], int root, int scIdx) {
     if (m[8].note < 0)
         m[8] = mn(root + (rc(0.4f) ? sc4v : 0), 0.5f, 112, 85);
 
-    // Clamp all notes within a musically sane range around the root
+    // Clamp all notes — upper: root+15 (bass stays in bass register)
+    // Lower: root-12 (allow sub-bass octave; tighter clamp was cancelling sub-bass drops)
     for (int i = 0; i < 16; i++) {
         if (m[i].note < 0) continue;
         while (m[i].note > root + 15) m[i].note -= 12;
-        while (m[i].note < root - 3)  m[i].note += 12;
+        while (m[i].note < root - 12) m[i].note += 12;
+    }
+}
+
+static void clampRange(MS m[16], int root) {
+    for (int i = 0; i < 16; i++) {
+        if (m[i].note < 0) continue;
+        while (m[i].note > root + 15) m[i].note -= 12;
+        while (m[i].note < root - 12) m[i].note += 12;
     }
 }
 
@@ -449,16 +458,18 @@ void BassEngine::addNote(float pos, int note, float len, int vel, int fcc, float
 
 void BassEngine::turnFunk(int base, int scIdx, float c1, float c2) {
     int sc2v = sc(scIdx, 2);
-    addNote(T+4, base+5,                          0.5f, 100, 80);
-    addNote(T+5.5f, base+(c2>0.5f ? 6 : (sc2v?sc2v:3)), 0.5f, 110, 90);
-    addNote(T+7, base+7,                          0.5f, 127, 127);
+    // Guard major 3rd: only use b3 if scale gives minor 3rd (≤3)
+    int darkColour = (sc2v > 0 && sc2v <= 3) ? sc2v : 5;
+    addNote(T+4,    base+5,              0.5f, 100, 80);
+    addNote(T+5.5f, base+(c2>0.5f ? darkColour : 5), 0.5f, 110, 90);
+    addNote(T+7,    base+7,              0.5f, 127, 127);
 }
 void BassEngine::turnItalo(int base) {
     addNote(T+4, base+12, 0.5f, 120, 120);
     addNote(T+6, base+7,  0.5f, 120,  90);
 }
 void BassEngine::turnSynthpop(int base) {
-    addNote(T+4, base+12, 1.5f, 110, 110, -12.f);
+    addNote(T+4, base+12, 1.5f, 110, 110);  // clean octave hit, no pitch bend
 }
 void BassEngine::turnPsytrance(int base, int scIdx, float c1) {
     bool bind = (c1 >= 0.98f);
@@ -473,8 +484,8 @@ void BassEngine::turnAfrohouse(int base) {
     addNote(T+6, base-12, 1.5f, 100, 40);
 }
 void BassEngine::turnUkg(int base) {
-    addNote(T+5.5f, base+12, 0.4f, 110,  90);
-    addNote(T+7,    base,    1.0f, 120, 100, 2.f);
+    addNote(T+5.5f, base+12, 0.4f, 110, 90);
+    addNote(T+7,    base,    1.0f, 120, 100);  // clean landing, no detuned bend
 }
 void BassEngine::turnGfunk(int base, int scIdx, float c1) {
     int sc2v = sc(scIdx, 2);
@@ -532,9 +543,9 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
     int arc = m_phraseCount % 8;
     int xformB = (arc < 2) ? 0 : (arc < 5) ? 2 : ri(4); // simplify → modal → random
     int xformC = (arc < 3) ? 0 : (arc < 6) ? 1 : ri(4); // simplify → subDrop → random
-    transformMotif(motA, motB, xformB, ROOT, m_scaleIdx);
-    transformMotif(motA, motC, xformC, ROOT, m_scaleIdx);
-    transformMotif(motA, motD, 3,      ROOT, m_scaleIdx);
+    transformMotif(motA, motB, xformB, ROOT, m_scaleIdx); clampRange(motB, ROOT);
+    transformMotif(motA, motC, xformC, ROOT, m_scaleIdx); clampRange(motC, ROOT);
+    transformMotif(motA, motD, 3,      ROOT, m_scaleIdx); clampRange(motD, ROOT);
 
     // Phrase structure driven by ctrl2: low = repetitive (AAAD), high = complex (ABAC)
     float varVal = m_ctrl2;
@@ -653,22 +664,27 @@ BassEngine::BassEngine() = default;
 
 void BassEngine::setGenre(int genre_idx) {
     if (genre_idx < 0 || genre_idx >= GENRE_COUNT) return;
-    bool changed = (m_genre != genre_idx) || !m_active;
+    bool genreChanged = (m_genre != genre_idx);
     m_genre  = genre_idx;
     m_active = true;
-    if (changed) {
-        // Stop any sounding notes
+    {  // always regenerate — reselecting same genre gives fresh pattern
         for (auto& an : m_activeNotes) {
             uint8_t noteOff[3] = {0x80, (uint8_t)an.note, 0x00};
             send_midi_message(noteOff, 3);
         }
         m_activeNotes.clear();
-        m_phraseCount    = 0;
         m_lastPos        = -1.0;
         m_lastBar        = -1;
-        m_hasPrevMotA    = false;
-        m_scaleHoldCount = 0;
         m_regenPending   = false;
+        // Full reset on genre change; fresh ideas (no motif blending) on same-genre reselect
+        if (genreChanged) {
+            m_phraseCount    = 0;
+            m_hasPrevMotA    = false;
+            m_scaleHoldCount = 0;
+        } else {
+            m_hasPrevMotA    = false;  // drop old motif so we get genuinely new material
+            m_scaleHoldCount = 0;     // force new scale pick for fresh harmonic colour
+        }
         regeneratePhrase();
     }
     ESP_LOGI(TAG, "Genre set to %d", m_genre);
