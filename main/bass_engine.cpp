@@ -183,7 +183,8 @@ void BassEngine::genItalo(MS m[16], int root, int scIdx, float c1, float c2) {
 void BassEngine::genSynthpop(MS m[16], int root, int scIdx, float c1, float c2) {
     msInit(m);
     int sc4v = sc(scIdx, 4);  // 5th
-    int sc6v = sc(scIdx, 6);  // b7
+    // Clamp to b7 max — harmonicMinor gives maj7(11) which sounds classical not dark
+    int sc6v = std::min(sc(scIdx, 6), 10);
 
     // Driving skeleton — downbeats locked, offbeat gaps create tension
     static const int TEMPLATES[3][8] = {
@@ -304,8 +305,8 @@ void BassEngine::genAfrohouse(MS m[16], int root, int scIdx, float c1, float c2)
         // Melodic movement on offbeats
         if (!isAnchor && rc(0.5f))
             n += spice[ri(4)];
-        // Sub-bass drop at high c2
-        if (rc(c2 * 0.8f))
+        // Sub-bass: only when note is still root — melodic+sub collision = mud
+        if (n == root && rc(c2 * 0.8f))
             n -= 12;
 
         int fcc = int(90 - c2 * 55);  // filter closes with sub-bass
