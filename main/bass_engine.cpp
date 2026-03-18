@@ -98,130 +98,103 @@ void BassEngine::msInit(MS m[16]) {
 
 // ── Genre generators ───────────────────────────────────────────────────────
 
-// FUNK
-// ctrl1 = pocket density: how many syncopated groove hits fire
-// ctrl2 = melodic spice: 0=root+5th pocket, 1=chromatic approach notes + tritone stabs
+// FUNK — locked industrial groove, never melodic noise
+// ctrl1 = hit density: minimal 2-hit groove → full syncopated pocket
+// ctrl2 = harmonic depth: root+5th only → octave drops + b7 colour
 void BassEngine::genFunk(MS m[16], int root, int scIdx, float c1, float c2) {
     msInit(m);
-    // Strong downbeat always — length shortens with density for more percussive feel
-    m[0] = mn(root, 0.5f - c1*0.2f, 127, 110);
+    int sc4v = sc(scIdx, 4);  // 5th
 
-    // Four groove templates weighted toward syncopation
-    static const int GROOVES[4][4] = {{3,7,10,14},{2,6,9,13},{3,5,10,13},{2,7,11,14}};
+    // Unmovable downbeat — the anchor
+    m[0] = mn(root, 0.35f, 127, 118);
+
+    // Locked groove templates — rhythmic identity is the hook, not note variety
+    static const int GROOVES[4][5] = {
+        {3, 6, 10, 13, -1},
+        {2, 5,  9, 12, 15},
+        {3, 7, 10, 14, -1},
+        {2, 6, 11, 13, -1},
+    };
     const int* groove = GROOVES[ri(4)];
 
-    // Spicy note palette: scale tones + approach notes
-    // Low spice: 5th, minor 7th  |  High spice: b5, b2, maj7 (approach notes)
-    static const int POCKET[]  = {0, 5, 7, 10};          // root, 4th, 5th, m7
-    static const int SPICE[]   = {6, 1, 11, 10, 3};      // b5, b2, maj7, m7, m3
-    static const int APPROACH[] = {-1, 1, -2, 2};        // chromatic approaches to root
-
-    for (int k = 0; k < 4; k++) {
+    // Only 2 pitch choices: root or 5th (low c2), add octave at high c2
+    int pit5 = sc4v ? sc4v : 7;
+    for (int k = 0; k < 5; k++) {
+        if (groove[k] < 0) break;
         int s = groove[k];
-        if (!rc(0.25f + c1*0.75f)) continue;
-
+        if (!rc(0.35f + c1 * 0.65f)) continue;
         int n = root;
-        bool isApproach = rc(c2 * 0.5f);
-        if (isApproach) {
-            // Chromatic approach into root on the very next step
-            n += r_arr(APPROACH);
-            m[s] = mn(n, 0.13f, 90, 40);
-        } else if (rc(c2)) {
-            n += SPICE[ri(5)];
-            m[s] = mn(n, 0.2f, 110, int(60 + c2*50));
-        } else {
-            n += POCKET[ri(4)];
-            m[s] = mn(n, 0.25f, 105, 80);
-        }
-        // Ghost note one step before with higher c1
-        if (s > 1 && m[s-1].note < 0 && rc(c1 * 0.6f))
-            m[s-1] = mn(root, 0.1f, 40, 15);
+        if      (c2 > 0.65f && rc(0.4f)) n = root + 12;   // octave pop
+        else if (rc(c2 * 0.8f))           n = root + pit5; // 5th fill
+        int vel = (s % 8 == 0) ? 118 : int(85 + c1 * 28);
+        m[s] = mn(n, 0.22f, vel, int(80 + c2 * 40));
+        // Pure velocity ghost — no pitch deviation ever
+        if (s > 0 && m[s-1].note < 0 && rc(c1 * 0.4f))
+            m[s-1] = mn(root, 0.08f, 28, 15);
     }
-    // Tritone pickup on step 15 at high spice
-    if (c2 > 0.5f && rc(c2 - 0.3f) && m[15].note < 0)
-        m[15] = mn(root + 6, 0.15f, 95, 70);
+    // Sub-bass drop on beat 3 at high density
+    if (c1 > 0.6f && m[8].note < 0)
+        m[8] = mn(root - 12, 0.4f, 115, int(35 + c2 * 40));
 }
 
-// ITALO
-// ctrl1 = melodic drive: 0=pure root drone, 1=active pitch movement on every offbeat
-// ctrl2 = articulation: 0=legato pumping (long notes), 1=staccato attack (short, filter open)
+// ITALO — dark Giorgio Moroder driving pulse, space is the groove
+// ctrl1 = drive: minimal accents → full pulsing offbeats
+// ctrl2 = articulation: fat legato → tight staccato punches
 void BassEngine::genItalo(MS m[16], int root, int scIdx, float c1, float c2) {
     msInit(m);
-    int sc2v = sc(scIdx, 2);
-    int sc4v = sc(scIdx, 4);
-    int sc6v = sc(scIdx, 6);
-    // Walking note sequence built from scale degrees
-    int walk[4] = {0, sc2v ? sc2v : 3, sc4v ? sc4v : 7, sc6v ? sc6v : 10};
+    int sc4v = sc(scIdx, 4);  // 5th — the only melodic movement needed
+    int sc6v = sc(scIdx, 6);  // b7 for colour at high drive
 
-    for (int s = 0; s < 16; s++) {
-        bool isAccent = (s % 4 == 0);
-        float len = 0.65f - c2 * 0.5f;          // legato→staccato
-        int fcc = isAccent ? int(80 + c2*47) : int(50 + c2*60);  // filter opens on staccato
-        int vel = isAccent ? 125 : (s%2==0 ? 105 : 85);
+    // Locked downbeats — always present, the pulse of the track
+    for (int beat = 0; beat < 4; beat++) {
+        int s = beat * 4;
+        float len = 0.75f - c2 * 0.45f;
+        int fcc = int(70 + c2 * 55);
+        m[s] = mn(root, len, beat == 0 ? 127 : 112, fcc);
+    }
 
-        int n = root;
-        if (s % 2 != 0) {
-            // Offbeats: walk through scale at high c1, hold root at low c1
-            float walkChance = c1 * 0.9f;
-            if (rc(walkChance)) {
-                int step = (s / 2) % 4;
-                n += walk[step];
-                // At very high c1, occasional chromatic approach from above
-                if (c1 > 0.7f && rc((c1 - 0.7f) * 2.0f))
-                    n = root + (walk[step] > 0 ? walk[step] - 1 : 11);
-            }
-        }
-        m[s] = mn(n, len, vel, fcc);
+    // Offbeat fills: scale-locked only, no chromatic noise
+    // Low c1: silent offbeats (space = groove)
+    // High c1: 5th and b7 fills pulse the energy
+    int fills[2] = {sc4v ? sc4v : 7, sc6v ? sc6v : 10};
+    static const int OFFS[4] = {2, 6, 10, 14};
+    for (int k = 0; k < 4; k++) {
+        if (!rc(c1 * 0.75f)) continue;
+        int s = OFFS[k];
+        int n = root + fills[rc(0.4f) ? 1 : 0];
+        m[s] = mn(n, 0.3f - c2 * 0.15f, int(88 + c1 * 20), int(55 + c2 * 55));
     }
 }
 
-// SYNTHPOP
-// ctrl1 = harmonic reach: 0=root+octave patterns, 1=wide modal arpeggios with tension tones
-// ctrl2 = syncopation: 0=straight 16ths, 1=highly gapped/syncopated
+// SYNTHPOP — dark driving pulse, Carpenter Brut / hard synth energy
+// ctrl1 = pulse density: 4-on-floor skeleton → full syncopated hits
+// ctrl2 = harmonic tension: root/octave → 5th/b7 fills with sub drops
 void BassEngine::genSynthpop(MS m[16], int root, int scIdx, float c1, float c2) {
     msInit(m);
-    int sc2v = sc(scIdx, 2);
-    int sc4v = sc(scIdx, 4);
-    int sc5v = sc(scIdx, 5);
-    int sc6v = sc(scIdx, 6);
+    int sc4v = sc(scIdx, 4);  // 5th
+    int sc6v = sc(scIdx, 6);  // b7
 
-    // Arp shapes: low c1 = octave-based, high c1 = rich modal shapes
-    // Each shape is 4 intervals cycling across 16 steps
-    int shape[4];
-    if (c1 < 0.33f) {
-        // Simple octave movement
-        const int S[4] = {0, 0, 12, 0};
-        memcpy(shape, S, sizeof(shape));
-    } else if (c1 < 0.66f) {
-        // Scale-based arpeggio using 3rd and 5th
-        shape[0] = 0;
-        shape[1] = sc2v ? sc2v : 3;
-        shape[2] = sc4v ? sc4v : 7;
-        shape[3] = 12;
-    } else {
-        // Wider reach: 5th, octave, and modal tension tones
-        shape[0] = 0;
-        shape[1] = sc4v ? sc4v : 7;
-        shape[2] = sc6v ? sc6v : 10;
-        shape[3] = sc5v ? sc5v+12 : 9;  // high tension interval
-    }
+    // Driving skeleton — downbeats locked, offbeat gaps create tension
+    static const int TEMPLATES[3][8] = {
+        {0, 4, 8, 12, -1, -1, -1, -1},           // 4-on-floor skeleton
+        {0, 3, 8, 11, 14, -1, -1, -1},            // syncopated push
+        {0, 2, 6,  8, 11, 13, -1, -1},            // dense industrial
+    };
+    int tIdx = (c1 < 0.35f) ? 0 : (c1 < 0.7f) ? 1 : 2;
+    const int* tmpl = TEMPLATES[tIdx];
 
-    // Gap template: more gaps at high c2
-    bool gap[16] = {};
-    int numGaps = int(2 + c2 * 6);
-    static const int GAP_SLOTS[8] = {1, 3, 5, 7, 9, 11, 13, 15};
-    for (int g = 0; g < numGaps && g < 8; g++) {
-        if (rc(0.5f + c2 * 0.4f)) gap[GAP_SLOTS[g]] = true;
-    }
-
-    for (int s = 0; s < 16; s++) {
-        if (gap[s]) continue;
-        int interval = shape[(s / 2) % 4];
-        // At high c1 and back half: inject modal tension note
-        if (s >= 10 && c1 > 0.5f && rc((c1 - 0.4f) * 1.5f))
-            interval = sc5v ? sc5v : 8;
-        int fcc = int(70 + c1 * 50);
-        m[s] = mn(root + interval, 0.65f, s%4==0 ? 115 : 95, fcc);
+    for (int k = 0; k < 8; k++) {
+        if (tmpl[k] < 0) break;
+        int s = tmpl[k];
+        bool isDown = (s % 4 == 0);
+        int n = root;
+        if (!isDown && rc(c2 * 0.7f))
+            n += rc(0.5f) ? (sc4v ? sc4v : 7) : (sc6v ? sc6v : 10);
+        // Sub drop: octave below on offbeats at high c2
+        if (!isDown && c2 > 0.6f && rc(c2 - 0.4f)) n = root - 12;
+        int vel = isDown ? 122 : int(88 + c1 * 25);
+        int fcc = isDown ? int(65 + c2 * 50) : int(80 + c2 * 40);
+        m[s] = mn(n, isDown ? 0.7f - c2 * 0.4f : 0.25f, vel, fcc);
     }
 }
 
@@ -327,72 +300,75 @@ void BassEngine::genAfrohouse(MS m[16], int root, int scIdx, float c1, float c2)
     }
 }
 
+// UKG — dark broken rhythms, punchy and relentless, no pitch wandering
+// ctrl1 = jump intensity: root-locked → 5th/octave leaps on offbeats
+// ctrl2 = gap density: full pattern → stripped syncopated skeleton
 void BassEngine::genUkg(MS m[16], int root, int scIdx, float c1, float c2) {
     msInit(m);
-    static const int PATS[3][5] = {{0,3,8,10,13},{2,5,8,11,14},{0,7,10,13,15}};
+    int sc4v = sc(scIdx, 4);  // 5th
+    int pit5 = sc4v ? sc4v : 7;
+
+    static const int PATS[3][6] = {
+        {0, 3,  8, 10, 13, -1},
+        {2, 5,  8, 11, 14, -1},
+        {0, 7, 10, 13, 15, -1},
+    };
     const int* pat = PATS[ri(3)];
 
-    int sc2v = sc(scIdx, 2);
-    int sc4v = sc(scIdx, 4);
-    int sc6v = sc(scIdx, 6);
-    static const int twilight[4] = {3, 7, 10, 12};
-
-    for (int idx = 0; idx < 5; idx++) {
+    for (int idx = 0; idx < 6; idx++) {
+        if (pat[idx] < 0) break;
         int s = pat[idx];
-        bool isDown = (s == 0 || s == 8);
-        if (isDown && rc(c2)) continue; // mute downbeats
+        bool isDown = (s % 8 == 0);
+
+        // High c2 strips non-anchor hits for more space
+        if (!isDown && rc(c2 * 0.5f)) continue;
 
         int n = root;
-        float pb = 0.f;
-        if (!isDown && rc(c1)) {
-            // Twilight jumps
-            static const int tw[4] = {3,7,10,12};
-            n += tw[ri(4)];
-            if (rc(0.4f)) { static const int bends[] = {-2,2,-12}; pb = r_arr(bends); }
-        }
-        m[s] = mn(n, isDown ? 0.8f : 0.3f+c2*0.2f, 115, isDown?110:80, pb);
+        // Scale-locked interval jumps only — no pitch bends
+        if (!isDown && rc(c1 * 0.8f))
+            n += rc(0.55f) ? pit5 : 12;  // 5th or octave, nothing else
+
+        int vel = isDown ? 118 : int(85 + c1 * 25);
+        int fcc = isDown ? int(70 + c2 * 45) : int(85 + c1 * 30);
+        m[s] = mn(n, isDown ? 0.75f : 0.28f + c2 * 0.15f, vel, fcc);
     }
 }
 
-// GFUNK
-// ctrl1 = slide intensity: 0=clean held tones, 1=chromatic slides + pitch bends on every hit
-// ctrl2 = melodic richness: 0=root-centric (just root+octave), 1=full upper-register melody
+// GFUNK — smooth dark groove, deliberate slides only, never random pitch noise
+// ctrl1 = slide power: clean held tones → structural slides at phrase tail
+// ctrl2 = fill richness: root/5th skeleton → 4th/b7 inner fills
 void BassEngine::genGfunk(MS m[16], int root, int scIdx, float c1, float c2) {
     msInit(m);
-    int sc2v = sc(scIdx, 2);
-    int sc3v = sc(scIdx, 3);
-    int sc4v = sc(scIdx, 4);
-    int sc5v = sc(scIdx, 5);
+    int sc3v = sc(scIdx, 3);  // 4th
+    int sc4v = sc(scIdx, 4);  // 5th
+    int sc6v = sc(scIdx, 6);  // b7
 
-    // Downbeats always present, length modulated by slide intensity
-    float downLen = 1.8f - c1 * 0.8f;
-    m[0] = mn(root, downLen, 122, 88);
-    m[8] = mn(root, downLen - 0.2f, 118, 82);
+    // Fat locked downbeats — the foundation
+    float downLen = 1.6f - c1 * 0.6f;
+    m[0] = mn(root,     downLen,        122, 90);
+    m[8] = mn(root,     downLen - 0.2f, 118, 85);
 
-    // Octave pop: always at high c2, sometimes at low c2
-    if (rc(0.15f + c2 * 0.85f))
-        m[3] = mn(root + 12, 0.45f, 105, int(65 + c2*40), c1 > 0.4f ? -2.f : 0.f);
+    // Octave pop on beat 1.75 — signature G-Funk hook, always clean
+    if (rc(0.3f + c2 * 0.7f))
+        m[3] = mn(root + 12, 0.4f, 108, int(68 + c2 * 38));
 
-    // Mid-bar melodic fill driven by c2
-    if (rc(0.3f + c2 * 0.7f)) {
-        int melody[4] = {sc2v?sc2v:3, sc3v?sc3v:5, sc4v?sc4v:7, sc5v?sc5v:9};
-        m[6] = mn(root + melody[ri(4)], 0.7f, 112, int(70 + c2*45));
+    // Inner fill: 4th or 5th, no chromatic noise
+    if (rc(0.25f + c2 * 0.75f)) {
+        int fill = rc(0.5f) ? (sc3v ? sc3v : 5) : (sc4v ? sc4v : 7);
+        m[6] = mn(root + fill, 0.6f, 110, int(72 + c2 * 42));
     }
 
-    // Slide run into next phrase at high c1
-    if (rc(0.25f + c1 * 0.75f)) {
-        float slideDown = -(1.f + c1 * 2.f);
-        float slideUp   =  (1.f + c1 * 3.f);
-        m[13] = mn(root + (sc3v?sc3v:5), 0.5f, 102, 82, 0.f);
-        m[14] = mn(root + (sc4v?sc4v:7), 1.2f, 122, 105, rc(0.6f) ? slideUp : slideDown);
-    } else if (rc(0.5f)) {
-        m[14] = mn(root - 12, 0.9f, 108, 78, c1 * 2.5f);
+    // b7 colour hit at high richness — dark and funky
+    if (c2 > 0.55f && rc(c2 - 0.3f) && m[11].note < 0) {
+        int dark = sc6v ? sc6v : 10;  // b7 — always dark, never bright pop
+        m[11] = mn(root + dark, 0.45f, 98, int(62 + c2 * 50));
     }
 
-    // At high c2: add a high inner melody note
-    if (c2 > 0.6f && rc(c2 - 0.4f)) {
-        int hiNote = root + (sc5v?sc5v+12:21);
-        m[11] = mn(hiNote, 0.5f, 95, int(60 + c2*60), c1 > 0.5f ? 2.f : 0.f);
+    // Tail slide: structural, deliberate — only at steps 13/14
+    if (rc(0.2f + c1 * 0.8f)) {
+        // One clean slide into the next phrase root — no random bends elsewhere
+        float slide = c1 > 0.5f ? (rc(0.5f) ? 3.f : -3.f) : 0.f;
+        m[14] = mn(root + (sc4v ? sc4v : 7), 1.0f, 118, 100, slide);
     }
 }
 
@@ -438,17 +414,14 @@ void BassEngine::transformMotif(const MS src[16], MS dst[16], int type,
             if (dst[i].note < 0 || i%4 == 0) continue;
             if (rc(0.5f)) dst[i].note += rc(0.5f) ? 7 : 3;
         }
-    } else { // drift: random drop + occasional octave pop
+    } else { // drift: thin out a beat's worth of hits for rhythmic variation
         int dropBeat = (ri(3)+1) * 4;
         for (int i = 0; i < 16; i++) {
-            if (i >= dropBeat && i < dropBeat+2) { dst[i].note = -1; continue; }
-            if (dst[i].note >= 0 && rc(0.2f)) {
-                dst[i].note += 12;
-                dst[i].vel = 127;
-            }
+            if (i >= dropBeat && i < dropBeat+4) dst[i].note = -1;
         }
+        // Reinforce the tail with a clean root hit for phrase pull
         if (dst[15].note < 0 && rc(0.5f))
-            dst[15] = mn(root, 0.15f, 60, 40);
+            dst[15] = mn(root, 0.15f, 65, 45);
     }
 }
 
