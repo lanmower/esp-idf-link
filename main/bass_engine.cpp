@@ -211,37 +211,29 @@ void BassEngine::genSynthpop(MS m[16], int root, int scIdx, float c1, float c2) 
     }
 }
 
+// PSYTRANCE — relentless 16th gallop, root-locked except rare phrygian b2 flick
+// ctrl1 = density: 4-note accent pulse → full 12-note 16th drive
+// ctrl2 = intensity: uniform velocity → dynamic accents + b2 injection
 void BassEngine::genPsytrance(MS m[16], int root, int scIdx, float c1, float c2) {
     msInit(m);
-    bool bind = (c1 >= 0.98f);
-    int sc1v = sc(scIdx, 1);
+    int sc1v = sc(scIdx, 1);  // phrygian b2 — the tension flick
 
-    for (int s = 0; s < 16; s++) {
-        if (s % 4 == 0) continue; // kick slot: silent
-        int stepInBeat = s % 4;
-        // Gallop skip
-        if (c2 > 0.2f && rc(c2*0.5f) && (stepInBeat == 1 || stepInBeat == 3)) continue;
+    for (int beat = 0; beat < 4; beat++) {
+        int base = beat * 4;
+        // base+0 = downbeat = kick territory — bass silent here always
 
-        bool isAccent = ((s+1) % 4 == 0);
-        int n = bind ? root : (rc(c1) ? root : root + (isAccent && rc(0.4f) ? sc1v : 0));
+        // base+1 (beat-e): fires only at high density
+        if (rc(c1 * 0.7f))
+            m[base+1] = mn(root, 0.22f, int(72 + c1*22), int(35 + c2*35));
 
-        // Time-shift (stored in ts as beats; converted to steps (* 4) when building phrase)
-        float ts = 0.f;
-        float vm = 1.0f;
-        if (c2 <= 0.5f) {
-            float swingAmt = (c2 / 0.5f) * 0.08f;  // 0-0.08 seconds
-            if (stepInBeat == 1 || stepInBeat == 3) ts = swingAmt;
-        } else {
-            float t = (c2 - 0.5f) * 2.0f;
-            if (stepInBeat == 1) { ts = t * 0.04f; }
-            if (stepInBeat == 2) { ts = t * 0.083f; }
-            if (stepInBeat == 3) { ts = t * 0.16f; vm = 1.0f - t*0.8f; }
-        }
-        if (vm < 0.1f) continue;
+        // base+2 (beat-+): fires at medium density — the 8th-note offbeat
+        if (rc(c1 * 0.9f))
+            m[base+2] = mn(root, 0.22f, int(80 + c1*20), int(42 + c2*38));
 
-        int vel = (int)((isAccent ? 120 : 90) * vm);
-        int fcc = (int)((isAccent ? 100 : 50) * vm);
-        m[s] = mn(n, 0.25f, vel, fcc, 0.f, ts);
+        // base+3 (beat-a): the gallop accent — always fires, can be b2 flick
+        bool useB2 = (c2 > 0.45f && rc(c2 * 0.18f));
+        m[base+3] = mn(root + (useB2 ? sc1v : 0), 0.22f,
+                       int(100 + c2*22), int(58 + c2*45));
     }
 }
 
