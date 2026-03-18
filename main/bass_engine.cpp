@@ -117,18 +117,22 @@ void BassEngine::genFunk(MS m[16], int root, int scIdx, float c1, float c2) {
     };
     const int* groove = GROOVES[ri(4)];
 
-    // Only 2 pitch choices: root or 5th (low c2), add octave at high c2
+    // 3 pitch choices: root | 5th | minor-3rd colour (never major 3rd — guards mixolydian)
     int pit5 = sc4v ? sc4v : 7;
+    // Only use scale's 3rd if it's minor (≤3 semitones). Mixolydian gives major 3rd(4)=pop sound.
+    int pit3 = (sc(scIdx, 2) > 0 && sc(scIdx, 2) <= 3) ? sc(scIdx, 2) : 0;
+
     for (int k = 0; k < 5; k++) {
         if (groove[k] < 0) break;
         int s = groove[k];
         if (!rc(0.35f + c1 * 0.65f)) continue;
         int n = root;
-        if      (c2 > 0.65f && rc(0.4f)) n = root + 12;   // octave pop
-        else if (rc(c2 * 0.8f))           n = root + pit5; // 5th fill
+        float roll = rand01();
+        if (c2 > 0.65f && roll < 0.25f) n = root + 12;            // octave pop
+        else if (roll < 0.35f + c2 * 0.4f) n = root + pit5;       // 5th
+        else if (pit3 > 0 && c2 > 0.3f && rc(c2 * 0.5f)) n = root + pit3; // b3 colour
         int vel = (s % 8 == 0) ? 118 : int(85 + c1 * 28);
         m[s] = mn(n, 0.22f, vel, int(80 + c2 * 40));
-        // Pure velocity ghost — no pitch deviation ever
         if (s > 0 && m[s-1].note < 0 && rc(c1 * 0.4f))
             m[s-1] = mn(root, 0.08f, 28, 15);
     }
@@ -145,9 +149,12 @@ void BassEngine::genItalo(MS m[16], int root, int scIdx, float c1, float c2) {
     int sc4v = sc(scIdx, 4);  // 5th — the only melodic movement needed
     int sc6v = sc(scIdx, 6);  // b7 for colour at high drive
 
-    // Locked downbeats — always present, the pulse of the track
+    // Downbeats — beat 1 always anchors; beats 2/3/4 can breathe at high c2
+    // Rigid 4-on-the-floor at low c2, syncopated space at high c2 (darker groove)
     for (int beat = 0; beat < 4; beat++) {
         int s = beat * 4;
+        // Inner beats skip at high c2 for rhythmic breath — keeps it dark and funky
+        if (beat > 0 && c2 > 0.5f && rc((c2 - 0.35f) * 0.6f)) continue;
         float len = 0.75f - c2 * 0.45f;
         int fcc = int(70 + c2 * 55);
         m[s] = mn(root, len, beat == 0 ? 127 : 112, fcc);
@@ -252,19 +259,21 @@ void BassEngine::genProg(MS m[16], int root, int scIdx, float c1, float c2) {
     else if (c1 < 0.7f)  { pat = PAT_MID;    patLen = 5; }
     else                 { pat = PAT_DENSE;   patLen = 7; }
 
-    int safeNotes[4]  = {0, sc4v?sc4v:7, 12, sc2v?sc2v:3};
-    int spiceNotes[4] = {sc3v?sc3v:5, sc6v?sc6v:10, 6, sc2v?sc2v+12:15};
+    // Deterministic note cycle — avoids random-pick monotony (same note twice kills groove)
+    // Anchors: steps 0/8 = root; inner hits cycle through 5th → b7 → b3 in order
+    int cycle[4] = {0, sc4v?sc4v:7, sc6v?sc6v:10, sc2v?sc2v:3};
 
     for (int idx = 0; idx < patLen; idx++) {
         int s = pat[idx];
         if (s < 0) break;
         bool nextClose = (idx+1 < patLen && pat[idx+1] >= 0 && pat[idx+1] - s <= 2);
         float len = nextClose ? 0.5f + c1*0.8f : 1.0f - c1*0.6f;
-        int n = root;
-        if (rc(c2)) {
-            n += (c2 > 0.6f && rc(c2 - 0.4f)) ? spiceNotes[ri(4)] : safeNotes[ri(4)];
-        }
-        int vel = (s == 0 || s == 8) ? 120 : int(95 + c1*20);
+        bool isAnchor = (s == 0 || s == 8);
+        // Anchors = root; inner hits cycle through harmonic sequence deterministically
+        int n = root + (isAnchor ? 0 : cycle[idx % 4]);
+        // At high c2 add tritone sub on non-anchor for prog tension
+        if (!isAnchor && c2 > 0.6f && rc(c2 - 0.4f)) n = root + 6;
+        int vel = isAnchor ? 120 : int(95 + c1*20);
         m[s] = mn(n, len, vel, int(50 + c2*60));
     }
 }
@@ -353,7 +362,8 @@ void BassEngine::genGfunk(MS m[16], int root, int scIdx, float c1, float c2) {
         m[3] = mn(root + 12, 0.4f, 108, int(68 + c2 * 38));
 
     // Inner fill: 4th or 5th, no chromatic noise
-    if (rc(0.25f + c2 * 0.75f)) {
+    // Mid-bar fill: high baseline so it reliably defines the G-Funk pocket feel
+    if (rc(0.55f + c2 * 0.45f)) {
         int fill = rc(0.5f) ? (sc3v ? sc3v : 5) : (sc4v ? sc4v : 7);
         m[6] = mn(root + fill, 0.6f, 110, int(72 + c2 * 42));
     }
