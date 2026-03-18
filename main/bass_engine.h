@@ -82,6 +82,7 @@ private:
     void transformMotif(const MS src[16], MS dst[16], int type, int root, int scIdx);
     // Anchor strong beats and clamp range to prevent tonal drift
     void anchorMotif(MS m[16], int root, int scIdx);
+    static void clampRange(MS m[16], int root);
 
     // Turnarounds – inject notes into m_phrase directly (called at tStart = 248)
     void turnFunk     (int base, int scIdx, float c1, float c2);

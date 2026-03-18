@@ -411,7 +411,7 @@ void BassEngine::anchorMotif(MS m[16], int root, int scIdx) {
     }
 }
 
-static void clampRange(MS m[16], int root) {
+void BassEngine::clampRange(MS m[16], int root) {
     for (int i = 0; i < 16; i++) {
         if (m[i].note < 0) continue;
         while (m[i].note > root + 15) m[i].note -= 12;
