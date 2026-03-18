@@ -65,8 +65,8 @@ private:
                  float pb = 0.f, float ts = 0.f);
     static void msInit(MS m[16]);
 
-    // Phrase generation
-    void regeneratePhrase();
+    // Phrase generation — advanceArc=false for mid-phrase hot-swap (no arc increment)
+    void regeneratePhrase(bool advanceArc = true);
 
     // Per-genre motif generators (fill m[0..15])
     void genFunk     (MS m[16], int root, int scIdx, float c1, float c2);
@@ -114,8 +114,9 @@ private:
     double m_lastPos        = -1.0;
     int    m_scaleIdx       = 0;
     int    m_progIdx        = 0;
-    bool   m_regenPending   = false;   // deferred regen at phrase boundary
+    bool   m_regenPending   = false;   // deferred regen at bar boundary
     int    m_scaleHoldCount = 0;       // phrases remaining on current scale
+    int    m_lastBar        = -1;      // bar index in phrase (0-15) for bar-crossing detection
     MS     m_prevMotA[16]   = {};      // motif A from previous phrase for continuity
     bool   m_hasPrevMotA    = false;
 };

@@ -48,21 +48,29 @@ struct GenreCfg {
 
 static const GenreCfg GCFG[8] = {
     // FUNK  (105 BPM, swing 0.04s → 0.28 steps)
-    {2, 0.28f, {5,0}, {{0,0,0,5},{0,3,4,5},{0,0,-2,0}}},
+    // i→IV→bIII→bVII | i→bVII→IV→V | i→bIII→bVII→IV  (dark modal funk, avoids naive I-IV-V)
+    {2, 0.28f, {5,0}, {{0,5,3,10},{0,10,5,7},{0,3,10,5}}},
     // ITALO (120 BPM, swing 0)
-    {4, 0.00f, {8,2}, {{0,-4,-5,-2},{0,0,-1,-4},{0,3,0,-5}}},
+    // i→bVI→IV→bVII | i→bVII→bVI→V | i→IV→bVI→bVII  (Moroder drama, descending minor)
+    {4, 0.00f, {8,2}, {{0,8,5,10},{0,10,8,7},{0,5,8,10}}},
     // SYNTHPOP (115 BPM, swing 0.015s → 0.115 steps)
-    {2, 0.12f, {1,7}, {{0,-4,-2,-5},{0,8,7,0},{0,3,7,8}}},
+    // i→bVI→bIII→V | i→IV→bVII→bVI | i→bIII→bVII→IV  (atmospheric, JM Jarre / DM feel)
+    {2, 0.12f, {1,7}, {{0,8,3,7},{0,5,10,8},{0,3,10,5}}},
     // PSYTRANCE (142 BPM, swing 0)
-    {4, 0.00f, {6,2}, {{0,0,0,1},{0,0,-5,-4},{0,0,-4,-5}}},
+    // mostly static with phrygian tension flicks (hypnotic repetition is the point)
+    {4, 0.00f, {6,2}, {{0,0,1,0},{0,1,0,7},{0,0,10,1}}},
     // PROG (124 BPM, swing 0.01s → 0.083 steps)
-    {4, 0.08f, {1,2}, {{0,8,7,0},{0,1,0,-4},{0,-5,-4,-2}}},
+    // i→bVI→bII→V | i→bIII→V→bVII | i→IV→bII→bVI  (bold chromaticism, Squarepusher/Meshuggah)
+    {4, 0.08f, {1,2}, {{0,8,1,7},{0,3,7,10},{0,5,1,8}}},
     // AFROHOUSE (122 BPM, swing 0.035s → 0.285 steps)
-    {4, 0.29f, {1,2}, {{0,0,-2,0},{0,0,-4,-5},{0,3,0,-4}}},
+    // hypnotic minimal root motion, occasional bVI/bVII colour
+    {4, 0.29f, {1,2}, {{0,0,10,7},{0,8,0,10},{0,5,0,3}}},
     // UKG (132 BPM, swing 0.05s → 0.44 steps)
-    {2, 0.44f, {1,3}, {{0,-5,-4,-2},{0,3,-2,-4},{0,0,5,3}}},
+    // i→bVI→IV→bVII | i→bIII→bVII→V | i→IV→bVI→bIII
+    {2, 0.44f, {1,3}, {{0,8,5,10},{0,3,10,7},{0,5,8,3}}},
     // GFUNK (95 BPM, swing 0.045s → 0.285 steps)
-    {1, 0.29f, {3,3}, {{0,0,-2,5},{0,-4,-2,0},{0,5,-2,-4}}},
+    // i→IV→i→bVII | i→V→IV→bIII | i→bIII→V→IV  (Dre / Warren G feel-good dark)
+    {1, 0.29f, {3,3}, {{0,5,0,10},{0,7,5,3},{0,3,7,5}}},
 };
 
 // ── Random helpers ─────────────────────────────────────────────────────────
@@ -491,8 +499,8 @@ void BassEngine::turnGfunk(int base, int scIdx, float c1) {
 }
 
 // ── Phrase regeneration ────────────────────────────────────────────────────
-void BassEngine::regeneratePhrase() {
-    m_phraseCount++;
+void BassEngine::regeneratePhrase(bool advanceArc) {
+    if (advanceArc) m_phraseCount++;
     m_phrase.clear();
 
     const GenreCfg& cfg = GCFG[m_genre];
@@ -674,6 +682,7 @@ void BassEngine::setGenre(int genre_idx) {
         m_activeNotes.clear();
         m_phraseCount    = 0;
         m_lastPos        = -1.0;
+        m_lastBar        = -1;
         m_hasPrevMotA    = false;
         m_scaleHoldCount = 0;
         m_regenPending   = false;
@@ -713,11 +722,21 @@ void BassEngine::process(const ableton::Link::SessionState& state,
     // 256 steps = 64 beats (16 bars × 4 beats/bar).
     double phrasePos = std::fmod(beat * 4.0, 256.0);
 
-    // Detect phrase wrap → regenerate (also flush any pending ctrl change)
-    if (m_lastPos >= 0.0 && phrasePos < m_lastPos - 128.0) {
-        regeneratePhrase();
+    // Detect phrase wrap → advance arc and regenerate
+    bool phraseWrapped = (m_lastPos >= 0.0 && phrasePos < m_lastPos - 128.0);
+    if (phraseWrapped) {
+        regeneratePhrase(true);
+        m_regenPending = false;
+        m_lastBar = -1;
+    }
+
+    // At any bar boundary: apply pending ctrl changes immediately (hot-swap, no arc advance)
+    int currentBar = static_cast<int>(phrasePos / 16);
+    if (m_regenPending && m_lastBar >= 0 && currentBar != m_lastBar) {
+        regeneratePhrase(false);
         m_regenPending = false;
     }
+    m_lastBar = currentBar;
 
     if (m_lastPos < 0.0) {
         m_lastPos = phrasePos;
