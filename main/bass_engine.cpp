@@ -167,10 +167,11 @@ void BassEngine::genItalo(MS m[16], int root, int scIdx, float c1, float c2) {
     // Offbeat fills: scale-locked only, no chromatic noise
     // Low c1: silent offbeats (space = groove)
     // High c1: 5th and b7 fills pulse the energy
+    // Moroder bass: the root pulse IS the groove; fills are sparse accents not melody
     int fills[2] = {sc4v ? sc4v : 7, sc6v ? sc6v : 10};
     static const int OFFS[4] = {2, 6, 10, 14};
     for (int k = 0; k < 4; k++) {
-        if (!rc(c1 * 0.75f)) continue;
+        if (!rc(c1 * 0.4f)) continue;
         int s = OFFS[k];
         int n = root + fills[rc(0.4f) ? 1 : 0];
         m[s] = mn(n, 0.3f - c2 * 0.15f, int(88 + c1 * 20), int(55 + c2 * 55));
@@ -290,10 +291,10 @@ void BassEngine::genAfrohouse(MS m[16], int root, int scIdx, float c1, float c2)
     msInit(m);
     static const int PATS[3][5] = {{3,6,8,11,14},{0,4,7,12,14},{2,5,8,10,13}};
     const int* pat = PATS[ri(3)];
-    int sc2v = sc(scIdx, 2);
     int sc4v = sc(scIdx, 4);
-    // Spice: pentatonic shapes + chromatic neighbours
-    int spice[4] = {sc2v?sc2v:3, sc4v?sc4v:7, sc2v?sc2v+7:10, 5};
+    int sc6v = sc(scIdx, 6);
+    // Afrohouse: root + 5th only, rare b7 — hypnotic minimal, never melodic scatter
+    int spice[3] = {sc4v?sc4v:7, sc4v?sc4v:7, sc6v?sc6v:10};
 
     for (int idx = 0; idx < 5; idx++) {
         int s = pat[idx];
@@ -304,7 +305,7 @@ void BassEngine::genAfrohouse(MS m[16], int root, int scIdx, float c1, float c2)
         int n = root;
         // Melodic movement on offbeats
         if (!isAnchor && rc(0.5f))
-            n += spice[ri(4)];
+            n += spice[ri(3)];
         // Sub-bass: only when note is still root — melodic+sub collision = mud
         if (n == root && rc(c2 * 0.8f))
             n -= 12;
