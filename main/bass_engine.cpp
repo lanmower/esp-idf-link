@@ -564,12 +564,35 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
     // Psytrance monotony override
     bool psy_bind = (m_genre == GENRE_PSYTRANCE && m_ctrl1 >= 0.98f);
 
+    // 64-bar arrangement: 4 sections × 16 bars each
+    // Each section gets a distinct chord progression and motif character:
+    //   sec0 (bars  0-15): core groove   — ctrl2-driven structure, prog A
+    //   sec1 (bars 16-31): bridge        — B/A alternation,         prog B
+    //   sec2 (bars 32-47): peak energy   — C/B push,                prog C
+    //   sec3 (bars 48-63): reprise       — ctrl2-driven structure,  prog A
+    // Within each section a 4-bar chord cell repeats 4× — hypnotic, not identical
+    int secProgs[4] = {m_progIdx, (m_progIdx+1)%3, (m_progIdx+2)%3, m_progIdx};
+
     // Build 64-bar phrase (256 beats = 1024 steps)
     for (int bar = 0; bar < 64; bar++) {
-        int rootOffset = prog[bar % 4];
-        if (psy_bind) rootOffset = 0;
+        int sec       = bar / 16;
+        int barInSec  = bar % 16;
+        int barInCell = barInSec % 4;
 
-        char part = structure[bar % 4];
+        const int* secProg = cfg.progs[secProgs[sec]];
+        int rootOffset = psy_bind ? 0 : secProg[barInCell];
+
+        char part;
+        if (sec == 0 || sec == 3) {
+            part = structure[barInCell];              // user ctrl2 shape
+        } else if (sec == 1) {
+            static const char BRIDGE[4] = {'B','A','B','A'};
+            part = BRIDGE[barInCell];                 // bridge: variation leads
+        } else {
+            static const char PEAK[4]   = {'C','B','C','B'};
+            part = PEAK[barInCell];                   // peak: sub-drop + modal push
+        }
+
         const MS* motif = (part=='A') ? motA : (part=='B') ? motB :
                           (part=='C') ? motC : motD;
 
