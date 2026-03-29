@@ -26,6 +26,22 @@ After provisioning saves credentials, device says "Saved" but never actually con
 
 ---
 
+# MIDI Compatibility Notes
+
+## NRPN Sequence
+`send_midi_nrpn` sends CC99, CC98, CC6, CC38=0, CC101=127, CC100=127. The null reset (CC101/100=127) is mandatory — without it, subsequent CC6 messages are misread as NRPN data on MicroKorg, Micron, and RC-505.
+
+## Note-Off Velocity
+Always send velocity 0 for note-off. Passing note-on velocity in note-off byte causes stuck notes on RC-505 MK2 and KO2.
+
+## MIDI File Player Loop Sync
+`syncToBpm` is disabled (`false`). Link's `beatAtTime()` already provides tempo-independent beats — enabling `syncToBpm` caused double-scaling of `playbackRate` which corrupted `endBeatAbsolute` on any tempo change, leaving notes permanently stuck. At loop boundary, `sendAllNotesOff()` + `activeNotes.clear()` fires instead of remapping note end times.
+
+## UART TX Buffer
+`uart_driver_install` uses 256-byte TX ring buffer (not 0). Without it, burst NRPN sends (e.g. `setSidechainPattern` with 12 NRPNs = 108 bytes) would block the FreeRTOS main loop for ~35ms.
+
+---
+
 # WSL2 CH340 Driver Setup
 
 ## Issue
