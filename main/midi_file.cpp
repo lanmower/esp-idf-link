@@ -449,7 +449,7 @@ MidiFilePlayer::MidiFilePlayer() :
     isPlaying(false),
     lastBeat(0),
     lastTempo(120.0),
-    syncToBpm(true),
+    syncToBpm(false),
     quantizeLoops(true),
     linkQuantum(LINK_QUANTUM) {  // Initialize with LINK_QUANTUM from main.h
     ESP_LOGI(TAG, "MidiFilePlayer initialized with Link quantum: %.1f beats", linkQuantum);
@@ -861,10 +861,7 @@ void MidiFilePlayer::processNoteOffs(double currentBeat) {
         if (it->endTime <= absoluteBeat) {
             // Send note off
             if (g_current_synth) {
-                int transposedNote = it->note + transpose;
-                if (transposedNote >= 0 && transposedNote <= 127) {
-                    g_current_synth->sendNoteOff(transposedNote, it->velocity);
-                }
+                g_current_synth->sendNoteOff(it->note, 0);
             }
             
             // Remove this note
@@ -985,19 +982,12 @@ void MidiFilePlayer::process(const ableton::Link::SessionState& sessionState,
         ESP_LOGD(TAG, "MIDI loop restart at quantum boundary %d (beat %.2f, phase: %.2f)", 
                  currentQuantumNumber, beats, currentPhase);
         
-        // Adjust any activeNotes that cross the loop boundary
-        for (auto& activeNote : activeNotes) {
-            // If the note's end time is beyond the current absolute beat position (loop point)
-            if (activeNote.endTime > scaledBeats) {
-                // Adjust the note to end in the current loop iteration
-                // by adding one loop length to its end time
-                activeNote.endTime = scaledBeats + 
-                    (fmod(activeNote.endTime, effectiveTrackLength) - loopedBeat);
-                ESP_LOGD(TAG, "Adjusted note end time across loop boundary: %.2f", activeNote.endTime);
-            }
+        if (g_current_synth) {
+            g_current_synth->sendAllNotesOff();
         }
-        
-        // Clear tracking for played notes (but keep active notes!)
+        activeNotes.clear();
+
+        // Clear tracking for played notes
         clearPlayedNotes();
         
         // Check if file switching is pending and we're at a quantum boundary
@@ -1069,9 +1059,8 @@ void MidiFilePlayer::process(const ableton::Link::SessionState& sessionState,
                     double scaledDuration = note.duration * noteLengthScale;
                     double endBeatAbsolute = scaledBeats + scaledDuration;
                     
-                    // Add to active notes list with calculated end time in absolute beats
                     activeNotes.push_back({
-                        static_cast<uint8_t>(note.note),
+                        static_cast<uint8_t>(transposedNote),
                         static_cast<uint8_t>(scaledVelocity),
                         endBeatAbsolute
                     });

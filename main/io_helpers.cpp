@@ -60,7 +60,7 @@ void init_uart_midi()
 
     ESP_ERROR_CHECK(uart_param_config(MIDI_UART, &uart_config));
     uart_set_pin(MIDI_UART, MIDI_TX_PIN, MIDI_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-    uart_driver_install(MIDI_UART, 512, 0, 0, NULL, 0);
+    uart_driver_install(MIDI_UART, 512, 256, 0, NULL, 0);
     ESP_LOGI(TAG, "MIDI UART Initialized (TX:%d, RX:%d)", MIDI_TX_PIN, MIDI_RX_PIN);
 }
 
@@ -487,17 +487,12 @@ void send_midi_cc(uint8_t channel, uint8_t cc_num, uint8_t value)
 // Sends a MIDI Non-Registered Parameter Number (NRPN) message (MSB only)
 void send_midi_nrpn(uint8_t channel, uint8_t nrpn_msb, uint8_t nrpn_lsb, uint8_t value_msb)
 {
-    // NRPN Sequence:
-    // 1. Set NRPN MSB (CC 99)
     send_midi_cc(channel, 99, nrpn_msb);
-    // 2. Set NRPN LSB (CC 98)
     send_midi_cc(channel, 98, nrpn_lsb);
-    // 3. Set Data Entry MSB (CC 6)
     send_midi_cc(channel, 6, value_msb);
-    // Optional: Add CC 38 for Data Entry LSB if needed
-    // Optional: Reset NRPN/RPN selection (CC 101=127, CC 100=127)
-    // send_midi_cc(channel, 101, 127);
-    // send_midi_cc(channel, 100, 127);
+    send_midi_cc(channel, 38, 0);
+    send_midi_cc(channel, 101, 127);
+    send_midi_cc(channel, 100, 127);
 }
 
 // Update input state
