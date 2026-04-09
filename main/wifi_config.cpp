@@ -10,6 +10,10 @@
 #include <esp_mac.h>
 #include <lwip/sockets.h>
 #include <lwip/inet.h>
+#include <lwip/raw.h>
+#include <lwip/pbuf.h>
+#include <lwip/udp.h>
+#include <lwip/tcpip.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -126,9 +130,8 @@ void wifi_join_link_multicast() {
 }
 
 // Relay Ableton Link multicast (224.76.78.75:20808) between AP clients.
-// Receives on the multicast group, then re-sends each packet back to the
-// multicast group with the original source IP/port preserved via a raw socket
-// (IP_HDRINCL), so Ableton Link peer-to-peer connections work correctly.
+// Uses lwip raw PCB (raw_sendto_if_src) to preserve the original sender's
+// source IP, which Ableton Link requires for direct peer connections.
 static void link_multicast_relay_task(void*) {
     static const char* RELAY_TAG = "LINK_RELAY";
     static const char* MCAST_ADDR = "224.76.78.75";
@@ -152,29 +155,19 @@ static void link_multicast_relay_task(void*) {
     inet_aton(AP_ADDR,    &mreq.imr_interface);
     setsockopt(rs, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
 
-    // Send socket: raw, so we can set source IP = original sender
-    int ss = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
-    if (ss < 0) {
-        ESP_LOGE(RELAY_TAG, "raw socket failed — relay disabled");
+    // Raw PCB for sending with original source IP preserved
+    LOCK_TCPIP_CORE();
+    struct raw_pcb* rpcb = raw_new(IPPROTO_UDP);
+    UNLOCK_TCPIP_CORE();
+    if (!rpcb) {
+        ESP_LOGE(RELAY_TAG, "raw_new failed — relay disabled");
         close(rs); vTaskDelete(NULL); return;
     }
-    setsockopt(ss, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one));
-    // Send on AP interface
-    struct in_addr ap_if = {};
-    inet_aton(AP_ADDR, &ap_if);
-    setsockopt(ss, IPPROTO_IP, IP_MULTICAST_IF, &ap_if, sizeof(ap_if));
 
-    uint32_t ap_ip = inet_addr(AP_ADDR);
+    uint32_t ap_ip    = inet_addr(AP_ADDR);
     uint32_t mcast_ip = inet_addr(MCAST_ADDR);
 
-    struct sockaddr_in dst = {};
-    dst.sin_family      = AF_INET;
-    dst.sin_port        = htons(LINK_PORT);
-    dst.sin_addr.s_addr = mcast_ip;
-
-    static uint8_t payload[1500];
-    // IP header (20) + UDP header (8)
-    static uint8_t pkt[1528];
+    static uint8_t payload[1472]; // MTU(1500) - IP(20) - UDP(8)
 
     ESP_LOGI(RELAY_TAG, "Ableton Link relay running on %s:%u", MCAST_ADDR, LINK_PORT);
 
@@ -187,44 +180,33 @@ static void link_multicast_relay_task(void*) {
         // Skip packets originating from ourselves
         if (src.sin_addr.s_addr == ap_ip) continue;
 
-        // Build raw IPv4 + UDP packet with original source IP
-        struct {
-            uint8_t  ihl_ver, tos;
-            uint16_t len, id, off;
-            uint8_t  ttl, proto;
-            uint16_t cksum;
-            uint32_t src_ip, dst_ip;
-        } __attribute__((packed)) *ih = (void*)pkt;
+        // Build UDP header + payload in a pbuf
+        struct pbuf* p = pbuf_alloc(PBUF_RAW, (uint16_t)(8 + n), PBUF_RAM);
+        if (!p) continue;
 
-        ih->ihl_ver = 0x45;
-        ih->tos     = 0;
-        ih->len     = htons((uint16_t)(20 + 8 + n));
-        ih->id      = 0;
-        ih->off     = 0;
-        ih->ttl     = 4;
-        ih->proto   = IPPROTO_UDP;
-        ih->cksum   = 0;
-        ih->src_ip  = src.sin_addr.s_addr;
-        ih->dst_ip  = mcast_ip;
+        // UDP header (network byte order)
+        uint8_t* buf = (uint8_t*)p->payload;
+        uint16_t sport = src.sin_port;
+        uint16_t dport = PP_HTONS(LINK_PORT);
+        uint16_t ulen  = lwip_htons((uint16_t)(8 + n));
+        memcpy(buf + 0, &sport, 2);
+        memcpy(buf + 2, &dport, 2);
+        memcpy(buf + 4, &ulen,  2);
+        buf[6] = 0; buf[7] = 0; // checksum = 0 (optional for IPv4)
+        memcpy(buf + 8, payload, n);
 
-        // IP header checksum
-        uint32_t ck = 0;
-        uint16_t* w = (uint16_t*)pkt;
-        for (int i = 0; i < 10; i++) ck += ntohs(w[i]);
-        while (ck >> 16) ck = (ck & 0xFFFF) + (ck >> 16);
-        ih->cksum = htons((uint16_t)~ck);
+        ip4_addr_t src_addr, dst_addr;
+        src_addr.addr = src.sin_addr.s_addr;
+        dst_addr.addr = mcast_ip;
 
-        // UDP header
-        struct {
-            uint16_t sport, dport, len, cksum;
-        } __attribute__((packed)) *uh = (void*)(pkt + 20);
-        uh->sport = src.sin_port;
-        uh->dport = htons(LINK_PORT);
-        uh->len   = htons((uint16_t)(8 + n));
-        uh->cksum = 0; // UDP checksum optional for IPv4
+        LOCK_TCPIP_CORE();
+        struct netif* ap_lwip = (struct netif*)esp_netif_get_netif_impl(g_ap_netif);
+        if (ap_lwip) {
+            raw_sendto_if_src(rpcb, p, &dst_addr, ap_lwip, &src_addr);
+        }
+        UNLOCK_TCPIP_CORE();
 
-        memcpy(pkt + 28, payload, n);
-        sendto(ss, pkt, 28 + n, 0, (struct sockaddr*)&dst, sizeof(dst));
+        pbuf_free(p);
     }
 }
 
