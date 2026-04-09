@@ -8,6 +8,10 @@
 #include <lwip/igmp.h>
 #include <lwip/netif.h>
 #include <esp_mac.h>
+#include <lwip/sockets.h>
+#include <lwip/inet.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 // Ableton Link peer discovery multicast group (224.76.78.75)
 static const ip4_addr_t LINK_MCAST = { .addr = PP_HTONL(LWIP_MAKEU32(224, 76, 78, 75)) };
@@ -119,6 +123,113 @@ esp_err_t wifi_start_link_ap(const char* ssid) {
 
 void wifi_join_link_multicast() {
     igmp_join_link(g_sta_netif);
+}
+
+// Relay Ableton Link multicast (224.76.78.75:20808) between AP clients.
+// Receives on the multicast group, then re-sends each packet back to the
+// multicast group with the original source IP/port preserved via a raw socket
+// (IP_HDRINCL), so Ableton Link peer-to-peer connections work correctly.
+static void link_multicast_relay_task(void*) {
+    static const char* RELAY_TAG = "LINK_RELAY";
+    static const char* MCAST_ADDR = "224.76.78.75";
+    static const char* AP_ADDR    = "192.168.4.1";
+    static const uint16_t LINK_PORT = 20808;
+
+    // Receive socket: join multicast on AP interface
+    int rs = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (rs < 0) { ESP_LOGE(RELAY_TAG, "recv socket failed"); vTaskDelete(NULL); return; }
+    int one = 1;
+    setsockopt(rs, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    struct sockaddr_in bind_addr = {};
+    bind_addr.sin_family      = AF_INET;
+    bind_addr.sin_port        = htons(LINK_PORT);
+    bind_addr.sin_addr.s_addr = INADDR_ANY;
+    if (bind(rs, (struct sockaddr*)&bind_addr, sizeof(bind_addr)) < 0) {
+        ESP_LOGE(RELAY_TAG, "bind failed"); close(rs); vTaskDelete(NULL); return;
+    }
+    struct ip_mreq mreq = {};
+    inet_aton(MCAST_ADDR, &mreq.imr_multiaddr);
+    inet_aton(AP_ADDR,    &mreq.imr_interface);
+    setsockopt(rs, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
+
+    // Send socket: raw, so we can set source IP = original sender
+    int ss = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
+    if (ss < 0) {
+        ESP_LOGE(RELAY_TAG, "raw socket failed — relay disabled");
+        close(rs); vTaskDelete(NULL); return;
+    }
+    setsockopt(ss, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one));
+    // Send on AP interface
+    struct in_addr ap_if = {};
+    inet_aton(AP_ADDR, &ap_if);
+    setsockopt(ss, IPPROTO_IP, IP_MULTICAST_IF, &ap_if, sizeof(ap_if));
+
+    uint32_t ap_ip = inet_addr(AP_ADDR);
+    uint32_t mcast_ip = inet_addr(MCAST_ADDR);
+
+    struct sockaddr_in dst = {};
+    dst.sin_family      = AF_INET;
+    dst.sin_port        = htons(LINK_PORT);
+    dst.sin_addr.s_addr = mcast_ip;
+
+    static uint8_t payload[1500];
+    // IP header (20) + UDP header (8)
+    static uint8_t pkt[1528];
+
+    ESP_LOGI(RELAY_TAG, "Ableton Link relay running on %s:%u", MCAST_ADDR, LINK_PORT);
+
+    for (;;) {
+        struct sockaddr_in src = {};
+        socklen_t sl = sizeof(src);
+        int n = recvfrom(rs, payload, sizeof(payload), 0, (struct sockaddr*)&src, &sl);
+        if (n <= 0) continue;
+
+        // Skip packets originating from ourselves
+        if (src.sin_addr.s_addr == ap_ip) continue;
+
+        // Build raw IPv4 + UDP packet with original source IP
+        struct {
+            uint8_t  ihl_ver, tos;
+            uint16_t len, id, off;
+            uint8_t  ttl, proto;
+            uint16_t cksum;
+            uint32_t src_ip, dst_ip;
+        } __attribute__((packed)) *ih = (void*)pkt;
+
+        ih->ihl_ver = 0x45;
+        ih->tos     = 0;
+        ih->len     = htons((uint16_t)(20 + 8 + n));
+        ih->id      = 0;
+        ih->off     = 0;
+        ih->ttl     = 4;
+        ih->proto   = IPPROTO_UDP;
+        ih->cksum   = 0;
+        ih->src_ip  = src.sin_addr.s_addr;
+        ih->dst_ip  = mcast_ip;
+
+        // IP header checksum
+        uint32_t ck = 0;
+        uint16_t* w = (uint16_t*)pkt;
+        for (int i = 0; i < 10; i++) ck += ntohs(w[i]);
+        while (ck >> 16) ck = (ck & 0xFFFF) + (ck >> 16);
+        ih->cksum = htons((uint16_t)~ck);
+
+        // UDP header
+        struct {
+            uint16_t sport, dport, len, cksum;
+        } __attribute__((packed)) *uh = (void*)(pkt + 20);
+        uh->sport = src.sin_port;
+        uh->dport = htons(LINK_PORT);
+        uh->len   = htons((uint16_t)(8 + n));
+        uh->cksum = 0; // UDP checksum optional for IPv4
+
+        memcpy(pkt + 28, payload, n);
+        sendto(ss, pkt, 28 + n, 0, (struct sockaddr*)&dst, sizeof(dst));
+    }
+}
+
+void wifi_start_link_relay() {
+    xTaskCreate(link_multicast_relay_task, "link_relay", 4096, NULL, 5, NULL);
 }
 
 bool wifi_is_connected() { return g_wifi_connected; }

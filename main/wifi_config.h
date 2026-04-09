@@ -10,6 +10,7 @@ bool      wifi_scan_for_ssid(const char* ssid);
 esp_err_t wifi_connect_sta(const char* ssid, const char* password);
 esp_err_t wifi_start_link_ap(const char* ssid);
 void      wifi_join_link_multicast();
+void      wifi_start_link_relay();
 bool      wifi_is_connected();
 bool      wifi_is_ap_active();
 

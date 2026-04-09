@@ -106,6 +106,7 @@ extern "C" void app_main() {
         if (!wifi_is_connected()) {
             ESP_LOGW(TAG, "Could not join 'ticker', hosting instead");
             wifi_start_link_ap("ticker");
+            wifi_start_link_relay();
         } else {
             ESP_LOGI(TAG, "Joined 'ticker' network");
             wifi_join_link_multicast();
@@ -113,6 +114,7 @@ extern "C" void app_main() {
     } else {
         ESP_LOGI(TAG, "No 'ticker' found — hosting AP");
         wifi_start_link_ap("ticker");
+        wifi_start_link_relay();
     }
 
     network_midi_init();
