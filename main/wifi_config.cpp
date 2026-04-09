@@ -12,7 +12,7 @@
 #include <lwip/inet.h>
 #include <lwip/raw.h>
 #include <lwip/pbuf.h>
-#include <lwip/udp.h>
+#include <lwip/ip_addr.h>
 #include <lwip/tcpip.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -195,9 +195,9 @@ static void link_multicast_relay_task(void*) {
         buf[6] = 0; buf[7] = 0; // checksum = 0 (optional for IPv4)
         memcpy(buf + 8, payload, n);
 
-        ip4_addr_t src_addr, dst_addr;
-        src_addr.addr = src.sin_addr.s_addr;
-        dst_addr.addr = mcast_ip;
+        ip_addr_t src_addr, dst_addr;
+        ip_addr_set_ip4_u32(&src_addr, src.sin_addr.s_addr);
+        ip_addr_set_ip4_u32(&dst_addr, mcast_ip);
 
         LOCK_TCPIP_CORE();
         struct netif* ap_lwip = (struct netif*)esp_netif_get_netif_impl(g_ap_netif);
