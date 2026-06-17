@@ -6,7 +6,7 @@
 #include <chrono>
 
 // A single note event in the 1024-step phrase buffer.
-// pos: position in steps (0.0 – 1023.75), fractional for sub-step placement.
+// pos: position in steps (0.0 - 1023.75), fractional for sub-step placement.
 struct NoteSlot {
     float pos;
     int   note;       // MIDI note number
@@ -17,8 +17,8 @@ struct NoteSlot {
 };
 
 // 8 genres:
-//   Single tap  on pad 0-3 → GENRE_FUNK / ITALO / SYNTHPOP / PSYTRANCE
-//   Double tap  on pad 0-3 → GENRE_PROG / AFROHOUSE / UKG / GFUNK
+//   Single tap  on pad 0-3 -> GENRE_FUNK / ITALO / SYNTHPOP / PSYTRANCE
+//   Double tap  on pad 0-3 -> GENRE_PROG / AFROHOUSE / UKG / GFUNK
 enum GenreId {
     GENRE_FUNK      = 0,
     GENRE_ITALO     = 1,
@@ -38,7 +38,7 @@ public:
     // Select a genre and start playing. Regenerates phrase immediately.
     void setGenre(int genre_idx);
 
-    // Macro controls (0.0 – 1.0). Re-generates phrase on the fly.
+    // Macro controls (0.0 - 1.0). Re-generates phrase on the fly.
     void setCtrl1(float v);
     void setCtrl2(float v);
 
@@ -65,7 +65,7 @@ private:
                  float pb = 0.f, float ts = 0.f);
     static void msInit(MS m[16]);
 
-    // Phrase generation — advanceArc=false for mid-phrase hot-swap (no arc increment)
+    // Phrase generation -- advanceArc=false for mid-phrase hot-swap (no arc increment)
     void regeneratePhrase(bool advanceArc = true);
 
     // Per-genre motif generators (fill m[0..15])
@@ -84,7 +84,7 @@ private:
     void anchorMotif(MS m[16], int root, int scIdx);
     static void clampRange(MS m[16], int root);
 
-    // Turnarounds – inject notes into m_phrase directly (called at tStart = 248)
+    // Turnarounds - inject notes into m_phrase directly (called at tStart = 248)
     void turnFunk     (int base, int scIdx, float c1, float c2);
     void turnItalo    (int base);
     void turnSynthpop (int base);

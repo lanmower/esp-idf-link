@@ -957,14 +957,13 @@ void MidiFilePlayer::process(const ableton::Link::SessionState& sessionState,
     // Process any notes that need to be turned off
     processNoteOffs(beats * playbackRate);
     
-    // IMPORTANT: Always quantize to 16-beat quantum for proper sync
-    double effectiveTrackLength = linkQuantum; // Force 16-beat loops
-    
-    // If the track is longer than 16 beats, we still loop at 16
-    // This ensures perfect sync with the quantum
-    if (track.lengthInBeats > linkQuantum) {
-        ESP_LOGD(TAG, "Track is %.2f beats, but looping at %.2f beat quantum", 
-                 track.lengthInBeats, linkQuantum);
+    // Loop at the track's quantized phrase length, NOT a forced 16-beat quantum.
+    // calculateQuantizedLoopPoint rounds the track length to the nearest/ceil multiple
+    // of the quantum so a longer phrase (e.g. a 32- or 64-beat loop) is preserved while
+    // still aligning to Link's grid. This keeps the longer phrase intact.
+    double effectiveTrackLength = calculateQuantizedLoopPoint(0.0, track);
+    if (effectiveTrackLength <= 0.0) {
+        effectiveTrackLength = linkQuantum; // degenerate guard: empty/zero-length track
     }
     
     // Calculate the beat position in the MIDI file with quantum-aligned looping

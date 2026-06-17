@@ -65,7 +65,14 @@
 #define MIDI_CC_THRESHOLD 1
 
 // Link Constants
+// LINK_QUANTUM is the musical phase quantum (16 beats = 4 bars of 4/4) used for
+// beat/phase tracking and the metronome buzzer.
 #define LINK_QUANTUM 16.0
+// PHRASE_BEATS is the transport-correction boundary (16 bars = 64 beats). External
+// gear is realigned (SPP / Start) only at this boundary, NOT every quantum, so that
+// brand-varied targets (KO2, Volca Drum, MicroKorg, Micron, MiniNova, RC-505 MK2)
+// stay in phrase without transport spam disrupting their normal operation.
+#define PHRASE_BEATS 64.0
 
 // Metronome Constants
 #define LEDC_MODE              LEDC_HIGH_SPEED_MODE
@@ -88,8 +95,21 @@
 #define MIDI_START 0xFA
 #define MIDI_STOP 0xFC
 #define MIDI_CONTINUE 0xFB
+#define MIDI_SPP 0xF2          // Song Position Pointer (status + LSB + MSB)
 #define MIDI_NOTE_ON_CMD 0x90
 #define MIDI_NOTE_OFF_CMD 0x80
+#define MIDI_CC_CMD 0xB0
+#define MIDI_CC_ALL_NOTES_OFF 123  // CC123: All Notes Off (sent on all 16 channels at stop)
+
+// Maximum MIDI timing clocks emitted in a single tick. At LINK_TICK_PERIOD=250us
+// (4 kHz) and 24ppqn, even 300 BPM needs <<1 clock/tick, so a healthy tick emits 0-1.
+// Capping catch-up prevents a post-stall burst of 0xF8 bytes that external gear reads
+// as a tempo spike; beyond the cap we resync the counter to the live beat instead.
+#define MIDI_MAX_CLOCKS_PER_TICK 2
+// If the clock counter falls further than this many clocks behind the live Link beat
+// (e.g. after a WiFi/scan stall), abandon catch-up and hard-resync to the current
+// position rather than flooding the bus. 24 clocks = one quarter note.
+#define MIDI_CLOCK_RESYNC_THRESHOLD 24
 
 // --- Enums ---
 // Moved to synth_mininova.cpp

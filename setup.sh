@@ -33,7 +33,7 @@ docker run --rm \
   bash -c "git submodule update --init --recursive"
 
 echo ""
-echo "✅ Setup complete!"
+echo "[OK] Setup complete!"
 echo ""
 echo "To build the project:"
 echo "  bash build.sh"

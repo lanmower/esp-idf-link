@@ -47,3 +47,8 @@ components/
 .gm-stop-verified
 
 .code-search/
+
+# --- gm managed (agent spool, learn db, runtime markers) ---
+.gm/
+.codeinsight
+.gm/pw-sock-*/

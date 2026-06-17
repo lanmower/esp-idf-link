@@ -11,7 +11,7 @@ if [ ! -e "$DEVICE" ]; then
     sleep 2
     
     if [ ! -e "$DEVICE" ]; then
-        echo "✗ Error: Device still not found after driver reload"
+        echo "[FAIL] Error: Device still not found after driver reload"
         echo ""
         echo "Available serial devices:"
         ls -la /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || echo "  (none found)"

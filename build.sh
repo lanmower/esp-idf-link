@@ -12,5 +12,5 @@ fi
 
 docker compose up build
 echo ""
-echo "✓ Build complete!"
+echo "[OK] Build complete!"
 ls -lh build/link-idf-example.bin

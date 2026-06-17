@@ -1,41 +1,48 @@
-# WiFi Provisioning Fix
+@AGENTS.md
+# WiFi Self-Healing Mesh ('ticker' network)
 
-## Saved But Not Connecting Issue
-After provisioning saves credentials, device says "Saved" but never actually connects - hotspot restarts instead.
+There is no credential-provisioning flow. Devices form an ad-hoc single-AP mesh around
+the open SSID `ticker` so Ableton Link peers can discover each other:
 
-## Root Causes Fixed
-1. **Missing WiFi state reset**: After stopping hotspot, WiFi driver needs time to stabilize before re-initialization
-2. **No error checking**: `wifi_config_set_credentials()` wasn't being validated - could fail silently
-3. **Short connection timeout**: Only waited 20s for connection, needed 30s for ESP32
+## Boot decision (`main.cpp` app_main)
+1. Stagger scan by last STA-MAC byte (0-3825ms) so co-booting devices don't race.
+2. `wifi_scan_best_bssid("ticker", ...)` -- active scan filtered to the SSID, reads
+   `esp_wifi_scan_get_ap_records` for the lowest BSSID (tie-break key).
+3. Match found -> join as STA (`wifi_connect_sta`), wait up to 30s; on failure, host.
+   No match -> host the AP (`wifi_start_link_ap`) + Link multicast relay.
 
-## Solutions Applied
-- `provisioning.cpp`: Added error checking on credential save, returns 500 if save fails
-- `main.cpp`: Added 2s delay after `wifi_stop_hotspot()` for WiFi driver stability, extended timeout to 30s, added logs
-- `wifi_config.cpp`: Added detailed error logging at each step (get creds, set mode, set config, start)
+## Self-healing supervisor (`wifi_config.cpp` wifi_supervisor_task)
+Started by `wifi_start_supervisor("ticker")`, runs forever, 2s cadence:
+- STA role: a dropped STA reconnects up to 6 times (~12s); if the host stays gone it
+  re-hosts the AP so the mesh survives the host powering off.
+- AP role: re-scans; if another `ticker` AP with a strictly-lower BSSID appears (both
+  ended up hosting), it drops its AP and joins the lower one -- exactly one host wins.
+- `ensure_sta_started()` prevents leaking a default-STA netif across rescans.
+
+## MIDI master-clock sync (`link_sync.cpp`)
+Emits continuous 24ppqn clock (capped per tick + hard-resync past 24 clocks behind to
+avoid post-stall bursts). SPP + Start/Continue fire ONLY at the 16-bar phrase boundary
+(`PHRASE_BEATS=64`, distinct from `LINK_QUANTUM=16`). Stop + All-Notes-Off (CC123) on
+transport stop / peer loss. See the per-target compatibility table at the top of
+`link_sync.cpp` (KO2, Volca Drum, MicroKorg, Micron, MiniNova, RC-505 MK2).
 
 ## Build Performance Improvement
 - `build.sh`: Changed to incremental builds by default (removed unconditional `rm -rf build`)
 - Use `./build.sh clean` for full rebuild
 - Default builds now leverage Docker layer caching - 10-100x faster for code-only changes
 
-## Files Changed
-- `build.sh`: Incremental build support
-- `main/provisioning.cpp`: Error handling on credential save
-- `main/main.cpp`: WiFi state reset timing, extended timeout, improved logging
-- `main/wifi_config.cpp`: Detailed error logging in connect flow
-
 ---
 
 # MIDI Compatibility Notes
 
 ## NRPN Sequence
-`send_midi_nrpn` sends CC99, CC98, CC6, CC38=0, CC101=127, CC100=127. The null reset (CC101/100=127) is mandatory — without it, subsequent CC6 messages are misread as NRPN data on MicroKorg, Micron, and RC-505.
+`send_midi_nrpn` sends CC99, CC98, CC6, CC38=0, CC101=127, CC100=127. The null reset (CC101/100=127) is mandatory -- without it, subsequent CC6 messages are misread as NRPN data on MicroKorg, Micron, and RC-505.
 
 ## Note-Off Velocity
 Always send velocity 0 for note-off. Passing note-on velocity in note-off byte causes stuck notes on RC-505 MK2 and KO2.
 
 ## MIDI File Player Loop Sync
-`syncToBpm` is disabled (`false`). Link's `beatAtTime()` already provides tempo-independent beats — enabling `syncToBpm` caused double-scaling of `playbackRate` which corrupted `endBeatAbsolute` on any tempo change, leaving notes permanently stuck. At loop boundary, `sendAllNotesOff()` + `activeNotes.clear()` fires instead of remapping note end times.
+`syncToBpm` is disabled (`false`). Link's `beatAtTime()` already provides tempo-independent beats -- enabling `syncToBpm` caused double-scaling of `playbackRate` which corrupted `endBeatAbsolute` on any tempo change, leaving notes permanently stuck. At loop boundary, `sendAllNotesOff()` + `activeNotes.clear()` fires instead of remapping note end times.
 
 ## UART TX Buffer
 `uart_driver_install` uses 256-byte TX ring buffer (not 0). Without it, burst NRPN sends (e.g. `setSidechainPattern` with 12 NRPNs = 108 bytes) would block the FreeRTOS main loop for ~35ms.

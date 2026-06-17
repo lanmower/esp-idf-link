@@ -60,29 +60,75 @@ esp_err_t wifi_config_init() {
     return esp_wifi_init(&cfg);
 }
 
-bool wifi_scan_for_ssid(const char* ssid) {
-    g_sta_netif = esp_netif_create_default_wifi_sta();
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_start());
+// Ensure the STA netif + driver are up exactly once. Repeated scans (supervisor
+// re-scan, dual-host tie-break) must not leak a new default-STA netif each call.
+static void ensure_sta_started() {
+    if (!g_sta_netif) {
+        g_sta_netif = esp_netif_create_default_wifi_sta();
+    }
+    wifi_mode_t mode;
+    if (esp_wifi_get_mode(&mode) != ESP_OK || mode == WIFI_MODE_NULL) {
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        ESP_ERROR_CHECK(esp_wifi_start());
+    }
+}
+
+void wifi_get_sta_mac(uint8_t out_mac[6]) {
+    esp_read_mac(out_mac, ESP_MAC_WIFI_STA);
+}
+
+// Scan for `ssid`. esp_wifi_scan_start(.,true) blocks until the scan completes, so the
+// AP count/records read immediately after are valid. With cfg.ssid set, the driver
+// filters to matching SSIDs. Returns match count; fills out_best_bssid with the lowest
+// BSSID among matches (or leaves it untouched on zero matches).
+int wifi_scan_best_bssid(const char* ssid, uint8_t out_best_bssid[6]) {
+    ensure_sta_started();
 
     wifi_scan_config_t scan_cfg = {};
     scan_cfg.ssid = (uint8_t*)ssid;
     scan_cfg.scan_type = WIFI_SCAN_TYPE_ACTIVE;
     scan_cfg.scan_time.active.min = 100;
     scan_cfg.scan_time.active.max = 300;
-    esp_wifi_scan_start(&scan_cfg, true);
+    if (esp_wifi_scan_start(&scan_cfg, true) != ESP_OK) {
+        ESP_LOGW(TAG, "scan_start failed");
+        return 0;
+    }
 
     uint16_t count = 0;
     esp_wifi_scan_get_ap_num(&count);
-    ESP_LOGI(TAG, "Scan found %u APs matching '%s'", count, ssid);
-
     if (count == 0) {
-        esp_wifi_stop();
-        esp_netif_destroy(g_sta_netif);
-        g_sta_netif = NULL;
-        return false;
+        ESP_LOGI(TAG, "Scan: no '%s' AP found", ssid);
+        return 0;
     }
-    return true;
+
+    // Pull records to inspect BSSIDs for the tie-break.
+    static const uint16_t MAX_RECORDS = 12;
+    wifi_ap_record_t records[MAX_RECORDS];
+    uint16_t n = (count < MAX_RECORDS) ? count : MAX_RECORDS;
+    if (esp_wifi_scan_get_ap_records(&n, records) != ESP_OK) {
+        ESP_LOGW(TAG, "scan_get_ap_records failed; treating as %u matches, no BSSID", count);
+        return count;
+    }
+
+    int best = -1;
+    for (uint16_t i = 0; i < n; ++i) {
+        if (best < 0 || memcmp(records[i].bssid, records[best].bssid, 6) < 0) {
+            best = i;
+        }
+    }
+    if (best >= 0) {
+        memcpy(out_best_bssid, records[best].bssid, 6);
+        ESP_LOGI(TAG, "Scan: %u '%s' AP(s); lowest BSSID %02x:%02x:%02x:%02x:%02x:%02x",
+                 n, ssid,
+                 out_best_bssid[0], out_best_bssid[1], out_best_bssid[2],
+                 out_best_bssid[3], out_best_bssid[4], out_best_bssid[5]);
+    }
+    return n;
+}
+
+bool wifi_scan_for_ssid(const char* ssid) {
+    uint8_t bssid[6];
+    return wifi_scan_best_bssid(ssid, bssid) > 0;
 }
 
 esp_err_t wifi_connect_sta(const char* ssid, const char* password) {
@@ -160,7 +206,7 @@ static void link_multicast_relay_task(void*) {
     struct raw_pcb* rpcb = raw_new(IPPROTO_UDP);
     UNLOCK_TCPIP_CORE();
     if (!rpcb) {
-        ESP_LOGE(RELAY_TAG, "raw_new failed — relay disabled");
+        ESP_LOGE(RELAY_TAG, "raw_new failed -- relay disabled");
         close(rs); vTaskDelete(NULL); return;
     }
 
@@ -212,6 +258,66 @@ static void link_multicast_relay_task(void*) {
 
 void wifi_start_link_relay() {
     xTaskCreate(link_multicast_relay_task, "link_relay", 4096, NULL, 5, NULL);
+}
+
+// Self-healing supervisor. Runs forever. Two roles:
+//  - STA role (g_ap_active == false): if the STA connection drops, retry esp_wifi_connect
+//    a few times; if it stays down, fall back to hosting the AP so the mesh self-heals
+//    when the previous host disappears.
+//  - AP role (g_ap_active == true): periodically re-scan; if another 'ticker' AP exists
+//    whose BSSID is LOWER than our own STA MAC, we lost the tie-break (both ended up
+//    hosting) -- drop the AP and join the lower one so exactly one host remains.
+static void wifi_supervisor_task(void* arg) {
+    const char* ssid = (const char*)arg;
+    const int RECONNECT_TRIES = 6;     // ~6 * 2s = 12s before re-hosting
+    uint8_t my_mac[6];
+    wifi_get_sta_mac(my_mac);
+
+    int sta_down_count = 0;
+
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(2000));
+
+        if (!g_ap_active) {
+            // STA role
+            if (g_wifi_connected) {
+                sta_down_count = 0;
+                continue;
+            }
+            sta_down_count++;
+            if (sta_down_count <= RECONNECT_TRIES) {
+                ESP_LOGW(TAG, "STA down (%d/%d) -- reconnecting", sta_down_count, RECONNECT_TRIES);
+                esp_wifi_connect();
+            } else {
+                ESP_LOGW(TAG, "STA down past %d tries -- host '%s' disappeared, re-hosting", RECONNECT_TRIES, ssid);
+                esp_wifi_disconnect();
+                esp_wifi_stop();
+                if (g_sta_netif) { esp_netif_destroy(g_sta_netif); g_sta_netif = NULL; }
+                wifi_start_link_ap(ssid);
+                wifi_start_link_relay();
+                sta_down_count = 0;
+            }
+        } else {
+            // AP role: detect a co-host with a lower BSSID and yield to it.
+            uint8_t best[6];
+            int matches = wifi_scan_best_bssid(ssid, best);
+            // Our own AP shows up in the scan as our AP MAC (STA MAC + 1 on ESP32).
+            // Only yield if a DIFFERENT, strictly-lower BSSID is present.
+            if (matches > 0 && memcmp(best, my_mac, 6) < 0) {
+                ESP_LOGW(TAG, "Lost dual-host tie-break (lower BSSID seen) -- dropping AP, joining");
+                esp_wifi_stop();
+                if (g_ap_netif) { esp_netif_destroy(g_ap_netif); g_ap_netif = NULL; }
+                g_ap_active = false;
+                ensure_sta_started();
+                wifi_connect_sta(ssid, "");
+            }
+        }
+    }
+}
+
+void wifi_start_supervisor(const char* ssid) {
+    // ssid is a string literal in app_main; safe to pass by pointer.
+    xTaskCreate(wifi_supervisor_task, "wifi_super", 4096, (void*)ssid, 4, NULL);
 }
 
 bool wifi_is_connected() { return g_wifi_connected; }

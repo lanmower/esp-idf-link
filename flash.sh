@@ -53,4 +53,4 @@ sudo PYTHONPATH=/home/user/.local/lib/python3.12/site-packages python3.12 /home/
     0x20000 build/link-idf-example.bin
 
 echo ""
-echo "✓ Flash complete!"
+echo "[OK] Flash complete!"

@@ -5,10 +5,29 @@
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
 
+// --- Master-clock compatibility for the non-negotiable targets ---
+// Our emission set is brand-agnostic raw MIDI: continuous 24ppqn clock (0xF8), and at
+// the 16-bar phrase boundary only: SPP (0xF2) + Start/Continue (0xFA/0xFB). Stop (0xFC)
+// + All-Notes-Off (CC123) on transport stop / peer loss. How each target consumes it:
+//   KO2 (Korg KO II) : locks to ext clock; Start needed to run; SPP repositions cleanly
+//                      at phrase boundary (infrequent SPP avoids its known SPP sensitivity).
+//   Volca Drum       : syncs to clock pulse only; ignores SPP/SPP-spam harmless now that
+//                      SPP fires once per phrase, not every 4 beats.
+//   MicroKorg        : arp/delay sync follows clock; needs a stable (non-bursting) clock
+//                      -- the per-tick cap + resync guarantees that.
+//   Micron           : clock + Start; phrase-aligned Start keeps its sequencer in phrase.
+//   MiniNova         : arp/LFO sync to clock; stable clock keeps modulation locked.
+//   RC-505 MK2       : loop station; locks to clock+Start, SPP repositions; note-offs use
+//                      velocity 0 (see io_helpers / CLAUDE.md) and CC123 on stop avoids
+//                      stuck loops.
+// None require per-device clock code; the single emission path serves all. Per-device
+// parameter control (NRPN) lives in the synth_* classes and is unaffected.
+
 // Add logging tag
 static const char *TAG_LINK = "LINK_SYNC";
 
 static int s_last_quantum_number = -1;
+static int s_last_phrase_number = -1;
 static gptimer_handle_t s_link_gptimer = nullptr;
 static esp_timer_handle_t s_buzzer_off_timer = nullptr;
 
@@ -34,6 +53,11 @@ QuantumInfo detectQuantumBoundary(const ableton::Link::SessionState& state,
     info.beatInQuantum = static_cast<int>(std::floor(info.phaseWithinQuantum));
     info.beatFraction = info.phaseWithinQuantum - std::floor(info.phaseWithinQuantum);
 
+    // Phrase boundary tracking (16 bars / PHRASE_BEATS). Computed from the same
+    // monotonic sessionBeat so quantum and phrase share one timeline.
+    info.phaseWithinPhrase = state.phaseAtTime(time, PHRASE_BEATS);
+    info.currentPhraseNumber = static_cast<int>(std::floor(info.sessionBeat / PHRASE_BEATS));
+
     if (s_last_quantum_number == -1) {
         s_last_quantum_number = info.currentQuantumNumber;
         info.crossedQuantumBoundary = false;
@@ -43,6 +67,17 @@ QuantumInfo detectQuantumBoundary(const ableton::Link::SessionState& state,
         ESP_LOGI(TAG_LINK, "Quantum boundary %d, beat %.2f", info.currentQuantumNumber, info.sessionBeat);
     } else {
         info.crossedQuantumBoundary = false;
+    }
+
+    if (s_last_phrase_number == -1) {
+        s_last_phrase_number = info.currentPhraseNumber;
+        info.crossedPhraseBoundary = false;
+    } else if (info.currentPhraseNumber != s_last_phrase_number) {
+        s_last_phrase_number = info.currentPhraseNumber;
+        info.crossedPhraseBoundary = true;
+        ESP_LOGI(TAG_LINK, "Phrase boundary %d, beat %.2f", info.currentPhraseNumber, info.sessionBeat);
+    } else {
+        info.crossedPhraseBoundary = false;
     }
 
     return info;
@@ -85,36 +120,75 @@ void init_link_timer(TaskHandle_t task_handle) {
     ESP_ERROR_CHECK(esp_timer_create(&buzzer_timer_args, &s_buzzer_off_timer));
 }
 
+// Send MIDI realtime/transport byte(s). Realtime status bytes (0xF8/0xFA/0xFB/0xFC)
+// are single-byte and may legally interleave a running-status message, so the buzzer
+// path and clock path never corrupt each other.
+static void send_midi_bytes(const uint8_t* buf, size_t len) {
+    uart_write_bytes(MIDI_UART, (const char*)buf, len);
+}
+
+// Clear hanging notes on every channel. Sent on transport Stop and on Link peer loss
+// so brand-varied gear (RC-505 MK2/KO2 especially) never holds a note across a resync.
+static void send_all_notes_off_all_channels() {
+    for (uint8_t ch = 0; ch < 16; ++ch) {
+        const uint8_t cc[] = { (uint8_t)(MIDI_CC_CMD | ch), MIDI_CC_ALL_NOTES_OFF, 0 };
+        send_midi_bytes(cc, sizeof(cc));
+    }
+}
+
+// Song Position Pointer carries position in MIDI beats (sixteenth notes). One Link beat
+// (quarter note) = 4 SPP units. 14-bit value, LSB first.
+static void send_song_position(double sessionBeat) {
+    uint16_t spp_units = static_cast<uint16_t>(sessionBeat * 4.0) & 0x3FFF;
+    const uint8_t spp[] = { MIDI_SPP,
+                            (uint8_t)(spp_units & 0x7F),
+                            (uint8_t)((spp_units >> 7) & 0x7F) };
+    send_midi_bytes(spp, sizeof(spp));
+}
+
 // Main Link Synchronization Logic (called from tickTask)
+// pending_realign: set when a peer joins or play-state begins; the actual MIDI
+// Start+SPP is held until the next 16-bar phrase boundary so all gear begins the
+// phrase together rather than jerking in mid-phrase.
 void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force_start,
                         int& lastTicks, int& length, int& lastBeat, int& currentBuzzerFreq, bool& was_playing,
                         const ableton::Link::SessionState& state, const std::chrono::microseconds& time)
 {
-    // Check peer status & force start timeout
+    static bool s_pending_realign = false;   // a Start+SPP is owed at the next phrase boundary
+    static bool s_transport_running = false; // whether external gear currently believes it is playing
+
+    // Check peer status & force start timeout. Hold force-start longer (8s) than the
+    // original 5s so two co-booting devices have time to discover each other over WiFi
+    // before either free-runs; this avoids both emitting transport at independent phases
+    // and then snapping when they peer.
     bool is_connected = g_link->numPeers() > 0;
-    if (!is_connected && !force_start && (esp_timer_get_time() - start_wait_time >= 5000000)) {
+    if (!is_connected && !force_start && (esp_timer_get_time() - start_wait_time >= 8000000)) {
         force_start = true;
-        ESP_LOGW(TAG_LINK, "No Link peers found for 5s, forcing start.");
+        ESP_LOGW(TAG_LINK, "No Link peers found for 8s, forcing start.");
     }
 
-    // Handle connection changes (send MIDI Stop/Start)
+    // Handle connection changes. On peer join we do NOT immediately Stop/Start; instead
+    // we arm a phrase-aligned realign so gear snaps to the shared phrase at the next
+    // 16-bar boundary. On peer loss we clear hanging notes.
     if (is_connected != was_connected) {
         ESP_LOGI(TAG_LINK, "Link peers changed: %d", g_link->numPeers());
         if (is_connected) {
-            // Log phase so we can verify Link alignment between devices
             auto qi = detectQuantumBoundary(state, time);
-            ESP_LOGI(TAG_LINK, "Link connected — beat=%.3f phase=%.3f quantum=%d",
-                     qi.sessionBeat, qi.phaseWithinQuantum, qi.currentQuantumNumber);
+            ESP_LOGI(TAG_LINK, "Link connected -- beat=%.3f phase=%.3f quantum=%d phrase=%d",
+                     qi.sessionBeat, qi.phaseWithinQuantum, qi.currentQuantumNumber, qi.currentPhraseNumber);
             // Reset lastBeat to avoid spurious trigger from Link phase adjustment
             lastBeat = qi.beatInQuantum;
-            const uint8_t stop_msg[] = {MIDI_STOP};
-            uart_write_bytes(MIDI_UART, (const char *)stop_msg, 1);
-            uart_wait_tx_done(MIDI_UART, portMAX_DELAY);
-            vTaskDelay(pdMS_TO_TICKS(1));
-            const uint8_t start_msg[] = {MIDI_START};
-            uart_write_bytes(MIDI_UART, (const char *)start_msg, 1);
-            uart_wait_tx_done(MIDI_UART, portMAX_DELAY);
-            ESP_LOGI(TAG_LINK, "Sent MIDI Stop/Start on Link connection.");
+            // Resync clock counter to the live beat so we do not burst clocks for the
+            // beats that elapsed before peering.
+            lastTicks = static_cast<int>(qi.sessionBeat * 24);
+            s_pending_realign = true;
+        } else {
+            // Peer lost -- stop external gear cleanly and clear any held notes.
+            const uint8_t stop_msg[] = { MIDI_STOP };
+            send_midi_bytes(stop_msg, 1);
+            send_all_notes_off_all_channels();
+            s_transport_running = false;
+            ESP_LOGI(TAG_LINK, "Link peer lost -- sent Stop + All Notes Off.");
         }
         was_connected = is_connected;
     }
@@ -122,11 +196,11 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     QuantumInfo quantumInfo = detectQuantumBoundary(state, time);
 
     const double sessionBeat = quantumInfo.sessionBeat;
-    const double phase = quantumInfo.phaseWithinQuantum;
     const int beatInQuantum = quantumInfo.beatInQuantum;
     const bool crossedQuantumBoundary = quantumInfo.crossedQuantumBoundary;
+    const bool crossedPhraseBoundary = quantumInfo.crossedPhraseBoundary;
 
-    // Calculate MIDI timing clocks (24 per quarter note)
+    // Target clock count: 24 per quarter note. Monotonic in sessionBeat.
     const int midiClocks = static_cast<int>(sessionBeat * 24);
 
     // Detect beat boundary crossing
@@ -162,28 +236,52 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
 
         bool is_playing = state.isPlaying();
 
-        // Send MIDI Start/Stop when play state changes
+        // Play-state changes: stopping is immediate (and clears held notes); starting
+        // is deferred to the next phrase boundary so gear begins in phrase.
         if (was_playing != is_playing) {
-            const uint8_t msg = is_playing ? MIDI_START : MIDI_STOP;
-            uart_write_bytes(MIDI_UART, (const char *)&msg, 1);
-            ESP_LOGI(TAG_LINK, "MIDI %s at beat %.1f", is_playing ? "START" : "STOP", sessionBeat);
+            if (is_playing) {
+                s_pending_realign = true;  // honor at next phrase boundary below
+            } else {
+                const uint8_t msg = MIDI_STOP;
+                send_midi_bytes(&msg, 1);
+                send_all_notes_off_all_channels();
+                s_transport_running = false;
+                ESP_LOGI(TAG_LINK, "MIDI STOP at beat %.1f (+ All Notes Off)", sessionBeat);
+            }
             was_playing = is_playing;
         }
 
-        // Send all missed MIDI Timing Clocks (24 per quarter note)
-        while (lastTicks < midiClocks) {
-            lastTicks++;
-            const uint8_t timing_msg = MIDI_TIMING_CLOCK;
-            uart_write_bytes(MIDI_UART, (const char *)&timing_msg, 1);
+        // Phrase boundary (16 bars): the only place we realign external transport.
+        // Emit SPP so gear repositions to the exact phrase start, then Start/Continue
+        // if a realign is pending. Doing this at the phrase boundary (never every few
+        // beats) keeps KO2/Volca/etc. in phrase without transport spam.
+        if (crossedPhraseBoundary) {
+            send_song_position(sessionBeat);
+            if (s_pending_realign && (is_playing || force_start)) {
+                const uint8_t start_msg = s_transport_running ? MIDI_CONTINUE : MIDI_START;
+                send_midi_bytes(&start_msg, 1);
+                s_transport_running = true;
+                s_pending_realign = false;
+                ESP_LOGI(TAG_LINK, "Phrase-aligned %s + SPP at beat %.1f",
+                         start_msg == MIDI_START ? "START" : "CONTINUE", sessionBeat);
+            }
         }
 
-        // Song Position Pointer on beat boundary (every 4 beats)
-        if (beatInQuantum % 4 == 0 && crossedBeat) {
-            uint16_t spp_beats = static_cast<uint16_t>(sessionBeat * 4) & 0x3FFF;
-            uint8_t spp_lsb = spp_beats & 0x7F;
-            uint8_t spp_msb = (spp_beats >> 7) & 0x7F;
-            const uint8_t spp_msg[] = {0xF2, spp_lsb, spp_msb};
-            uart_write_bytes(MIDI_UART, (const char *)spp_msg, sizeof(spp_msg));
+        // Emit due MIDI timing clocks, but cap per-tick output. If we have fallen far
+        // behind the live beat (post-stall), hard-resync the counter instead of bursting
+        // -- a flood of 0xF8 reads as a tempo spike on every target.
+        int behind = midiClocks - lastTicks;
+        if (behind > MIDI_CLOCK_RESYNC_THRESHOLD) {
+            ESP_LOGW(TAG_LINK, "Clock %d behind -- resyncing to beat %.2f (no burst)", behind, sessionBeat);
+            lastTicks = midiClocks;
+        } else {
+            int emitted = 0;
+            while (lastTicks < midiClocks && emitted < MIDI_MAX_CLOCKS_PER_TICK) {
+                lastTicks++;
+                emitted++;
+                const uint8_t timing_msg = MIDI_TIMING_CLOCK;
+                send_midi_bytes(&timing_msg, 1);
+            }
         }
     } else {
         set_buzzer_state(false);

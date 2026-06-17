@@ -16,6 +16,11 @@ struct QuantumInfo {
     bool crossedQuantumBoundary; // True if we just crossed a quantum boundary
     int beatInQuantum;           // Current beat number within the quantum
     double beatFraction;         // Fraction of the current beat (0.0 to 1.0)
+    // Phrase boundary (16 bars / PHRASE_BEATS) -- the transport-correction boundary,
+    // distinct from the musical quantum above.
+    int currentPhraseNumber;     // Which PHRASE_BEATS-length phrase we're in
+    bool crossedPhraseBoundary;  // True if we just crossed a phrase boundary
+    double phaseWithinPhrase;    // Phase position within the phrase (0.0 to PHRASE_BEATS)
 };
 
 // Detect quantum boundary

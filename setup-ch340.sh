@@ -10,15 +10,15 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo "Loading kernel modules (usbserial, ch341)..."
-modprobe usbserial || echo "⚠ usbserial module load failed (may be expected)"
-modprobe ch341 || echo "⚠ ch341 module load failed"
+modprobe usbserial || echo "WARNING: usbserial module load failed (may be expected)"
+modprobe ch341 || echo "WARNING: ch341 module load failed"
 
-echo "✓ Kernel modules loaded"
+echo "[OK] Kernel modules loaded"
 
 sleep 2
 
 if ls /dev/ttyUSB* 2>/dev/null | grep -q .; then
-    echo "✓ Serial device(s) available:"
+    echo "[OK] Serial device(s) available:"
     ls -la /dev/ttyUSB*
 
     echo ""
@@ -32,7 +32,7 @@ echo ""
 echo "No serial device found yet. Checking device detection..."
 
 if dmesg | tail -50 | grep -i "1a86.*7523\|ch340\|ch341" > /dev/null; then
-    echo "✓ CH340/CH341 device detected in kernel"
+    echo "[OK] CH340/CH341 device detected in kernel"
     echo ""
     echo "Device was found but no /dev/ttyUSB* appeared. Options:"
     echo "  1. Reattach via usbipd on Windows (PowerShell):"
@@ -40,7 +40,7 @@ if dmesg | tail -50 | grep -i "1a86.*7523\|ch340\|ch341" > /dev/null; then
     echo "       usbipd attach -b <busid> -w"
     echo "  2. Re-run this script after reattachment"
 else
-    echo "⚠ CH340/CH341 device not detected"
+    echo "WARNING: CH340/CH341 device not detected"
     echo ""
     echo "Ensure device is attached via usbipd on Windows (PowerShell):"
     echo "  1. Find device: usbipd list"

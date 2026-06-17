@@ -6,7 +6,7 @@ echo ""
 DEVICE=$(ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null | head -1)
 
 if [ -z "$DEVICE" ]; then
-    echo "✗ No serial device found"
+    echo "[FAIL] No serial device found"
     echo ""
     echo "Make sure to:"
     echo "  1. Connect the ESP32 device via USB"
@@ -15,7 +15,7 @@ if [ -z "$DEVICE" ]; then
     exit 1
 fi
 
-echo "✓ Found device: $DEVICE"
+echo "[OK] Found device: $DEVICE"
 echo ""
 echo "Quick start:"
 echo "  ./build.sh       # Build the firmware"

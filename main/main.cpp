@@ -93,10 +93,11 @@ extern "C" void app_main() {
     }
 
     ESP_LOGI(TAG, "Scanning for 'ticker' network...");
-    bool found = wifi_scan_for_ssid("ticker");
+    uint8_t best_bssid[6] = {0};
+    int matches = wifi_scan_best_bssid("ticker", best_bssid);
 
-    if (found) {
-        ESP_LOGI(TAG, "Found 'ticker' — joining as STA");
+    if (matches > 0) {
+        ESP_LOGI(TAG, "Found 'ticker' -- joining as STA");
         wifi_connect_sta("ticker", "");
         int wait = 0;
         while (!wifi_is_connected() && wait < 60) {
@@ -112,10 +113,14 @@ extern "C" void app_main() {
             wifi_join_link_multicast();
         }
     } else {
-        ESP_LOGI(TAG, "No 'ticker' found — hosting AP");
+        ESP_LOGI(TAG, "No 'ticker' found -- hosting AP");
         wifi_start_link_ap("ticker");
         wifi_start_link_relay();
     }
+
+    // Supervisor self-heals the mesh: reconnects a dropped STA, re-hosts if the host
+    // disappears, and resolves a dual-host race (lower BSSID wins). Runs in all roles.
+    wifi_start_supervisor("ticker");
 
     network_midi_init();
     xTaskCreate(tickTask, "tickTask", 10240, nullptr, 15, nullptr);
