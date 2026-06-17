@@ -4,6 +4,7 @@ on:
   push:
     branches: ["**"]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -35,4 +36,15 @@ jobs:
           git add -f build/link-idf-example.bin build/bootloader/bootloader.bin build/partition_table/partition-table.bin
           git diff --cached --quiet && echo "No binary changes" && exit 0
           git commit -m "ci: update firmware binaries [skip ci]"
-          git push origin HEAD:${{ github.ref_name }}
+          # Retry around the push: a concurrent workflow (e.g. auto-declaudeify) can
+          # advance the branch between our checkout and push, rejecting a stale ref.
+          # Rebase our binary commit onto the latest ref and retry a few times.
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:${{ github.ref_name }}; then
+              echo "Pushed binaries (attempt $attempt)"; exit 0
+            fi
+            echo "Push rejected (attempt $attempt) -- rebasing onto latest ${{ github.ref_name }}"
+            git fetch origin ${{ github.ref_name }}
+            git rebase origin/${{ github.ref_name }} || { git rebase --abort; sleep 3; }
+          done
+          echo "Failed to push binaries after retries"; exit 1
