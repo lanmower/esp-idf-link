@@ -36,15 +36,18 @@ jobs:
           git add -f build/link-idf-example.bin build/bootloader/bootloader.bin build/partition_table/partition-table.bin
           git diff --cached --quiet && echo "No binary changes" && exit 0
           git commit -m "ci: update firmware binaries [skip ci]"
-          # Retry around the push: a concurrent workflow (e.g. auto-declaudeify) can
-          # advance the branch between our checkout and push, rejecting a stale ref.
-          # Rebase our binary commit onto the latest ref and retry a few times.
+          # idf.py build leaves many other unstaged files under build/, so a plain
+          # rebase refuses ("unstaged changes"). Retry the push, and on rejection
+          # rebase the binary commit onto the latest ref with --autostash so the
+          # uncommitted build artifacts are set aside and restored automatically.
+          # A concurrent workflow (e.g. auto-declaudeify) advancing the branch is the
+          # expected rejection cause.
           for attempt in 1 2 3 4 5; do
             if git push origin HEAD:${{ github.ref_name }}; then
               echo "Pushed binaries (attempt $attempt)"; exit 0
             fi
             echo "Push rejected (attempt $attempt) -- rebasing onto latest ${{ github.ref_name }}"
             git fetch origin ${{ github.ref_name }}
-            git rebase origin/${{ github.ref_name }} || { git rebase --abort; sleep 3; }
+            git rebase --autostash origin/${{ github.ref_name }} || { git rebase --abort || true; sleep 3; }
           done
           echo "Failed to push binaries after retries"; exit 1
