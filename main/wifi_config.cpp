@@ -60,16 +60,33 @@ esp_err_t wifi_config_init() {
     return esp_wifi_init(&cfg);
 }
 
-// Ensure the STA netif + driver are up exactly once. Repeated scans (supervisor
-// re-scan, dual-host tie-break) must not leak a new default-STA netif each call.
+static bool g_wifi_started = false;
+
+// Ensure the driver is started in a SCANNABLE mode without tearing down an active AP.
+// esp_wifi_scan_start fails unless the driver is started AND the mode includes STA, so:
+//  - create the STA netif once (no leak across rescans);
+//  - if the AP is up, use APSTA (keep hosting while we scan); else STA;
+//  - call esp_wifi_start() exactly once (tracked), since the mode defaults to STA after
+//    esp_wifi_init but the driver is NOT started yet -- the original bug skipped start()
+//    because get_mode already returned STA, so the very first scan failed.
 static void ensure_sta_started() {
     if (!g_sta_netif) {
         g_sta_netif = esp_netif_create_default_wifi_sta();
     }
+    wifi_mode_t want = g_ap_active ? WIFI_MODE_APSTA : WIFI_MODE_STA;
     wifi_mode_t mode;
-    if (esp_wifi_get_mode(&mode) != ESP_OK || mode == WIFI_MODE_NULL) {
-        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-        ESP_ERROR_CHECK(esp_wifi_start());
+    if (esp_wifi_get_mode(&mode) != ESP_OK || mode != want) {
+        ESP_ERROR_CHECK(esp_wifi_set_mode(want));
+    }
+    if (!g_wifi_started) {
+        esp_err_t err = esp_wifi_start();
+        if (err == ESP_OK || err == ESP_ERR_WIFI_CONN /* already started */) {
+            g_wifi_started = true;
+        } else {
+            ESP_LOGW(TAG, "esp_wifi_start: %s", esp_err_to_name(err));
+            // Treat ESP_ERR_WIFI_NOT_STOPPED etc. as already-running.
+            g_wifi_started = true;
+        }
     }
 }
 
@@ -89,8 +106,9 @@ int wifi_scan_best_bssid(const char* ssid, uint8_t out_best_bssid[6]) {
     scan_cfg.scan_type = WIFI_SCAN_TYPE_ACTIVE;
     scan_cfg.scan_time.active.min = 100;
     scan_cfg.scan_time.active.max = 300;
-    if (esp_wifi_scan_start(&scan_cfg, true) != ESP_OK) {
-        ESP_LOGW(TAG, "scan_start failed");
+    esp_err_t serr = esp_wifi_scan_start(&scan_cfg, true);
+    if (serr != ESP_OK) {
+        ESP_LOGW(TAG, "scan_start failed: %s", esp_err_to_name(serr));
         return 0;
     }
 
@@ -143,7 +161,9 @@ esp_err_t wifi_connect_sta(const char* ssid, const char* password) {
 }
 
 esp_err_t wifi_start_link_ap(const char* ssid) {
-    g_ap_netif = esp_netif_create_default_wifi_ap();
+    if (!g_ap_netif) {
+        g_ap_netif = esp_netif_create_default_wifi_ap();
+    }
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
 
     wifi_config_t cfg = {};
@@ -155,7 +175,13 @@ esp_err_t wifi_start_link_ap(const char* ssid) {
     cfg.ap.beacon_interval = 100;
 
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &cfg));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    // The driver may already be started (a prior scan called esp_wifi_start). Starting
+    // again returns an error we tolerate; only the mode/config change matters here.
+    if (!g_wifi_started) {
+        esp_err_t serr = esp_wifi_start();
+        if (serr != ESP_OK) ESP_LOGW(TAG, "esp_wifi_start (AP): %s", esp_err_to_name(serr));
+        g_wifi_started = true;
+    }
 
     esp_netif_ip_info_t ip = {};
     ip.ip.addr      = ipaddr_addr("192.168.4.1");
@@ -292,6 +318,7 @@ static void wifi_supervisor_task(void* arg) {
                 ESP_LOGW(TAG, "STA down past %d tries -- host '%s' disappeared, re-hosting", RECONNECT_TRIES, ssid);
                 esp_wifi_disconnect();
                 esp_wifi_stop();
+                g_wifi_started = false; // driver stopped; next start() must actually run
                 if (g_sta_netif) { esp_netif_destroy(g_sta_netif); g_sta_netif = NULL; }
                 wifi_start_link_ap(ssid);
                 wifi_start_link_relay();
@@ -306,6 +333,7 @@ static void wifi_supervisor_task(void* arg) {
             if (matches > 0 && memcmp(best, my_mac, 6) < 0) {
                 ESP_LOGW(TAG, "Lost dual-host tie-break (lower BSSID seen) -- dropping AP, joining");
                 esp_wifi_stop();
+                g_wifi_started = false; // driver stopped; ensure_sta_started must re-start it
                 if (g_ap_netif) { esp_netif_destroy(g_ap_netif); g_ap_netif = NULL; }
                 g_ap_active = false;
                 ensure_sta_started();
