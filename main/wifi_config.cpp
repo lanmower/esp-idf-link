@@ -248,6 +248,8 @@ static void link_multicast_relay_task(void*) {
 
     static uint8_t payload[1472]; // MTU(1500) - IP(20) - UDP(8)
 
+    int rx_log = 0;
+
     ESP_LOGI(RELAY_TAG, "Ableton Link relay running on %s:%u", MCAST_ADDR, LINK_PORT);
 
     for (;;) {
@@ -258,6 +260,13 @@ static void link_multicast_relay_task(void*) {
 
         // Skip packets originating from ourselves
         if (src.sin_addr.s_addr == ap_ip) continue;
+
+        // Diagnostic: log the first several received packets (src + size).
+        if (rx_log < 10) {
+            ESP_LOGI(RELAY_TAG, "rx from %s:%u (%d bytes)",
+                     inet_ntoa(src.sin_addr), ntohs(src.sin_port), n);
+            rx_log++;
+        }
 
         // Build UDP header + payload in a pbuf
         struct pbuf* p = pbuf_alloc(PBUF_RAW, (uint16_t)(8 + n), PBUF_RAM);
@@ -281,7 +290,16 @@ static void link_multicast_relay_task(void*) {
         LOCK_TCPIP_CORE();
         struct netif* ap_lwip = (struct netif*)esp_netif_get_netif_impl(g_ap_netif);
         if (ap_lwip) {
+            // (1) Re-emit to the multicast group so OTHER AP clients receive it.
             raw_sendto_if_src(rpcb, p, &dst_addr, ap_lwip, &src_addr);
+            // (2) Also deliver a unicast copy to the AP's own IP so the HOST's own
+            // Ableton Link socket receives it -- the raw multicast re-send above is not
+            // looped back to local sockets by lwIP, which left the host at 0 peers when
+            // only a client (e.g. a tablet) was present. Unicast to 192.168.4.1 preserves
+            // the original source IP (required for Link's direct peer connect).
+            ip_addr_t ap_addr;
+            ip_addr_set_ip4_u32(&ap_addr, ap_ip);
+            raw_sendto_if_src(rpcb, p, &ap_addr, ap_lwip, &src_addr);
         }
         UNLOCK_TCPIP_CORE();
 
