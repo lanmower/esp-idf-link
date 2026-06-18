@@ -87,6 +87,13 @@ static void ensure_sta_started() {
             // Treat ESP_ERR_WIFI_NOT_STOPPED etc. as already-running.
             g_wifi_started = true;
         }
+        // Disable modem power-save: with WIFI_PS_MIN_MODEM (the default) the radio
+        // sleeps between DTIM beacons and multicast frames are buffered/dropped, which
+        // delayed Ableton Link discovery (all multicast on 224.76.78.75:20808) by
+        // minutes. These are USB/mains-powered devices, so PS_NONE has no downside.
+        esp_err_t pserr = esp_wifi_set_ps(WIFI_PS_NONE);
+        if (pserr != ESP_OK) ESP_LOGW(TAG, "esp_wifi_set_ps: %s", esp_err_to_name(pserr));
+        else ESP_LOGI(TAG, "WiFi power-save disabled (reliable multicast)");
     }
 }
 
@@ -300,6 +307,7 @@ static void wifi_supervisor_task(void* arg) {
     wifi_get_sta_mac(my_mac);
 
     int sta_down_count = 0;
+    int join_refresh_left = 5; // re-assert the multicast join for a few ticks after connect
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(2000));
@@ -308,8 +316,17 @@ static void wifi_supervisor_task(void* arg) {
             // STA role
             if (g_wifi_connected) {
                 sta_down_count = 0;
+                // The single IGMP join at GOT_IP can race netif readiness so the
+                // membership doesn't stick. Re-assert it for the first ~10s after a
+                // connection so the 224.76.78.75 group membership reliably takes and
+                // Ableton Link discovery converges in seconds, not minutes.
+                if (join_refresh_left > 0) {
+                    igmp_join_link(g_sta_netif);
+                    join_refresh_left--;
+                }
                 continue;
             }
+            join_refresh_left = 5; // schedule re-joins for when we next connect
             sta_down_count++;
             if (sta_down_count <= RECONNECT_TRIES) {
                 ESP_LOGW(TAG, "STA down (%d/%d) -- reconnecting", sta_down_count, RECONNECT_TRIES);
