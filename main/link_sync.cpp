@@ -1,9 +1,41 @@
 #include "link_sync.h"
 #include "io_helpers.h"
 #include <cmath>
+#include <cstring>
 #include <driver/gptimer.h>
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
+#include <lwip/sockets.h>
+#include <lwip/inet.h>
+
+// --- Phase broadcast for bare-metal peers behind a unicast-RX wall (the Pi looper) ---
+// The Pi's bcm4343 WiFi delivers multicast/broadcast but NOT unicast-to-self, so the
+// standard Ableton Link unicast ping/pong measurement never completes there and the Pi
+// can sync tempo but not PHASE (witnessed: Pi :4445 WLAN uniRx stays 0). As the session
+// master we therefore ALSO multicast our current Link-clock micros to the Link group on
+// a dedicated port; the Pi uses it as the measured ghost offset (one-way WiFi latency
+// ~1-3ms is <1% of a beat). Payload: "LCLK"(4) + int64 LE link-clock micros. Standard
+// Link apps (Live) ignore this port and keep using real measurement.
+#define LINK_PHASE_PORT 20810
+static const char* LINK_MCAST_ADDR = "224.76.78.75";
+static int s_clk_sock = -1;
+
+static void broadcast_link_clock(int64_t linkMicros) {
+    if (s_clk_sock < 0) {
+        s_clk_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (s_clk_sock < 0) return;
+        uint8_t ttl = 2;
+        setsockopt(s_clk_sock, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof ttl);
+    }
+    uint8_t pkt[12];
+    memcpy(pkt, "LCLK", 4);
+    memcpy(pkt + 4, &linkMicros, 8);          // little-endian; both ends are LE
+    struct sockaddr_in dst = {};
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(LINK_PHASE_PORT);
+    dst.sin_addr.s_addr = inet_addr(LINK_MCAST_ADDR);
+    sendto(s_clk_sock, pkt, sizeof pkt, 0, (struct sockaddr*)&dst, sizeof dst);
+}
 
 // --- Master-clock compatibility for the non-negotiable targets ---
 // Our emission set is brand-agnostic raw MIDI: continuous 24ppqn clock (0xF8), and at
@@ -156,6 +188,10 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
 {
     static bool s_pending_realign = false;   // a Start+SPP is owed at the next phrase boundary
     static bool s_transport_running = false; // whether external gear currently believes it is playing
+
+    // Broadcast our Link-clock micros every tick (~20ms) so multicast-only peers
+    // (the Pi looper, which can't receive unicast measurement) can lock phase.
+    broadcast_link_clock(time.count());
 
     // Check peer status & force start timeout. Hold force-start longer (8s) than the
     // original 5s so two co-booting devices have time to discover each other over WiFi
