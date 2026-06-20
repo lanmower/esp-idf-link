@@ -41,6 +41,7 @@ void tickTask(void *userParam) {
     vTaskDelay(pdMS_TO_TICKS(500));
     g_link = std::make_unique<ableton::Link>(120.0);
     g_link->enable(true);
+    link_start_tempo_listener();   // accept looper LTMP tempo-set commands
 
     ESP_LOGI(TAG, "Link init complete");
 

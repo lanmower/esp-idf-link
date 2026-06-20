@@ -60,6 +60,50 @@ static void broadcast_link_clock(int64_t linkMicros) {
     }
 }
 
+// --- Looper tempo-set listener (Ableton Link: ANY device may set the group tempo) ---
+// The looper (a bare-metal Link peer behind a unicast-RX wall) cannot be MEASURED by
+// us (no ping/pong), so our official Link lib never adopts its broadcast timeline
+// tempo. The looper therefore multicasts an explicit "LTMP"(4)+i64 LE microsPerBeat
+// command to the Link group on LINK_TEMPO_PORT; we apply it via setTempo() so the
+// ticker's clock (and any measured Live peer) follow the loop's tempo. recvfrom runs
+// on its own task; the actual setTempo is deferred to the Link task (tickTask) which
+// owns the session-state capture/commit -- committing from another task races it.
+#define LINK_TEMPO_PORT 20811
+static volatile bool   s_tempoReqPending = false;
+static volatile double s_tempoReqBpm     = 0.0;
+
+static void tempo_listener_task(void*) {
+    int rs = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (rs < 0) { vTaskDelete(NULL); return; }
+    int one = 1;
+    setsockopt(rs, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    struct sockaddr_in ba = {};
+    ba.sin_family = AF_INET;
+    ba.sin_port   = htons(LINK_TEMPO_PORT);
+    ba.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(rs, (struct sockaddr*)&ba, sizeof ba) < 0) { close(rs); vTaskDelete(NULL); return; }
+    struct ip_mreq mreq = {};
+    inet_aton(LINK_MCAST_ADDR, &mreq.imr_multiaddr);
+    mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+    setsockopt(rs, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof mreq);
+    uint8_t buf[64];
+    for (;;) {
+        int n = recvfrom(rs, buf, sizeof buf, 0, NULL, NULL);
+        if (n >= 12 && memcmp(buf, "LTMP", 4) == 0) {
+            int64_t mpb;
+            memcpy(&mpb, buf + 4, 8);
+            if (mpb > 0) {
+                double bpm = 60000000.0 / (double)mpb;
+                if (bpm >= 20.0 && bpm <= 400.0) { s_tempoReqBpm = bpm; s_tempoReqPending = true; }
+            }
+        }
+    }
+}
+
+void link_start_tempo_listener() {
+    xTaskCreate(tempo_listener_task, "ltmp_rx", 4096, NULL, 5, NULL);
+}
+
 // --- Master-clock compatibility for the non-negotiable targets ---
 // Our emission set is brand-agnostic raw MIDI: continuous 24ppqn clock (0xF8), and at
 // the 16-bar phrase boundary only: SPP (0xF2) + Start/Continue (0xFA/0xFB). Stop (0xFC)
@@ -215,6 +259,17 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     // Broadcast our Link-clock micros every tick (~20ms) so multicast-only peers
     // (the Pi looper, which can't receive unicast measurement) can lock phase.
     broadcast_link_clock(time.count());
+
+    // Apply a pending looper tempo-set (LTMP). Done here on the Link task so the
+    // session-state capture/commit is single-owner (committing from the listener
+    // task would race this one). setTempo at the current clock keeps beat continuity.
+    if (s_tempoReqPending && g_link) {
+        s_tempoReqPending = false;
+        auto ss = g_link->captureAppSessionState();
+        ss.setTempo(s_tempoReqBpm, g_link->clock().micros());
+        g_link->commitAppSessionState(ss);
+        ESP_LOGI(TAG_LINK, "Tempo set to %.2f BPM by looper (LTMP)", s_tempoReqBpm);
+    }
 
     // Check peer status & force start timeout. Hold force-start longer (8s) than the
     // original 5s so two co-booting devices have time to discover each other over WiFi
