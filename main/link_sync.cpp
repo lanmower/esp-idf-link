@@ -7,6 +7,7 @@
 #include "esp_timer.h"
 #include <lwip/sockets.h>
 #include <lwip/inet.h>
+#include "esp_netif.h"
 
 // --- Phase broadcast for bare-metal peers behind a unicast-RX wall (the Pi looper) ---
 // The Pi's bcm4343 WiFi delivers multicast/broadcast but NOT unicast-to-self, so the
@@ -42,7 +43,21 @@ static void broadcast_link_clock(int64_t linkMicros) {
     dst.sin_family = AF_INET;
     dst.sin_port = htons(LINK_PHASE_PORT);
     dst.sin_addr.s_addr = inet_addr(LINK_MCAST_ADDR);
-    sendto(s_clk_sock, pkt, sizeof pkt, 0, (struct sockaddr*)&dst, sizeof dst);
+
+    // Send out EVERY active netif, setting IP_MULTICAST_IF per interface. We may be
+    // AP or STA (boot race), and a raw socket with no IP_MULTICAST_IF exits the wrong
+    // interface on a dual-netif device -- which is why the first cut reached the peer
+    // for Link's own socket (it sets the egress) but not for ours (Pi clkRx stayed 0).
+    // Iterating every netif with an IP guarantees the packet leaves the one actually
+    // connected to the peer regardless of role.
+    esp_netif_t* nif = esp_netif_next_unsafe(NULL);
+    for (; nif; nif = esp_netif_next_unsafe(nif)) {
+        esp_netif_ip_info_t ipinfo;
+        if (esp_netif_get_ip_info(nif, &ipinfo) != ESP_OK || ipinfo.ip.addr == 0) continue;
+        struct in_addr ifaddr; ifaddr.s_addr = ipinfo.ip.addr;
+        setsockopt(s_clk_sock, IPPROTO_IP, IP_MULTICAST_IF, &ifaddr, sizeof ifaddr);
+        sendto(s_clk_sock, pkt, sizeof pkt, 0, (struct sockaddr*)&dst, sizeof dst);
+    }
 }
 
 // --- Master-clock compatibility for the non-negotiable targets ---
