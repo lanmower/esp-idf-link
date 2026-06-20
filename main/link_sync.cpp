@@ -71,6 +71,9 @@ static void broadcast_link_clock(int64_t linkMicros) {
 #define LINK_TEMPO_PORT 20811
 static volatile bool   s_tempoReqPending = false;
 static volatile double s_tempoReqBpm     = 0.0;
+static volatile bool   s_phaseReqPending = false;
+static volatile int64_t s_phaseReqBeat0us = 0;   // esp-clock micros of the loop downbeat (beat 0)
+static volatile double  s_phaseReqQuantum = 4.0; // loop quantum in beats
 
 static void tempo_listener_task(void*) {
     int rs = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -95,6 +98,17 @@ static void tempo_listener_task(void*) {
             if (mpb > 0) {
                 double bpm = 60000000.0 / (double)mpb;
                 if (bpm >= 20.0 && bpm <= 400.0) { s_tempoReqBpm = bpm; s_tempoReqPending = true; }
+            }
+            // Optional phase payload: esp-clock beat-0 micros + quantum (microbeats).
+            if (n >= 28) {
+                int64_t beat0us, quantumUb;
+                memcpy(&beat0us,  buf + 12, 8);
+                memcpy(&quantumUb, buf + 20, 8);
+                if (quantumUb > 0) {
+                    s_phaseReqBeat0us = beat0us;
+                    s_phaseReqQuantum = (double)quantumUb / 1e6;
+                    s_phaseReqPending = true;
+                }
             }
         }
     }
@@ -263,12 +277,21 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     // Apply a pending looper tempo-set (LTMP). Done here on the Link task so the
     // session-state capture/commit is single-owner (committing from the listener
     // task would race this one). setTempo at the current clock keeps beat continuity.
-    if (s_tempoReqPending && g_link) {
-        s_tempoReqPending = false;
+    if ((s_tempoReqPending || s_phaseReqPending) && g_link) {
         auto ss = g_link->captureAppSessionState();
-        ss.setTempo(s_tempoReqBpm, g_link->clock().micros());
+        if (s_tempoReqPending) {
+            s_tempoReqPending = false;
+            ss.setTempo(s_tempoReqBpm, g_link->clock().micros());
+            ESP_LOGI(TAG_LINK, "Tempo set to %.2f BPM by looper (LTMP)", s_tempoReqBpm);
+        }
+        if (s_phaseReqPending) {
+            s_phaseReqPending = false;
+            // Force beat 0 at the loop downbeat (already in our clock) so the whole
+            // group's phrase aligns to the loop -- the looper sets tempo AND phrase.
+            ss.forceBeatAtTime(0.0, std::chrono::microseconds(s_phaseReqBeat0us), s_phaseReqQuantum);
+            ESP_LOGI(TAG_LINK, "Phase forced to loop downbeat (q=%.2f)", s_phaseReqQuantum);
+        }
         g_link->commitAppSessionState(ss);
-        ESP_LOGI(TAG_LINK, "Tempo set to %.2f BPM by looper (LTMP)", s_tempoReqBpm);
     }
 
     // Check peer status & force start timeout. Hold force-start longer (8s) than the
