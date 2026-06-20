@@ -21,6 +21,14 @@ static const char* LINK_MCAST_ADDR = "224.76.78.75";
 static int s_clk_sock = -1;
 
 static void broadcast_link_clock(int64_t linkMicros) {
+    // handle_link_sync runs at LINK_TICK_PERIOD (4 kHz); phase only needs ~50 Hz.
+    // Rate-limit to one packet per 20ms so we don't flood multicast-only peers
+    // (a 4 kHz flood saturates the Pi's single radio-RX drain and starves its
+    // control plane). 20ms << one beat, so phase accuracy is unaffected.
+    static int64_t s_lastSend = 0;
+    int64_t nowUs = esp_timer_get_time();
+    if (nowUs - s_lastSend < 20000) return;
+    s_lastSend = nowUs;
     if (s_clk_sock < 0) {
         s_clk_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (s_clk_sock < 0) return;
