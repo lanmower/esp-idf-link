@@ -60,6 +60,58 @@ static void broadcast_link_clock(int64_t linkMicros) {
     }
 }
 
+// --- Ticker -> looper timeline broadcast (bidirectional Link tempo) ---
+// Ableton Link lets ANY device set the group tempo. The looper->esp direction works
+// via LTMP (tempo_listener_task). The esp->looper direction was MISSING: we run the
+// real Link lib, but its native discovery never reaches the Pi (the Pi's bcm4343 has
+// a unicast-RX wall: Pi :4445 WLAN RALV stays empty, peers=0), so when WE change the
+// tempo the looper never learns it. So we ALSO multicast our CURRENT Link timeline
+// on TTMP_PORT, per-netif (same IP_MULTICAST_IF fix as the clock broadcast), in the
+// format the looper parses into a synthetic owner peer. Combined with LCLK (clock
+// offset), the looper adopts our tempo AND phase. Standard Link apps ignore TTMP.
+// Payload: "TTMP"(4) + i64 LE microsPerBeat + i64 LE beatOriginMicroBeats(link clock)
+//          + i64 LE timeOriginMicros(link clock).  (28 bytes)
+#define LINK_TTMP_PORT 20812
+static int s_ttmp_sock = -1;
+static void broadcast_ticker_timeline(const ableton::Link::SessionState& state,
+                                      int64_t linkMicros) {
+    static int64_t s_lastSend = 0;
+    if (linkMicros - s_lastSend < 100000) return;   // ~10 Hz; tempo changes are rare
+    s_lastSend = linkMicros;
+    if (s_ttmp_sock < 0) {
+        s_ttmp_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (s_ttmp_sock < 0) return;
+        uint8_t ttl = 2;
+        setsockopt(s_ttmp_sock, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof ttl);
+    }
+    // Current timeline at 'linkMicros': tempo + the beat at that instant define a
+    // (beatOrigin @ timeOrigin) the looper extrapolates from. quantum here only
+    // affects phaseAtTime, not beatAtTime, so use LINK_QUANTUM for the beat value.
+    double bpm = state.tempo();
+    if (!(bpm >= 20.0 && bpm <= 400.0)) return;
+    int64_t mpb = (int64_t)(60000000.0 / bpm + 0.5);
+    double beats = state.beatAtTime(std::chrono::microseconds(linkMicros), LINK_QUANTUM);
+    int64_t beatOriginUb = (int64_t)(beats * 1e6);
+    int64_t timeOrigin   = linkMicros;
+    uint8_t pkt[28];
+    memcpy(pkt,      "TTMP", 4);
+    memcpy(pkt + 4,  &mpb, 8);
+    memcpy(pkt + 12, &beatOriginUb, 8);
+    memcpy(pkt + 20, &timeOrigin, 8);
+    struct sockaddr_in dst = {};
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(LINK_TTMP_PORT);
+    dst.sin_addr.s_addr = inet_addr(LINK_MCAST_ADDR);
+    esp_netif_t* nif = esp_netif_next_unsafe(NULL);
+    for (; nif; nif = esp_netif_next_unsafe(nif)) {
+        esp_netif_ip_info_t ipinfo;
+        if (esp_netif_get_ip_info(nif, &ipinfo) != ESP_OK || ipinfo.ip.addr == 0) continue;
+        struct in_addr ifaddr; ifaddr.s_addr = ipinfo.ip.addr;
+        setsockopt(s_ttmp_sock, IPPROTO_IP, IP_MULTICAST_IF, &ifaddr, sizeof ifaddr);
+        sendto(s_ttmp_sock, pkt, sizeof pkt, 0, (struct sockaddr*)&dst, sizeof dst);
+    }
+}
+
 // --- Looper tempo-set listener (Ableton Link: ANY device may set the group tempo) ---
 // The looper (a bare-metal Link peer behind a unicast-RX wall) cannot be MEASURED by
 // us (no ping/pong), so our official Link lib never adopts its broadcast timeline
@@ -273,6 +325,9 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     // Broadcast our Link-clock micros every tick (~20ms) so multicast-only peers
     // (the Pi looper, which can't receive unicast measurement) can lock phase.
     broadcast_link_clock(time.count());
+    // Mirror direction: broadcast our current Link timeline so the looper adopts our
+    // tempo when WE change it (bidirectional Link tempo control).
+    broadcast_ticker_timeline(state, time.count());
 
     // Apply a pending looper tempo-set (LTMP). Done here on the Link task so the
     // session-state capture/commit is single-owner (committing from the listener
