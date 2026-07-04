@@ -53,11 +53,11 @@ static void wifi_event_handler(void* arg, esp_event_base_t base,
         ESP_LOGI(TAG, "AP started");
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STACONNECTED) {
         wifi_event_ap_staconnected_t* ev = (wifi_event_ap_staconnected_t*)data;
-        g_ap_client_count++;
+        g_ap_client_count = g_ap_client_count + 1; // explicit (volatile ++ is deprecated in C++20+)
         ESP_LOGI(TAG, "Client joined: " MACSTR " (clients=%d)", MAC2STR(ev->mac), g_ap_client_count);
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STADISCONNECTED) {
         wifi_event_ap_stadisconnected_t* ev = (wifi_event_ap_stadisconnected_t*)data;
-        if (g_ap_client_count > 0) g_ap_client_count--;
+        if (g_ap_client_count > 0) g_ap_client_count = g_ap_client_count - 1; // explicit (volatile -- deprecated)
         ESP_LOGI(TAG, "Client left: " MACSTR " (clients=%d)", MAC2STR(ev->mac), g_ap_client_count);
     }
 }
