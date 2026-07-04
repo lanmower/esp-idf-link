@@ -4,6 +4,7 @@
 #include <esp_event.h>
 #include <esp_netif.h>
 #include <esp_netif_net_stack.h>
+#include <esp_wifi_netif.h> // esp_netif_get_sta_list, esp_netif_sta_list_t
 #include <lwip/ip_addr.h>
 #include <lwip/igmp.h>
 #include <lwip/netif.h>
