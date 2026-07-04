@@ -260,20 +260,25 @@ extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, u
     dst.sin_family = AF_INET;
     dst.sin_port   = htons((uint16_t)dport);
 
+    static int s_fwd_log = 0;
     if (g_ap_active) {
         // Host -> every associated station.
+        int sent = 0;
         for (int i = 0; i < MAX_AP_STA_IPS; i++) {
             uint32_t ip = g_ap_sta_ips[i];
             if (ip == 0) continue;
             dst.sin_addr.s_addr = ip;
             sendto(s_fwd_sock, data, len, 0, (struct sockaddr*)&dst, sizeof(dst));
+            sent++;
         }
+        if (s_fwd_log < 8) { ESP_LOGI(TAG, "LINK fwd(AP) %u bytes -> %d station(s)", len, sent); s_fwd_log++; }
     } else if (g_sta_netif) {
         // Station -> AP gateway (the hub redistributes to other stations + its host Link).
         esp_netif_ip_info_t staip = {};
         if (esp_netif_get_ip_info(g_sta_netif, &staip) == ESP_OK && staip.gw.addr != 0) {
             dst.sin_addr.s_addr = staip.gw.addr;
             sendto(s_fwd_sock, data, len, 0, (struct sockaddr*)&dst, sizeof(dst));
+            if (s_fwd_log < 8) { ESP_LOGI(TAG, "LINK fwd(STA) %u bytes -> gateway", len); s_fwd_log++; }
         }
     }
 }
@@ -336,6 +341,19 @@ static void link_multicast_relay_task(void*) {
         //    re-multicast our own packet (it would loop back here forever) and do not
         //    re-deliver it to our own Link socket (it already has it).
         bool from_self = (src.sin_addr.s_addr == ap_ip);
+
+        // Self-populate the station-IP table from real forwarded traffic, so the Link
+        // send-hook fan-out works even when IP_EVENT_AP_STAIPASSIGNED did not fire (e.g.
+        // a station reused a cached DHCP lease). Any non-self source that reaches this
+        // AP socket is an associated station forwarding its Link discovery to us.
+        if (!from_self && src.sin_addr.s_addr != 0) {
+            uint32_t sip = src.sin_addr.s_addr;
+            bool known = false;
+            for (int i = 0; i < MAX_AP_STA_IPS; i++) if (g_ap_sta_ips[i] == sip) { known = true; break; }
+            if (!known) {
+                for (int i = 0; i < MAX_AP_STA_IPS; i++) if (g_ap_sta_ips[i] == 0) { g_ap_sta_ips[i] = sip; break; }
+            }
+        }
 
         // Diagnostic: log the first several received packets (src + size).
         if (rx_log < 10) {
