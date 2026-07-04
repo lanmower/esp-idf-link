@@ -299,6 +299,24 @@ static void link_multicast_relay_task(void*) {
         ip_addr_set_ip4_u32(&src_addr, src.sin_addr.s_addr);
         ip_addr_set_ip4_u32(&dst_addr, mcast_ip);
 
+        // Snapshot associated-station IPs BEFORE taking the TCPIP core lock.
+        // esp_wifi_ap_get_sta_list / esp_netif_get_sta_list touch the WiFi + netif
+        // stacks and must NOT be called while holding LOCK_TCPIP_CORE (deadlock).
+        uint32_t sta_ips[8];
+        int sta_ip_count = 0;
+        {
+            wifi_sta_list_t sta_list;
+            esp_netif_sta_list_t ip_list;
+            if (esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK &&
+                esp_netif_get_sta_list(&sta_list, &ip_list) == ESP_OK) {
+                for (int i = 0; i < ip_list.num && sta_ip_count < 8; i++) {
+                    uint32_t sta_ip = ip_list.sta[i].ip.addr;
+                    if (sta_ip == 0 || sta_ip == src.sin_addr.s_addr) continue;
+                    sta_ips[sta_ip_count++] = sta_ip;
+                }
+            }
+        }
+
         LOCK_TCPIP_CORE();
         struct netif* ap_lwip = (struct netif*)esp_netif_get_netif_impl(g_ap_netif);
         if (ap_lwip) {
@@ -317,19 +335,12 @@ static void link_multicast_relay_task(void*) {
             // associated station's Link multicast never reaches the host, and the
             // host's re-multicast at (1) never reaches stations), but UNICAST UDP does
             // cross the AP boundary (DHCP works). So forward each Link packet directly
-            // to every station IP, preserving the original source -- this is what makes
-            // two ESP32s actually peer over Link. Skip the packet's own origin.
-            wifi_sta_list_t sta_list;
-            esp_netif_sta_list_t ip_list;
-            if (esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK &&
-                esp_netif_get_sta_list(&sta_list, &ip_list) == ESP_OK) {
-                for (int i = 0; i < ip_list.num; i++) {
-                    uint32_t sta_ip = ip_list.sta[i].ip.addr;
-                    if (sta_ip == 0 || sta_ip == src.sin_addr.s_addr) continue;
-                    ip_addr_t sta_addr;
-                    ip_addr_set_ip4_u32(&sta_addr, sta_ip);
-                    raw_sendto_if_src(rpcb, p, &sta_addr, ap_lwip, &src_addr);
-                }
+            // to every station IP (snapshotted above), preserving the original source --
+            // this is what makes two ESP32s actually peer over Link.
+            for (int i = 0; i < sta_ip_count; i++) {
+                ip_addr_t sta_addr;
+                ip_addr_set_ip4_u32(&sta_addr, sta_ips[i]);
+                raw_sendto_if_src(rpcb, p, &sta_addr, ap_lwip, &src_addr);
             }
         }
         UNLOCK_TCPIP_CORE();
