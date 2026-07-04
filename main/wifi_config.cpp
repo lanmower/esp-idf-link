@@ -360,7 +360,13 @@ static void wifi_supervisor_task(void* arg) {
                 sta_down_count = 0;
             }
         } else {
-            // AP role: detect a co-host with a lower BSSID and yield to it.
+            // AP role: detect a co-host with a lower BSSID and yield to it so
+            // exactly one host remains. The scan runs in APSTA (ensure_sta_started
+            // switches mode) and repeats every 2s forever, so even an occasionally
+            // flaky AP-role scan converges: a strictly-lower co-host is eventually
+            // seen and this board yields. Combined with the MAC-ordered boot
+            // election (higher MACs defer hosting), a persistent dual-host is rare
+            // and always resolves to the lowest BSSID.
             uint8_t best[6];
             int matches = wifi_scan_best_bssid(ssid, best);
             // Our own AP shows up in the scan as our AP MAC (STA MAC + 1 on ESP32).
