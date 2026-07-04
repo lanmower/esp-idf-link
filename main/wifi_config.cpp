@@ -250,7 +250,20 @@ void wifi_join_link_multicast() {
 //   - STA:     unicast the packet to the AP gateway (192.168.4.1), which then (as host)
 //              fans it out to the other stations.
 // dport is the Link multicast port (20808). Best-effort, non-blocking, fire-and-forget.
-extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, unsigned dport) {
+extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, unsigned dport, unsigned dstip) {
+    // Witness: log the first several Link sends regardless, to confirm the hook fires
+    // and see WHERE Link is sending (multicast discovery vs unicast measurement).
+    static int s_call_log = 0;
+    if (s_call_log < 12) {
+        ESP_LOGI(TAG, "LINK send hook: %u bytes -> %u.%u.%u.%u:%u", len,
+                 (dstip) & 0xff, (dstip >> 8) & 0xff, (dstip >> 16) & 0xff, (dstip >> 24) & 0xff, dport);
+        s_call_log++;
+    }
+    // Only bridge multicast-destined packets (Link discovery). Unicast measurement to a
+    // peer's real IP already crosses the SoftAP natively and must NOT be re-forwarded.
+    uint8_t first = dstip & 0xff; // 224.x for multicast (224-239 => 0xE0-0xEF)
+    if (first < 224 || first > 239) return;
+
     static int s_fwd_sock = -1;
     if (s_fwd_sock < 0) {
         s_fwd_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
