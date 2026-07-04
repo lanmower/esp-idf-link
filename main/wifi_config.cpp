@@ -240,6 +240,44 @@ void wifi_join_link_multicast() {
     igmp_join_link(g_sta_netif);
 }
 
+// Called by Ableton Link's Socket wrapper (platforms/asio/Socket.hpp) for EVERY
+// multicast discovery datagram it sends to 224.76.78.75:20808. The ESP32 SoftAP does
+// not carry multicast between the host and its stations, so we ALSO deliver a UNICAST
+// copy of the exact bytes across that boundary (unicast DOES cross -- DHCP works). Once
+// discovery crosses, Link's own unicast Ping/Pong clock measurement to each peer's real
+// advertised IP proceeds natively. Hub topology, scales to N members:
+//   - AP host: unicast the packet to every associated station IP.
+//   - STA:     unicast the packet to the AP gateway (192.168.4.1), which then (as host)
+//              fans it out to the other stations.
+// dport is the Link multicast port (20808). Best-effort, non-blocking, fire-and-forget.
+extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, unsigned dport) {
+    static int s_fwd_sock = -1;
+    if (s_fwd_sock < 0) {
+        s_fwd_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (s_fwd_sock < 0) return;
+    }
+    struct sockaddr_in dst = {};
+    dst.sin_family = AF_INET;
+    dst.sin_port   = htons((uint16_t)dport);
+
+    if (g_ap_active) {
+        // Host -> every associated station.
+        for (int i = 0; i < MAX_AP_STA_IPS; i++) {
+            uint32_t ip = g_ap_sta_ips[i];
+            if (ip == 0) continue;
+            dst.sin_addr.s_addr = ip;
+            sendto(s_fwd_sock, data, len, 0, (struct sockaddr*)&dst, sizeof(dst));
+        }
+    } else if (g_sta_netif) {
+        // Station -> AP gateway (the hub redistributes to other stations + its host Link).
+        esp_netif_ip_info_t staip = {};
+        if (esp_netif_get_ip_info(g_sta_netif, &staip) == ESP_OK && staip.gw.addr != 0) {
+            dst.sin_addr.s_addr = staip.gw.addr;
+            sendto(s_fwd_sock, data, len, 0, (struct sockaddr*)&dst, sizeof(dst));
+        }
+    }
+}
+
 // Relay Ableton Link multicast (224.76.78.75:20808) between AP clients.
 // Uses lwip raw PCB (raw_sendto_if_src) to preserve the original sender's
 // source IP, which Ableton Link requires for direct peer connections.
@@ -371,80 +409,6 @@ static void link_multicast_relay_task(void*) {
 
 void wifi_start_link_relay() {
     xTaskCreate(link_multicast_relay_task, "link_relay", 4096, NULL, 5, NULL);
-}
-
-// Station-side half of the Link bridge. The SoftAP does not carry multicast between a
-// station and the host, so a station's Ableton Link discovery multicast never reaches
-// the host. Unicast DOES cross (DHCP works). This task receives the station's own local
-// Link multicast (its Link lib output, delivered to this socket by loopback + RXTOALL)
-// and unicast-forwards each packet to the AP gateway 192.168.4.1:20808, where the host's
-// relay socket receives it and fans it back out to the host Link socket + other stations.
-// Together with the AP-side fan-out, this is what lets two ESP32s peer over Link.
-static void link_station_bridge_task(void*) {
-    static const char* BR_TAG = "LINK_STABR";
-    static const char* MCAST_ADDR = "224.76.78.75";
-    static const uint16_t LINK_PORT = 20808;
-
-    // Single persistent task started at boot. It only forwards while we are a STA with
-    // an IP (g_ap_active == false && got a lease); this makes it robust to EVERY path
-    // that establishes a STA connection -- boot join, deferred-hold join, and the
-    // supervisor's AP->STA yield / reconnect -- without needing each to start it.
-    // Wait for a valid STA IP before setting up sockets.
-    esp_netif_ip_info_t staip = {};
-    for (;;) {
-        if (!g_ap_active && g_sta_netif &&
-            esp_netif_get_ip_info(g_sta_netif, &staip) == ESP_OK && staip.ip.addr != 0) {
-            break;
-        }
-        vTaskDelay(pdMS_TO_TICKS(500));
-    }
-
-    int rs = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (rs < 0) { ESP_LOGE(BR_TAG, "recv socket failed"); vTaskDelete(NULL); return; }
-    int one = 1;
-    setsockopt(rs, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-    struct sockaddr_in bind_addr = {};
-    bind_addr.sin_family      = AF_INET;
-    bind_addr.sin_port        = htons(LINK_PORT);
-    bind_addr.sin_addr.s_addr = INADDR_ANY;
-    if (bind(rs, (struct sockaddr*)&bind_addr, sizeof(bind_addr)) < 0) {
-        ESP_LOGE(BR_TAG, "bind failed"); close(rs); vTaskDelete(NULL); return;
-    }
-    // Join the Link group on the STA interface so we receive the local Link multicast.
-    struct ip_mreq mreq = {};
-    inet_aton(MCAST_ADDR, &mreq.imr_multiaddr);
-    mreq.imr_interface.s_addr = staip.ip.addr; // our STA IP (192.168.4.2)
-    setsockopt(rs, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
-
-    // Send socket for the unicast copy to the gateway (the AP host).
-    int ss = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (ss < 0) { ESP_LOGE(BR_TAG, "send socket failed"); close(rs); vTaskDelete(NULL); return; }
-
-    struct sockaddr_in gw = {};
-    gw.sin_family = AF_INET;
-    gw.sin_port   = htons(LINK_PORT);
-    gw.sin_addr.s_addr = staip.gw.addr ? staip.gw.addr : inet_addr("192.168.4.1");
-
-    static uint8_t buf[1472];
-    uint32_t my_ip = staip.ip.addr;
-    int tx_log = 0;
-    ESP_LOGI(BR_TAG, "Station Link bridge -> gateway %s:%u", inet_ntoa(gw.sin_addr), LINK_PORT);
-
-    for (;;) {
-        struct sockaddr_in src = {};
-        socklen_t sl = sizeof(src);
-        int n = recvfrom(rs, buf, sizeof(buf), 0, (struct sockaddr*)&src, &sl);
-        if (n <= 0) continue;
-        // Only forward our OWN Link output (src == our STA IP). Packets the host
-        // unicast to us arrive too; re-forwarding them would loop.
-        if (src.sin_addr.s_addr != my_ip) continue;
-        if (tx_log < 5) { ESP_LOGI(BR_TAG, "fwd %d bytes to gateway", n); tx_log++; }
-        sendto(ss, buf, n, 0, (struct sockaddr*)&gw, sizeof(gw));
-    }
-}
-
-void wifi_start_station_bridge() {
-    xTaskCreate(link_station_bridge_task, "link_stabr", 4096, NULL, 5, NULL);
 }
 
 // Self-healing supervisor. Runs forever. Two roles:

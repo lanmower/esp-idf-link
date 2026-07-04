@@ -24,6 +24,11 @@
 #include <array>
 #include <cassert>
 
+// Provided by the application (main/wifi_config.cpp). Called for every multicast Link
+// discovery datagram so the app can unicast-bridge it across the ESP32 SoftAP boundary,
+// which does not carry multicast between the host and its stations. No-op elsewhere.
+extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, unsigned dport);
+
 namespace ableton
 {
 namespace platforms
@@ -52,7 +57,14 @@ struct Socket
     const ::asio::ip::udp::endpoint& to)
   {
     assert(numBytes < MaxPacketSize);
-    return mpImpl->mSocket.send_to(::asio::buffer(pData, numBytes), to);
+    const std::size_t sent = mpImpl->mSocket.send_to(::asio::buffer(pData, numBytes), to);
+    // Bridge multicast discovery across the ESP32 SoftAP (which drops host<->station
+    // multicast). Unicast measurement then proceeds natively to each peer's real IP.
+    if (to.address().is_multicast())
+    {
+      wifi_link_multicast_forward(pData, static_cast<unsigned>(numBytes), to.port());
+    }
+    return sent;
   }
 
   template <typename Handler>

@@ -16,10 +16,6 @@ esp_err_t wifi_connect_sta(const char* ssid, const char* password);
 esp_err_t wifi_start_link_ap(const char* ssid);
 void      wifi_join_link_multicast();
 void      wifi_start_link_relay();
-// Station-side Link bridge: unicast-forward the station's Link multicast to the AP
-// gateway, because the SoftAP does not carry multicast host<->station. Call after a
-// successful STA join.
-void      wifi_start_station_bridge();
 bool      wifi_is_connected();
 bool      wifi_is_ap_active();
 // Read this device's STA MAC (used as the tie-break key).

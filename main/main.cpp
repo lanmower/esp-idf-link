@@ -174,11 +174,6 @@ extern "C" void app_main() {
     // disappears, and resolves a dual-host race (lower BSSID wins). Runs in all roles.
     wifi_start_supervisor("ticker");
 
-    // Persistent station-side Link bridge: forwards our Link multicast to the AP
-    // gateway whenever we are a STA (self-activates on IP, robust to every join path
-    // including supervisor yield/reconnect). Idle while we are the host.
-    wifi_start_station_bridge();
-
     network_midi_init();
     xTaskCreate(tickTask, "tickTask", 10240, nullptr, 15, nullptr);
     ESP_LOGI(TAG, "app_main done, tickTask running");
