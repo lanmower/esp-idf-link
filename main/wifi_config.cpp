@@ -290,13 +290,20 @@ static void link_multicast_relay_task(void*) {
         int n = recvfrom(rs, payload, sizeof(payload), 0, (struct sockaddr*)&src, &sl);
         if (n <= 0) continue;
 
-        // Skip packets originating from ourselves
-        if (src.sin_addr.s_addr == ap_ip) continue;
+        // Two kinds of inbound packets now arrive here:
+        //  - from a STATION (unicast-forwarded by its bridge): redistribute to the host
+        //    Link socket AND every OTHER station.
+        //  - from OURSELVES (the host's own Link multicast, looped back): fan out to the
+        //    stations only (they cannot hear our multicast across the SoftAP). Do NOT
+        //    re-multicast our own packet (it would loop back here forever) and do not
+        //    re-deliver it to our own Link socket (it already has it).
+        bool from_self = (src.sin_addr.s_addr == ap_ip);
 
         // Diagnostic: log the first several received packets (src + size).
         if (rx_log < 10) {
-            ESP_LOGI(RELAY_TAG, "rx from %s:%u (%d bytes)",
-                     inet_ntoa(src.sin_addr), ntohs(src.sin_port), n);
+            ESP_LOGI(RELAY_TAG, "rx from %s:%u (%d bytes)%s",
+                     inet_ntoa(src.sin_addr), ntohs(src.sin_port), n,
+                     from_self ? " [self]" : "");
             rx_log++;
         }
 
@@ -332,23 +339,24 @@ static void link_multicast_relay_task(void*) {
         LOCK_TCPIP_CORE();
         struct netif* ap_lwip = (struct netif*)esp_netif_get_netif_impl(g_ap_netif);
         if (ap_lwip) {
-            // (1) Re-emit to the multicast group so OTHER AP clients receive it.
-            raw_sendto_if_src(rpcb, p, &dst_addr, ap_lwip, &src_addr);
-            // (2) Also deliver a unicast copy to the AP's own IP so the HOST's own
-            // Ableton Link socket receives it -- the raw multicast re-send above is not
-            // looped back to local sockets by lwIP, which left the host at 0 peers when
-            // only a client (e.g. a tablet) was present. Unicast to 192.168.4.1 preserves
-            // the original source IP (required for Link's direct peer connect).
-            ip_addr_t ap_addr;
-            ip_addr_set_ip4_u32(&ap_addr, ap_ip);
-            raw_sendto_if_src(rpcb, p, &ap_addr, ap_lwip, &src_addr);
-            // (3) UNICAST fan-out to every associated station. The ESP32 SoftAP does
-            // NOT deliver multicast between the host and its stations (witnessed: an
-            // associated station's Link multicast never reaches the host, and the
-            // host's re-multicast at (1) never reaches stations), but UNICAST UDP does
-            // cross the AP boundary (DHCP works). So forward each Link packet directly
-            // to every station IP (snapshotted above), preserving the original source --
-            // this is what makes two ESP32s actually peer over Link.
+            if (!from_self) {
+                // (1) Re-emit to the multicast group so OTHER AP clients receive it.
+                raw_sendto_if_src(rpcb, p, &dst_addr, ap_lwip, &src_addr);
+                // (2) Deliver a unicast copy to the AP's own IP so the HOST's own
+                // Ableton Link socket receives this station's packet -- the raw
+                // multicast re-send above is not looped back to local sockets by lwIP.
+                // Unicast to 192.168.4.1 preserves the original source IP (required for
+                // Link's direct peer connect).
+                ip_addr_t ap_addr;
+                ip_addr_set_ip4_u32(&ap_addr, ap_ip);
+                raw_sendto_if_src(rpcb, p, &ap_addr, ap_lwip, &src_addr);
+            }
+            // (3) UNICAST fan-out to every associated station (except the packet's own
+            // origin). The ESP32 SoftAP does not carry multicast host<->station, but
+            // unicast UDP does. This delivers BOTH a station's packet to the other
+            // stations AND -- for from_self packets -- the host's own Link output to
+            // every station. Preserves the original source for Link direct-peer-connect.
+            // Scales to N members: every member reaches every other via the host.
             for (int i = 0; i < sta_ip_count; i++) {
                 ip_addr_t sta_addr;
                 ip_addr_set_ip4_u32(&sta_addr, sta_ips[i]);

@@ -168,8 +168,15 @@ public:
     socket.mpImpl->mSocket.set_option(::asio::ip::udp::socket::reuse_address(true));
     socket.mpImpl->mSocket.set_option(
       ::asio::socket_base::broadcast(!addr.is_loopback()));
+    // Enable multicast loopback unconditionally so the local Link relay/station-bridge
+    // sockets (bound to the same group+port) receive this device's OWN outgoing Link
+    // discovery/measurement packets. On the ESP32 SoftAP, multicast does not cross the
+    // host<->station boundary, so those bridge tasks capture the local Link output here
+    // and unicast-forward it to every mesh member. Without loopback the bridges see
+    // nothing and Link never peers. Link de-duplicates its own packets by source, so
+    // looping them back to its own socket is harmless.
     socket.mpImpl->mSocket.set_option(
-      ::asio::ip::multicast::enable_loopback(addr.is_loopback()));
+      ::asio::ip::multicast::enable_loopback(true));
     socket.mpImpl->mSocket.set_option(::asio::ip::multicast::outbound_interface(addr));
     socket.mpImpl->mSocket.bind({::asio::ip::address::from_string("0.0.0.0"),
       discovery::multicastEndpoint().port()});
