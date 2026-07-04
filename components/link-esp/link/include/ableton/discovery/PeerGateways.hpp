@@ -150,11 +150,9 @@ private:
           if (addr.is_v4())
           {
             info(mIo.log()) << "initializing peer gateway on interface " << addr;
-            extern volatile std::uint32_t g_link_gw_init_attempts;
-            g_link_gw_init_attempts = g_link_gw_init_attempts + 1;
+            ::g_link_gw_init_attempts = ::g_link_gw_init_attempts + 1;
             mGateways.emplace(addr, mFactory(mState, util::injectRef(mIo), addr.to_v4()));
-            extern volatile std::uint32_t g_link_gw_init_ok;
-            g_link_gw_init_ok = g_link_gw_init_ok + 1;
+            ::g_link_gw_init_ok = ::g_link_gw_init_ok + 1;
           }
         }
         catch (const std::exception& e)
@@ -162,8 +160,7 @@ private:
           // Was: caught only runtime_error and logged to the (null) Link log, hiding the
           // real reason the gateway never came up. Surface it and count failures so the
           // app diag can see why discovery never broadcasts.
-          extern volatile std::uint32_t g_link_gw_init_fail;
-          g_link_gw_init_fail = g_link_gw_init_fail + 1;
+          ::g_link_gw_init_fail = ::g_link_gw_init_fail + 1;
           ESP_LOGE("LINK_GW", "gateway init failed on %s: %s",
                    addr.to_string().c_str(), e.what());
         }
