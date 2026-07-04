@@ -21,7 +21,16 @@
 
 #include <ableton/discovery/InterfaceScanner.hpp>
 #include <ableton/platforms/asio/AsioWrapper.hpp>
+#include <esp_log.h>
+#include <cstdint>
+#include <exception>
 #include <map>
+
+// Globals (defined in the application, main/wifi_config.cpp): witness Link peer-gateway
+// creation so the app diag can see whether discovery gateways come up or fail.
+extern volatile std::uint32_t g_link_gw_init_attempts;
+extern volatile std::uint32_t g_link_gw_init_ok;
+extern volatile std::uint32_t g_link_gw_init_fail;
 
 namespace ableton
 {
@@ -141,13 +150,22 @@ private:
           if (addr.is_v4())
           {
             info(mIo.log()) << "initializing peer gateway on interface " << addr;
+            extern volatile std::uint32_t g_link_gw_init_attempts;
+            g_link_gw_init_attempts = g_link_gw_init_attempts + 1;
             mGateways.emplace(addr, mFactory(mState, util::injectRef(mIo), addr.to_v4()));
+            extern volatile std::uint32_t g_link_gw_init_ok;
+            g_link_gw_init_ok = g_link_gw_init_ok + 1;
           }
         }
-        catch (const runtime_error& e)
+        catch (const std::exception& e)
         {
-          warning(mIo.log()) << "failed to init gateway on interface " << addr
-                             << " reason: " << e.what();
+          // Was: caught only runtime_error and logged to the (null) Link log, hiding the
+          // real reason the gateway never came up. Surface it and count failures so the
+          // app diag can see why discovery never broadcasts.
+          extern volatile std::uint32_t g_link_gw_init_fail;
+          g_link_gw_init_fail = g_link_gw_init_fail + 1;
+          ESP_LOGE("LINK_GW", "gateway init failed on %s: %s",
+                   addr.to_string().c_str(), e.what());
         }
       }
     }

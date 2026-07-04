@@ -264,6 +264,12 @@ volatile uint32_t g_link_pump_calls = 0;
 volatile uint32_t g_link_scan_calls = 0;
 volatile uint32_t g_link_scan_last_ip = 0;
 volatile uint32_t g_link_scan_last_count = 0;
+// Witness Link peer-gateway creation (PeerGateways.hpp): attempts vs successes vs
+// failures -- a gateway that fails to init (socket bind on the interface throws) means
+// discovery never broadcasts on that interface.
+volatile uint32_t g_link_gw_init_attempts = 0;
+volatile uint32_t g_link_gw_init_ok = 0;
+volatile uint32_t g_link_gw_init_fail = 0;
 
 extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, unsigned dport, unsigned dstip) {
     g_link_send_hook_calls = g_link_send_hook_calls + 1;

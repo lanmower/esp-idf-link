@@ -369,14 +369,17 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     extern volatile uint32_t g_link_scan_calls;
     extern volatile uint32_t g_link_scan_last_ip;
     extern volatile uint32_t g_link_scan_last_count;
+    extern volatile uint32_t g_link_gw_init_attempts;
+    extern volatile uint32_t g_link_gw_init_ok;
+    extern volatile uint32_t g_link_gw_init_fail;
     static int64_t s_hookLogAt = 0;
     int64_t nowH = esp_timer_get_time();
     if (nowH - s_hookLogAt > 5000000) {
         s_hookLogAt = nowH;
         uint32_t sip = g_link_scan_last_ip;
-        ESP_LOGI(TAG_LINK, "Link diag: pump=%u scan=%u scanCount=%u scanIP=%u.%u.%u.%u send-hook=%u peers=%d",
-                 g_link_pump_calls, g_link_scan_calls, g_link_scan_last_count,
+        ESP_LOGI(TAG_LINK, "Link diag: scanIP=%u.%u.%u.%u gw(try=%u ok=%u fail=%u) send-hook=%u peers=%d",
                  sip & 0xff, (sip >> 8) & 0xff, (sip >> 16) & 0xff, (sip >> 24) & 0xff,
+                 g_link_gw_init_attempts, g_link_gw_init_ok, g_link_gw_init_fail,
                  g_link_send_hook_calls, g_link->numPeers());
     }
 
