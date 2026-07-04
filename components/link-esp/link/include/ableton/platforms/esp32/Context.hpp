@@ -46,6 +46,8 @@ class Context
       for (;;)
       {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        extern volatile uint32_t g_link_pump_calls;
+        g_link_pump_calls = g_link_pump_calls + 1;
         runner->mpService->poll_one();
       }
     }

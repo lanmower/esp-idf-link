@@ -255,6 +255,9 @@ void wifi_join_link_multicast() {
 volatile uint32_t g_link_send_hook_calls = 0;
 volatile uint32_t g_link_send_last_dstip = 0;
 volatile uint32_t g_link_send_last_dport = 0;
+// Counts ServiceRunner poll_one() iterations -- witnesses whether Link's discovery
+// io_service is actually being pumped (defined here, incremented in Context.hpp).
+volatile uint32_t g_link_pump_calls = 0;
 
 extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, unsigned dport, unsigned dstip) {
     g_link_send_hook_calls = g_link_send_hook_calls + 1;
