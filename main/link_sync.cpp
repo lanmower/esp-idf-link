@@ -359,6 +359,23 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
         ESP_LOGW(TAG_LINK, "No Link peers found for 8s, forcing start.");
     }
 
+    // Witness whether Link's own send() hook is being called (i.e. Link is broadcasting
+    // discovery). Logged from this normal task context, ~every 5s, so it is visible even
+    // though the hook itself runs on Link's pinned asio thread.
+    extern volatile uint32_t g_link_send_hook_calls;
+    extern volatile uint32_t g_link_send_last_dstip;
+    extern volatile uint32_t g_link_send_last_dport;
+    static int64_t s_hookLogAt = 0;
+    int64_t nowH = esp_timer_get_time();
+    if (nowH - s_hookLogAt > 5000000) {
+        s_hookLogAt = nowH;
+        uint32_t ip = g_link_send_last_dstip;
+        ESP_LOGI(TAG_LINK, "Link send-hook calls=%u last=%u.%u.%u.%u:%u peers=%d",
+                 g_link_send_hook_calls,
+                 ip & 0xff, (ip >> 8) & 0xff, (ip >> 16) & 0xff, (ip >> 24) & 0xff,
+                 g_link_send_last_dport, g_link->numPeers());
+    }
+
     // Handle connection changes. On peer join we do NOT immediately Stop/Start; instead
     // we arm a phrase-aligned realign so gear snaps to the shared phrase at the next
     // 16-bar boundary. On peer loss we clear hanging notes.

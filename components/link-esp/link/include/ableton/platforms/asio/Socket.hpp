@@ -63,8 +63,8 @@ struct Socket
     // the hook can distinguish multicast discovery from unicast measurement and only
     // bridge what needs bridging. is_multicast() alone proved unreliable, so hand the
     // hook the raw destination and let it filter.
-    wifi_link_multicast_forward(pData, static_cast<unsigned>(numBytes),
-      to.port(), to.address().is_v4() ? to.address().to_v4().to_uint() : 0u);
+    const unsigned dstip = to.address().is_v4() ? to.address().to_v4().to_uint() : 0u;
+    wifi_link_multicast_forward(pData, static_cast<unsigned>(numBytes), to.port(), dstip);
     return sent;
   }
 
