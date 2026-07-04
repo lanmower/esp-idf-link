@@ -377,6 +377,20 @@ static void link_station_bridge_task(void*) {
     static const char* MCAST_ADDR = "224.76.78.75";
     static const uint16_t LINK_PORT = 20808;
 
+    // Single persistent task started at boot. It only forwards while we are a STA with
+    // an IP (g_ap_active == false && got a lease); this makes it robust to EVERY path
+    // that establishes a STA connection -- boot join, deferred-hold join, and the
+    // supervisor's AP->STA yield / reconnect -- without needing each to start it.
+    // Wait for a valid STA IP before setting up sockets.
+    esp_netif_ip_info_t staip = {};
+    for (;;) {
+        if (!g_ap_active && g_sta_netif &&
+            esp_netif_get_ip_info(g_sta_netif, &staip) == ESP_OK && staip.ip.addr != 0) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+
     int rs = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (rs < 0) { ESP_LOGE(BR_TAG, "recv socket failed"); vTaskDelete(NULL); return; }
     int one = 1;
@@ -389,8 +403,6 @@ static void link_station_bridge_task(void*) {
         ESP_LOGE(BR_TAG, "bind failed"); close(rs); vTaskDelete(NULL); return;
     }
     // Join the Link group on the STA interface so we receive the local Link multicast.
-    esp_netif_ip_info_t staip = {};
-    if (g_sta_netif) esp_netif_get_ip_info(g_sta_netif, &staip);
     struct ip_mreq mreq = {};
     inet_aton(MCAST_ADDR, &mreq.imr_multiaddr);
     mreq.imr_interface.s_addr = staip.ip.addr; // our STA IP (192.168.4.2)

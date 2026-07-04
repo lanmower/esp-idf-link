@@ -115,7 +115,6 @@ extern "C" void app_main() {
         } else {
             ESP_LOGI(TAG, "Joined 'ticker' network");
             wifi_join_link_multicast();
-            wifi_start_station_bridge();
         }
     } else {
         // No 'ticker' found. Two co-booting boards each see nothing (a single-radio
@@ -158,7 +157,6 @@ extern "C" void app_main() {
                 if (wifi_is_connected()) {
                     ESP_LOGI(TAG, "Joined 'ticker' network");
                     wifi_join_link_multicast();
-                    wifi_start_station_bridge();
                     joined = true;
                     break;
                 }
@@ -175,6 +173,11 @@ extern "C" void app_main() {
     // Supervisor self-heals the mesh: reconnects a dropped STA, re-hosts if the host
     // disappears, and resolves a dual-host race (lower BSSID wins). Runs in all roles.
     wifi_start_supervisor("ticker");
+
+    // Persistent station-side Link bridge: forwards our Link multicast to the AP
+    // gateway whenever we are a STA (self-activates on IP, robust to every join path
+    // including supervisor yield/reconnect). Idle while we are the host.
+    wifi_start_station_bridge();
 
     network_midi_init();
     xTaskCreate(tickTask, "tickTask", 10240, nullptr, 15, nullptr);
