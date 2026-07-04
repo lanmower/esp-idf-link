@@ -24,6 +24,12 @@
 #include <vector>
 #include <cstdint>
 
+// Globals (defined in the application, main/wifi_config.cpp): witness Link's interface
+// scan so the app can log how many usable addresses discovery found to broadcast on.
+extern volatile std::uint32_t g_link_scan_calls;
+extern volatile std::uint32_t g_link_scan_last_ip;
+extern volatile std::uint32_t g_link_scan_last_count;
+
 namespace ableton
 {
 namespace platforms
@@ -36,9 +42,6 @@ struct ScanIpIfAddrs
 {
   std::vector<::asio::ip::address> operator()()
   {
-    extern volatile std::uint32_t g_link_scan_calls;
-    extern volatile std::uint32_t g_link_scan_last_ip;
-    extern volatile std::uint32_t g_link_scan_last_count;
     std::vector<::asio::ip::address> addrs;
     // Get first network interface
     esp_netif_t* esp_netif = esp_netif_next_unsafe(NULL);
