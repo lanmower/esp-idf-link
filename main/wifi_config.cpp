@@ -31,6 +31,11 @@ static void igmp_join_link(esp_netif_t* netif) {
 static const char* TAG = "WIFI";
 static bool g_wifi_connected = false;
 static bool g_ap_active = false;
+// Number of stations currently associated to our SoftAP. While >0 we are an
+// established host with real clients, so the supervisor must NOT run the periodic
+// off-channel rescan -- on a single-radio ESP32 that scan tunes away from the AP
+// channel and drops our own clients (the STA-flap that kept Link at 0 peers).
+static volatile int g_ap_client_count = 0;
 static esp_netif_t* g_sta_netif = NULL;
 static esp_netif_t* g_ap_netif = NULL;
 
@@ -38,7 +43,8 @@ static void wifi_event_handler(void* arg, esp_event_base_t base,
                                int32_t id, void* data) {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         g_wifi_connected = false;
-        ESP_LOGW(TAG, "STA disconnected");
+        wifi_event_sta_disconnected_t* ev = (wifi_event_sta_disconnected_t*)data;
+        ESP_LOGW(TAG, "STA disconnected (reason=%d)", ev ? ev->reason : -1);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* ev = (ip_event_got_ip_t*)data;
         ESP_LOGI(TAG, "IP: " IPSTR, IP2STR(&ev->ip_info.ip));
@@ -47,7 +53,12 @@ static void wifi_event_handler(void* arg, esp_event_base_t base,
         ESP_LOGI(TAG, "AP started");
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STACONNECTED) {
         wifi_event_ap_staconnected_t* ev = (wifi_event_ap_staconnected_t*)data;
-        ESP_LOGI(TAG, "Client joined: " MACSTR, MAC2STR(ev->mac));
+        g_ap_client_count++;
+        ESP_LOGI(TAG, "Client joined: " MACSTR " (clients=%d)", MAC2STR(ev->mac), g_ap_client_count);
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STADISCONNECTED) {
+        wifi_event_ap_stadisconnected_t* ev = (wifi_event_ap_stadisconnected_t*)data;
+        if (g_ap_client_count > 0) g_ap_client_count--;
+        ESP_LOGI(TAG, "Client left: " MACSTR " (clients=%d)", MAC2STR(ev->mac), g_ap_client_count);
     }
 }
 
@@ -199,6 +210,7 @@ esp_err_t wifi_start_link_ap(const char* ssid) {
     ESP_ERROR_CHECK(esp_netif_dhcps_start(g_ap_netif));
 
     g_ap_active = true;
+    g_ap_client_count = 0; // fresh AP has no clients yet; STACONNECTED events count up
     ESP_LOGI(TAG, "Link AP '%s' on ch6, 192.168.4.1, max 8 clients", ssid);
     igmp_join_link(g_ap_netif);
     return ESP_OK;
@@ -361,12 +373,20 @@ static void wifi_supervisor_task(void* arg) {
             }
         } else {
             // AP role: detect a co-host with a lower BSSID and yield to it so
-            // exactly one host remains. The scan runs in APSTA (ensure_sta_started
-            // switches mode) and repeats every 2s forever, so even an occasionally
-            // flaky AP-role scan converges: a strictly-lower co-host is eventually
-            // seen and this board yields. Combined with the MAC-ordered boot
-            // election (higher MACs defer hosting), a persistent dual-host is rare
-            // and always resolves to the lowest BSSID.
+            // exactly one host remains. Combined with the MAC-ordered boot election
+            // (higher MACs defer hosting) a persistent dual-host is rare and always
+            // resolves to the lowest BSSID.
+            //
+            // CRITICAL: only rescan while we have NO associated stations. The scan
+            // runs in APSTA and tunes the single radio off our AP channel; doing that
+            // while a client is connected drops the client (STA-flap -> Link never
+            // peers). An established host with >=1 client has already won the
+            // election -- there is nothing to resolve, so stay put and keep the AP
+            // rock-stable. If a co-host with no clients exists, one of the two has
+            // zero clients and will still rescan and yield, so convergence holds.
+            if (g_ap_client_count > 0) {
+                continue;
+            }
             uint8_t best[6];
             int matches = wifi_scan_best_bssid(ssid, best);
             // Our own AP shows up in the scan as our AP MAC (STA MAC + 1 on ESP32).
