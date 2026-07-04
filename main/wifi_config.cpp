@@ -4,7 +4,6 @@
 #include <esp_event.h>
 #include <esp_netif.h>
 #include <esp_netif_net_stack.h>
-#include <esp_netif_sta_list.h> // esp_netif_get_sta_list, esp_netif_sta_list_t
 #include <lwip/ip_addr.h>
 #include <lwip/igmp.h>
 #include <lwip/netif.h>
@@ -37,6 +36,11 @@ static bool g_ap_active = false;
 // off-channel rescan -- on a single-radio ESP32 that scan tunes away from the AP
 // channel and drops our own clients (the STA-flap that kept Link at 0 peers).
 static volatile int g_ap_client_count = 0;
+// Associated-station IPs, populated from IP_EVENT_AP_STAIPASSIGNED (no version-fragile
+// sta_list header needed). The Link relay unicast-fans-out to these because the SoftAP
+// does not carry multicast host<->station. 0 = empty slot.
+#define MAX_AP_STA_IPS 8
+static volatile uint32_t g_ap_sta_ips[MAX_AP_STA_IPS] = {0};
 static esp_netif_t* g_sta_netif = NULL;
 static esp_netif_t* g_ap_netif = NULL;
 
@@ -59,14 +63,29 @@ static void wifi_event_handler(void* arg, esp_event_base_t base,
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STADISCONNECTED) {
         wifi_event_ap_stadisconnected_t* ev = (wifi_event_ap_stadisconnected_t*)data;
         if (g_ap_client_count > 0) g_ap_client_count = g_ap_client_count - 1; // explicit (volatile -- deprecated)
+        // We only have the MAC here, not the IP; when the last client leaves, clear the
+        // whole IP table (a surviving client re-registers on its next DHCP assignment).
+        if (g_ap_client_count == 0) {
+            for (int i = 0; i < MAX_AP_STA_IPS; i++) g_ap_sta_ips[i] = 0;
+        }
         ESP_LOGI(TAG, "Client left: " MACSTR " (clients=%d)", MAC2STR(ev->mac), g_ap_client_count);
+    } else if (base == IP_EVENT && id == IP_EVENT_AP_STAIPASSIGNED) {
+        ip_event_ap_staipassigned_t* ev = (ip_event_ap_staipassigned_t*)data;
+        uint32_t ip = ev->ip.addr;
+        ESP_LOGI(TAG, "Station got IP: " IPSTR, IP2STR(&ev->ip));
+        // Record the station IP for the Link relay unicast fan-out (dedup + first free slot).
+        bool present = false;
+        for (int i = 0; i < MAX_AP_STA_IPS; i++) if (g_ap_sta_ips[i] == ip) { present = true; break; }
+        if (!present) {
+            for (int i = 0; i < MAX_AP_STA_IPS; i++) if (g_ap_sta_ips[i] == 0) { g_ap_sta_ips[i] = ip; break; }
+        }
     }
 }
 
 esp_err_t wifi_config_init() {
     esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                         wifi_event_handler, NULL, NULL);
-    esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+    esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID,
                                         wifi_event_handler, NULL, NULL);
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     return esp_wifi_init(&cfg);
@@ -300,22 +319,14 @@ static void link_multicast_relay_task(void*) {
         ip_addr_set_ip4_u32(&src_addr, src.sin_addr.s_addr);
         ip_addr_set_ip4_u32(&dst_addr, mcast_ip);
 
-        // Snapshot associated-station IPs BEFORE taking the TCPIP core lock.
-        // esp_wifi_ap_get_sta_list / esp_netif_get_sta_list touch the WiFi + netif
-        // stacks and must NOT be called while holding LOCK_TCPIP_CORE (deadlock).
-        uint32_t sta_ips[8];
+        // Snapshot associated-station IPs (from the IP_EVENT_AP_STAIPASSIGNED table)
+        // before taking the TCPIP core lock. Skip the packet's own origin.
+        uint32_t sta_ips[MAX_AP_STA_IPS];
         int sta_ip_count = 0;
-        {
-            wifi_sta_list_t sta_list;
-            esp_netif_sta_list_t ip_list;
-            if (esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK &&
-                esp_netif_get_sta_list(&sta_list, &ip_list) == ESP_OK) {
-                for (int i = 0; i < ip_list.num && sta_ip_count < 8; i++) {
-                    uint32_t sta_ip = ip_list.sta[i].ip.addr;
-                    if (sta_ip == 0 || sta_ip == src.sin_addr.s_addr) continue;
-                    sta_ips[sta_ip_count++] = sta_ip;
-                }
-            }
+        for (int i = 0; i < MAX_AP_STA_IPS; i++) {
+            uint32_t sta_ip = g_ap_sta_ips[i];
+            if (sta_ip == 0 || sta_ip == src.sin_addr.s_addr) continue;
+            sta_ips[sta_ip_count++] = sta_ip;
         }
 
         LOCK_TCPIP_CORE();
