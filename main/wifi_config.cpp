@@ -312,6 +312,25 @@ static void link_multicast_relay_task(void*) {
             ip_addr_t ap_addr;
             ip_addr_set_ip4_u32(&ap_addr, ap_ip);
             raw_sendto_if_src(rpcb, p, &ap_addr, ap_lwip, &src_addr);
+            // (3) UNICAST fan-out to every associated station. The ESP32 SoftAP does
+            // NOT deliver multicast between the host and its stations (witnessed: an
+            // associated station's Link multicast never reaches the host, and the
+            // host's re-multicast at (1) never reaches stations), but UNICAST UDP does
+            // cross the AP boundary (DHCP works). So forward each Link packet directly
+            // to every station IP, preserving the original source -- this is what makes
+            // two ESP32s actually peer over Link. Skip the packet's own origin.
+            wifi_sta_list_t sta_list;
+            esp_netif_sta_list_t ip_list;
+            if (esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK &&
+                esp_netif_get_sta_list(&sta_list, &ip_list) == ESP_OK) {
+                for (int i = 0; i < ip_list.num; i++) {
+                    uint32_t sta_ip = ip_list.sta[i].ip.addr;
+                    if (sta_ip == 0 || sta_ip == src.sin_addr.s_addr) continue;
+                    ip_addr_t sta_addr;
+                    ip_addr_set_ip4_u32(&sta_addr, sta_ip);
+                    raw_sendto_if_src(rpcb, p, &sta_addr, ap_lwip, &src_addr);
+                }
+            }
         }
         UNLOCK_TCPIP_CORE();
 
@@ -321,6 +340,68 @@ static void link_multicast_relay_task(void*) {
 
 void wifi_start_link_relay() {
     xTaskCreate(link_multicast_relay_task, "link_relay", 4096, NULL, 5, NULL);
+}
+
+// Station-side half of the Link bridge. The SoftAP does not carry multicast between a
+// station and the host, so a station's Ableton Link discovery multicast never reaches
+// the host. Unicast DOES cross (DHCP works). This task receives the station's own local
+// Link multicast (its Link lib output, delivered to this socket by loopback + RXTOALL)
+// and unicast-forwards each packet to the AP gateway 192.168.4.1:20808, where the host's
+// relay socket receives it and fans it back out to the host Link socket + other stations.
+// Together with the AP-side fan-out, this is what lets two ESP32s peer over Link.
+static void link_station_bridge_task(void*) {
+    static const char* BR_TAG = "LINK_STABR";
+    static const char* MCAST_ADDR = "224.76.78.75";
+    static const uint16_t LINK_PORT = 20808;
+
+    int rs = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (rs < 0) { ESP_LOGE(BR_TAG, "recv socket failed"); vTaskDelete(NULL); return; }
+    int one = 1;
+    setsockopt(rs, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    struct sockaddr_in bind_addr = {};
+    bind_addr.sin_family      = AF_INET;
+    bind_addr.sin_port        = htons(LINK_PORT);
+    bind_addr.sin_addr.s_addr = INADDR_ANY;
+    if (bind(rs, (struct sockaddr*)&bind_addr, sizeof(bind_addr)) < 0) {
+        ESP_LOGE(BR_TAG, "bind failed"); close(rs); vTaskDelete(NULL); return;
+    }
+    // Join the Link group on the STA interface so we receive the local Link multicast.
+    esp_netif_ip_info_t staip = {};
+    if (g_sta_netif) esp_netif_get_ip_info(g_sta_netif, &staip);
+    struct ip_mreq mreq = {};
+    inet_aton(MCAST_ADDR, &mreq.imr_multiaddr);
+    mreq.imr_interface.s_addr = staip.ip.addr; // our STA IP (192.168.4.2)
+    setsockopt(rs, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
+
+    // Send socket for the unicast copy to the gateway (the AP host).
+    int ss = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (ss < 0) { ESP_LOGE(BR_TAG, "send socket failed"); close(rs); vTaskDelete(NULL); return; }
+
+    struct sockaddr_in gw = {};
+    gw.sin_family = AF_INET;
+    gw.sin_port   = htons(LINK_PORT);
+    gw.sin_addr.s_addr = staip.gw.addr ? staip.gw.addr : inet_addr("192.168.4.1");
+
+    static uint8_t buf[1472];
+    uint32_t my_ip = staip.ip.addr;
+    int tx_log = 0;
+    ESP_LOGI(BR_TAG, "Station Link bridge -> gateway %s:%u", inet_ntoa(gw.sin_addr), LINK_PORT);
+
+    for (;;) {
+        struct sockaddr_in src = {};
+        socklen_t sl = sizeof(src);
+        int n = recvfrom(rs, buf, sizeof(buf), 0, (struct sockaddr*)&src, &sl);
+        if (n <= 0) continue;
+        // Only forward our OWN Link output (src == our STA IP). Packets the host
+        // unicast to us arrive too; re-forwarding them would loop.
+        if (src.sin_addr.s_addr != my_ip) continue;
+        if (tx_log < 5) { ESP_LOGI(BR_TAG, "fwd %d bytes to gateway", n); tx_log++; }
+        sendto(ss, buf, n, 0, (struct sockaddr*)&gw, sizeof(gw));
+    }
+}
+
+void wifi_start_station_bridge() {
+    xTaskCreate(link_station_bridge_task, "link_stabr", 4096, NULL, 5, NULL);
 }
 
 // Self-healing supervisor. Runs forever. Two roles:

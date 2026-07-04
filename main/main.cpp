@@ -115,6 +115,7 @@ extern "C" void app_main() {
         } else {
             ESP_LOGI(TAG, "Joined 'ticker' network");
             wifi_join_link_multicast();
+            wifi_start_station_bridge();
         }
     } else {
         // No 'ticker' found. Two co-booting boards each see nothing (a single-radio
@@ -157,6 +158,7 @@ extern "C" void app_main() {
                 if (wifi_is_connected()) {
                     ESP_LOGI(TAG, "Joined 'ticker' network");
                     wifi_join_link_multicast();
+                    wifi_start_station_bridge();
                     joined = true;
                     break;
                 }
