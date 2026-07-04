@@ -366,15 +366,18 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     extern volatile uint32_t g_link_send_last_dstip;
     extern volatile uint32_t g_link_send_last_dport;
     extern volatile uint32_t g_link_pump_calls;
+    extern volatile uint32_t g_link_scan_calls;
+    extern volatile uint32_t g_link_scan_last_ip;
+    extern volatile uint32_t g_link_scan_last_count;
     static int64_t s_hookLogAt = 0;
     int64_t nowH = esp_timer_get_time();
     if (nowH - s_hookLogAt > 5000000) {
         s_hookLogAt = nowH;
-        uint32_t ip = g_link_send_last_dstip;
-        ESP_LOGI(TAG_LINK, "Link diag: pump=%u send-hook=%u last=%u.%u.%u.%u:%u peers=%d",
-                 g_link_pump_calls, g_link_send_hook_calls,
-                 ip & 0xff, (ip >> 8) & 0xff, (ip >> 16) & 0xff, (ip >> 24) & 0xff,
-                 g_link_send_last_dport, g_link->numPeers());
+        uint32_t sip = g_link_scan_last_ip;
+        ESP_LOGI(TAG_LINK, "Link diag: pump=%u scan=%u scanCount=%u scanIP=%u.%u.%u.%u send-hook=%u peers=%d",
+                 g_link_pump_calls, g_link_scan_calls, g_link_scan_last_count,
+                 sip & 0xff, (sip >> 8) & 0xff, (sip >> 16) & 0xff, (sip >> 24) & 0xff,
+                 g_link_send_hook_calls, g_link->numPeers());
     }
 
     // Handle connection changes. On peer join we do NOT immediately Stop/Start; instead

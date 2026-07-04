@@ -258,6 +258,12 @@ volatile uint32_t g_link_send_last_dport = 0;
 // Counts ServiceRunner poll_one() iterations -- witnesses whether Link's discovery
 // io_service is actually being pumped (defined here, incremented in Context.hpp).
 volatile uint32_t g_link_pump_calls = 0;
+// Witness Link's interface scan (ScanIpIfAddrs): how many times it ran, how many
+// interface addresses it returned, and the last IP -- tells us whether Link found a
+// usable interface to broadcast discovery on.
+volatile uint32_t g_link_scan_calls = 0;
+volatile uint32_t g_link_scan_last_ip = 0;
+volatile uint32_t g_link_scan_last_count = 0;
 
 extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, unsigned dport, unsigned dstip) {
     g_link_send_hook_calls = g_link_send_hook_calls + 1;

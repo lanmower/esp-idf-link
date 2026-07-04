@@ -22,6 +22,7 @@
 #include <esp_netif.h>
 #include <net/if.h>
 #include <vector>
+#include <cstdint>
 
 namespace ableton
 {
@@ -35,6 +36,9 @@ struct ScanIpIfAddrs
 {
   std::vector<::asio::ip::address> operator()()
   {
+    extern volatile std::uint32_t g_link_scan_calls;
+    extern volatile std::uint32_t g_link_scan_last_ip;
+    extern volatile std::uint32_t g_link_scan_last_count;
     std::vector<::asio::ip::address> addrs;
     // Get first network interface
     esp_netif_t* esp_netif = esp_netif_next_unsafe(NULL);
@@ -45,11 +49,18 @@ struct ScanIpIfAddrs
       {
         esp_netif_ip_info_t ip_info;
         esp_netif_get_ip_info(esp_netif, &ip_info);
-        addrs.emplace_back(::asio::ip::address_v4(ntohl(ip_info.ip.addr)));
+        // Skip interfaces without a valid IP (0.0.0.0) -- Link cannot bind/broadcast on them
+        if (ip_info.ip.addr != 0)
+        {
+          addrs.emplace_back(::asio::ip::address_v4(ntohl(ip_info.ip.addr)));
+          g_link_scan_last_ip = ip_info.ip.addr;
+        }
       }
       // Get next network interface
       esp_netif = esp_netif_next_unsafe(esp_netif);
     }
+    g_link_scan_calls = g_link_scan_calls + 1;
+    g_link_scan_last_count = (std::uint32_t)addrs.size();
     return addrs;
   }
 };
