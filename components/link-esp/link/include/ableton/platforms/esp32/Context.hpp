@@ -27,6 +27,11 @@
 #include <driver/gptimer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <cstdint>
+
+// Global (defined in the application, main/wifi_config.cpp): counts io_service pump
+// iterations so the app can witness whether Link's discovery service is running.
+extern volatile std::uint32_t g_link_pump_calls;
 
 namespace ableton
 {
@@ -46,6 +51,7 @@ class Context
       for (;;)
       {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        g_link_pump_calls = g_link_pump_calls + 1; // witness: io_service is being pumped
         runner->mpService->poll_one();
       }
     }

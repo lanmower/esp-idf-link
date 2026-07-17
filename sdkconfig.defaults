@@ -27,3 +27,10 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_large.csv"
 # Flash Size Configuration (4MB for ESP32)
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
+# LWIP socket pool. Default (10) is exhausted by the app's own UDP sockets (Link relay,
+# LCLK/TTMP broadcast, tempo listener, discovery forward) leaving too few for Ableton
+# Link's per-interface discovery gateway, which then fails to open with EMFILE ("Too
+# many open files") and never broadcasts -> peers never discover each other. Raise to
+# the ESP32 maximum so Link's gateway sockets always open.
+CONFIG_LWIP_MAX_SOCKETS=16

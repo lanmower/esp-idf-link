@@ -22,6 +22,13 @@
 #include <esp_netif.h>
 #include <net/if.h>
 #include <vector>
+#include <cstdint>
+
+// Globals (defined in the application, main/wifi_config.cpp): witness Link's interface
+// scan so the app can log how many usable addresses discovery found to broadcast on.
+extern volatile std::uint32_t g_link_scan_calls;
+extern volatile std::uint32_t g_link_scan_last_ip;
+extern volatile std::uint32_t g_link_scan_last_count;
 
 namespace ableton
 {
@@ -45,11 +52,18 @@ struct ScanIpIfAddrs
       {
         esp_netif_ip_info_t ip_info;
         esp_netif_get_ip_info(esp_netif, &ip_info);
-        addrs.emplace_back(::asio::ip::address_v4(ntohl(ip_info.ip.addr)));
+        // Skip interfaces without a valid IP (0.0.0.0) -- Link cannot bind/broadcast on them
+        if (ip_info.ip.addr != 0)
+        {
+          addrs.emplace_back(::asio::ip::address_v4(ntohl(ip_info.ip.addr)));
+          g_link_scan_last_ip = ip_info.ip.addr;
+        }
       }
       // Get next network interface
       esp_netif = esp_netif_next_unsafe(esp_netif);
     }
+    g_link_scan_calls = g_link_scan_calls + 1;
+    g_link_scan_last_count = (std::uint32_t)addrs.size();
     return addrs;
   }
 };

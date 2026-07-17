@@ -41,6 +41,9 @@ void tickTask(void *userParam) {
     vTaskDelay(pdMS_TO_TICKS(500));
     g_link = std::make_unique<ableton::Link>(120.0);
     g_link->enable(true);
+    // Share transport start/stop across peers so all Ableton Link features work
+    // (tempo + beat/phase quantum already via enable(); this adds start-stop-sync).
+    g_link->enableStartStopSync(true);
     link_start_tempo_listener();   // accept looper LTMP tempo-set commands
 
     ESP_LOGI(TAG, "Link init complete");
@@ -114,9 +117,57 @@ extern "C" void app_main() {
             wifi_join_link_multicast();
         }
     } else {
-        ESP_LOGI(TAG, "No 'ticker' found -- hosting AP");
-        wifi_start_link_ap("ticker");
-        wifi_start_link_relay();
+        // No 'ticker' found. Two co-booting boards each see nothing (a single-radio
+        // board mid-boot cannot reliably scan-detect a peer AP), so a naive
+        // "host if none found" makes BOTH host isolated APs -> two L2 domains ->
+        // Link never crosses. Elect deterministically by STA-MAC instead of by scan:
+        // the numerically-lowest MAC hosts immediately; higher-MAC boards keep
+        // rescanning and join the winner as soon as its AP appears. A genuinely lone
+        // board (no lower peer ever shows up) still self-hosts after the window.
+        //
+        // The hold before we host is STRICTLY MONOTONIC in our MAC: lower MAC -> shorter
+        // hold -> hosts first; higher MACs, still scanning each second, see that AP appear
+        // and join it. This gives a total order with no cross-device visibility required
+        // during the hold, and is confirmed by re-scanning for the winner's real AP.
+        // rank from the low 3 MAC bytes (the OUI-independent, per-unit portion).
+        uint32_t mac_rank = ((uint32_t)mac[3] << 16) | ((uint32_t)mac[4] << 8) | mac[5];
+        // Scale rank (0 .. 2^24-1) into a bounded hold of 0 .. HOLD_MAX_MS. The lowest
+        // MAC holds ~0ms (hosts almost immediately); the highest holds HOLD_MAX_MS. A
+        // lone board simply hosts when its own hold expires with no peer seen.
+        const uint32_t HOLD_MAX_MS = 6000;
+        uint32_t hold_ms = (uint32_t)(((uint64_t)mac_rank * HOLD_MAX_MS) >> 24);
+        ESP_LOGI(TAG, "No 'ticker' -- MAC-ordered host hold %" PRIu32 "ms (rank=%" PRIu32 ")",
+                 hold_ms, mac_rank);
+        bool joined = false;
+        uint32_t waited_ms = 0;
+        // Rescan every 1s during the hold; join the instant a lower peer's AP appears.
+        while (waited_ms < hold_ms) {
+            uint32_t step = (hold_ms - waited_ms > 1000) ? 1000 : (hold_ms - waited_ms);
+            vTaskDelay(pdMS_TO_TICKS(step));
+            waited_ms += step;
+            uint8_t bssid2[6] = {0};
+            if (wifi_scan_best_bssid("ticker", bssid2) > 0) {
+                ESP_LOGI(TAG, "Peer 'ticker' appeared during hold -- joining as STA");
+                wifi_connect_sta("ticker", "");
+                int wait2 = 0;
+                while (!wifi_is_connected() && wait2 < 60) {
+                    vTaskDelay(pdMS_TO_TICKS(500));
+                    wait2++;
+                }
+                if (wifi_is_connected()) {
+                    ESP_LOGI(TAG, "Joined 'ticker' network");
+                    wifi_join_link_multicast();
+                    joined = true;
+                    break;
+                }
+                ESP_LOGW(TAG, "Join attempt failed -- continuing hold");
+            }
+        }
+        if (!joined) {
+            ESP_LOGI(TAG, "Hold expired, no peer 'ticker' -- hosting AP");
+            wifi_start_link_ap("ticker");
+            wifi_start_link_relay();
+        }
     }
 
     // Supervisor self-heals the mesh: reconnects a dropped STA, re-hosts if the host

@@ -36,6 +36,30 @@ void process_state_event(const InputEvent& event,
     if (event.pot_moved[1])
         g_bassEngine.setCtrl2(event.pot_value[1] / 127.0f);
 
+    // ---- All four pads held -> stop MIDI note playback (panic) ----
+    // Rising-edge latched: fire stop() once when all 4 first held together, then
+    // suppress the per-pad genre taps this tick so setGenre() does not immediately
+    // re-activate playback. Latch clears when fewer than 4 are held.
+    static bool s_all4_latched = false;
+    bool all4 = event.pad_held[0] && event.pad_held[1]
+             && event.pad_held[2] && event.pad_held[3];
+    if (all4) {
+        if (!s_all4_latched) {
+            s_all4_latched = true;
+            ESP_LOGI(TAG, "All 4 pads held -> stop playback");
+            g_bassEngine.stop();
+        }
+        // Consume the gesture: mark pads held and clear tap timers so the release
+        // is not later read as four separate taps that would re-select genres.
+        for (int i = 0; i < 4; i++) {
+            s_was_held[i]      = event.pad_held[i];
+            s_last_press_us[i] = 0;
+        }
+        g_bassEngine.process(link_state, link_time);
+        return;
+    }
+    s_all4_latched = false;
+
     // ---- Touch pads -> genre selection ----
     for (int i = 0; i < 4; i++) {
         // Detect rising edge (press)
