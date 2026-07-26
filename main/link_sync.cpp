@@ -8,6 +8,7 @@
 #include <lwip/sockets.h>
 #include <lwip/inet.h>
 #include "esp_netif.h"
+#include "wifi_config.h"   // wifi_is_ap_active() for the queryable status reply
 
 // --- Phase broadcast for bare-metal peers behind a unicast-RX wall (the Pi looper) ---
 // The Pi's bcm4343 WiFi delivers multicast/broadcast but NOT unicast-to-self, so the
@@ -127,6 +128,53 @@ static volatile bool   s_phaseReqPending = false;
 static volatile int64_t s_phaseReqBeat0us = 0;   // esp-clock micros of the loop downbeat (beat 0)
 static volatile double  s_phaseReqQuantum = 4.0; // loop quantum in beats
 
+// Queryable Link status, so the aloop<->esp mesh test can be SCRIPTED instead of
+// eyeballed on a serial console. ../aloop already exposes peers/bpm/playing in
+// /run/aloop/status.json; this is the ESP half. Send any UDP datagram to
+// LINK_STATUS_PORT and get a one-line JSON reply from the same source port.
+// Deliberately request/response (not a broadcast) so it costs nothing when idle
+// and cannot pollute the Link multicast group.
+#define LINK_STATUS_PORT 20812
+
+static void status_responder_task(void*) {
+    int rs = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (rs < 0) { vTaskDelete(NULL); return; }
+    int one = 1;
+    setsockopt(rs, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    struct sockaddr_in ba = {};
+    ba.sin_family      = AF_INET;
+    ba.sin_port        = htons(LINK_STATUS_PORT);
+    ba.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(rs, (struct sockaddr*)&ba, sizeof ba) < 0) { close(rs); vTaskDelete(NULL); return; }
+
+    uint8_t req[64];
+    char reply[256];
+    for (;;) {
+        struct sockaddr_in src = {};
+        socklen_t sl = sizeof src;
+        int n = recvfrom(rs, req, sizeof req, 0, (struct sockaddr*)&src, &sl);
+        if (n < 0) continue;
+        if (!g_link) {
+            int len = snprintf(reply, sizeof reply, "{\"link\":false}\n");
+            sendto(rs, reply, len, 0, (struct sockaddr*)&src, sl);
+            continue;
+        }
+        auto st = g_link->captureAppSessionState();
+        const auto now = g_link->clock().micros();
+        int len = snprintf(reply, sizeof reply,
+            "{\"link\":true,\"peers\":%u,\"bpm\":%.3f,\"playing\":%s,"
+            "\"beat\":%.3f,\"phase\":%.3f,\"quantum\":%.1f,\"ap\":%s}\n",
+            (unsigned)g_link->numPeers(),
+            st.tempo(),
+            st.isPlaying() ? "true" : "false",
+            st.beatAtTime(now, LINK_QUANTUM),
+            st.phaseAtTime(now, LINK_QUANTUM),
+            (double)LINK_QUANTUM,
+            wifi_is_ap_active() ? "true" : "false");
+        sendto(rs, reply, len, 0, (struct sockaddr*)&src, sl);
+    }
+}
+
 static void tempo_listener_task(void*) {
     int rs = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (rs < 0) { vTaskDelete(NULL); return; }
@@ -168,6 +216,9 @@ static void tempo_listener_task(void*) {
 
 void link_start_tempo_listener() {
     xTaskCreate(tempo_listener_task, "ltmp_rx", 4096, NULL, 5, NULL);
+    // Queryable status on LINK_STATUS_PORT, started alongside the LTMP listener
+    // so both come up at the same point (after g_link exists and WiFi is up).
+    xTaskCreate(status_responder_task, "link_status", 4096, NULL, 5, NULL);
 }
 
 // --- Master-clock compatibility for the non-negotiable targets ---
