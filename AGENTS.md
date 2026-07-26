@@ -43,6 +43,40 @@ are attached, since that would drop peers mid-session. If this convention
 is ever inverted here (highest-wins), it MUST be inverted in aloop in the
 same change.
 
+### By-the-book Ableton Link integration checklist (both projects)
+
+Derived from a full audit of both trees against Link's own header docs.
+
+- **Thread-correct session-state API.** `captureAppSessionState()` /
+  `commitAppSessionState()` off the audio thread; the `AudioSessionState`
+  variants only on it. This project uses the App variants throughout.
+- **`enableStartStopSync(true)` must be paired with real transport
+  behaviour.** This project CONSUMES transport (`state.isPlaying()` in
+  `link_sync.cpp` -> MIDI Start/Stop/Continue + all-notes-off) and correctly
+  does NOT call `setIsPlaying` — it has no local play/stop control; it is a
+  clock/transport bridge to downstream gear. `../aloop` is the emitter: it
+  publishes `setIsPlaying` on every play-state edge. If this project ever
+  gains its own transport control, it MUST start calling `setIsPlaying` or
+  its local state will be invisible to peers.
+- **The three notification callbacks** — `setNumPeersCallback(std::size_t)`,
+  `setTempoCallback(double)`, `setStartStopCallback(bool)`. Link's header
+  documents each as invoked on a Link-managed thread and **Realtime-safe:
+  no** — bounded logging / atomics only, never allocation or locks.
+- **Tempo authority.** `setTempo` rewrites tempo for EVERY peer. This project
+  only sets tempo on an explicit LTMP command (`s_tempoReq`), which is the
+  correct restraint; `../aloop` additionally refuses to propose when peers
+  already own the tempo. Do not make either side an unconditional writer.
+- **Quantum is a shared constant.** `LINK_QUANTUM 16.0` here,
+  `kLinkQuantum` in `../aloop/src/link/link_bridge.h`. They move together.
+  `PHRASE_BEATS 64.0` is this project's own SPP/transport boundary and is
+  deliberately different — do not "align" it to the quantum.
+- **Interface readiness is a real race, and this project already models the
+  fix.** The 500ms settle before constructing Link (`main.cpp`) and the ~10s
+  IGMP re-assert (`wifi_config.cpp`, whose comment notes a single join at
+  GOT_IP can race netif readiness so membership does not stick) are the
+  reference `../aloop` was corrected against — it had no service ordering
+  between its `aloop` and `autoap` units at all.
+
 ### The SoftAP multicast gap is this project's, and may not be aloop's
 
 The ESP32 SoftAP does not carry Link's multicast between host and stations,
