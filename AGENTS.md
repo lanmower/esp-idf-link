@@ -77,6 +77,26 @@ Derived from a full audit of both trees against Link's own header docs.
   reference `../aloop` was corrected against — it had no service ordering
   between its `aloop` and `autoap` units at all.
 
+### The vendored Link is a FORK, checked in — not a submodule
+
+`components/link-esp/link` is a **patched copy of Ableton Link committed
+directly into this repo** (1506 tracked files, git mode `100755`, no nested
+`.git`). It is NOT an active submodule, despite `.gitmodules` having once
+declared `components/link-esp` as one pointing at
+`mathiasbredholt/link-esp` — that stale entry has been removed, because it
+invited a `git submodule update` that would have clobbered the patch below
+with no compile error and silently killed ESP peer discovery.
+
+The divergence from upstream is the multicast relay hook:
+`link/include/ableton/platforms/asio/Socket.hpp` declares
+`extern "C" wifi_link_multicast_forward(...)` (:30) and calls it on every
+send (:67), so `wifi_config.cpp`'s relay can unicast-copy each Link
+discovery datagram across the SoftAP host/station boundary that does not
+carry multicast. Committed here in `88d6866` / `622f7ca`.
+
+**Any future Link version bump must re-apply that hook.** Losing it
+compiles perfectly and fails only at runtime, as silent non-discovery.
+
 ### The SoftAP multicast gap is this project's, and may not be aloop's
 
 The ESP32 SoftAP does not carry Link's multicast between host and stations,
