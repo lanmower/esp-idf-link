@@ -1,0 +1,40 @@
+# This repo is edited from a Windows clone (core.autocrlf=true) but every shell
+# script here runs under Linux -- inside the ESP-IDF Docker container (build.sh,
+# setup_espidf.sh) or under WSL2 (flash.sh, monitor.sh, setup-ch340.sh). CRLF
+# silently breaks those: `#!/bin/bash\r` breaks the shebang lookup and every
+# line's trailing \r merges into the next token. The identical failure was
+# WITNESSED on the sibling ../aloop project, where an edited kernel/rt-tune.sh
+# picked up CRLF and silently stopped working on the real device with no error
+# anywhere in the pipeline (CI stayed green; only the hardware misbehaved).
+# Force LF for every text format actually consumed by a POSIX interpreter,
+# regardless of what any individual clone's core.autocrlf is set to.
+* text=auto eol=lf
+
+*.sh text eol=lf
+*.bash text eol=lf
+*.py text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+Makefile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.csv text eol=lf
+sdkconfig text eol=lf
+sdkconfig.defaults text eol=lf
+Dockerfile text eol=lf
+
+# Windows-only helpers genuinely want CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binaries must never be touched by line-ending normalization at all.
+*.bin binary
+*.elf binary
+*.so binary
+*.a binary
+*.exe binary
+*.png binary
+*.jpg binary
+*.zip binary
+*.tar.gz binary
+*.mid binary
