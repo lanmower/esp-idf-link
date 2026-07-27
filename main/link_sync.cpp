@@ -89,7 +89,11 @@ static void broadcast_ticker_timeline(const ableton::Link::SessionState& state,
     // (beatOrigin @ timeOrigin) the looper extrapolates from. quantum here only
     // affects phaseAtTime, not beatAtTime, so use LINK_QUANTUM for the beat value.
     double bpm = state.tempo();
-    if (!(bpm >= 20.0 && bpm <= 400.0)) return;
+    // Ableton's own Test Plan TEMPO-4 exercises the FULL Link range and names
+    // 20bpm and 999bpm explicitly: an app must stay in sync across it. A 400
+    // ceiling silently dropped any legitimate session tempo above it instead of
+    // following, so the bound is Link's real range.
+    if (!(bpm >= 20.0 && bpm <= 999.0)) return;
     int64_t mpb = (int64_t)(60000000.0 / bpm + 0.5);
     double beats = state.beatAtTime(std::chrono::microseconds(linkMicros), LINK_QUANTUM);
     int64_t beatOriginUb = (int64_t)(beats * 1e6);
@@ -197,7 +201,8 @@ static void tempo_listener_task(void*) {
             memcpy(&mpb, buf + 4, 8);
             if (mpb > 0) {
                 double bpm = 60000000.0 / (double)mpb;
-                if (bpm >= 20.0 && bpm <= 400.0) { s_tempoReqBpm = bpm; s_tempoReqPending = true; }
+                // Same Test Plan TEMPO-4 range as the emit path above (20..999).
+                if (bpm >= 20.0 && bpm <= 999.0) { s_tempoReqBpm = bpm; s_tempoReqPending = true; }
             }
             // Optional phase payload: esp-clock beat-0 micros + quantum (microbeats).
             if (n >= 28) {
