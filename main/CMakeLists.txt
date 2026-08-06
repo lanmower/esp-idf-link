@@ -10,6 +10,7 @@ idf_component_register(SRCS
     "synth_microkorg.cpp"
     "state_machine.cpp"
     "bass_engine.cpp"
+    "bassline_interpreter.cpp"
     "wifi_config.cpp"
 
     "network_midi.cpp"
