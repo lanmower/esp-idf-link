@@ -287,7 +287,7 @@ static int                s_next_click_ms    = LENGTH_NORMAL;
 // (UDP status) instead of needing a scope on the buzzer.
 static volatile int64_t  s_fire_late_last_us  = 0;
 static volatile int64_t  s_fire_late_worst_us = 0;
-static volatile uint32_t s_fire_count         = 0;
+static uint32_t          s_fire_count         = 0;
 static double            s_fire_late_sum_us   = 0.0;
 static double            s_fire_late_sq_us    = 0.0;
 
