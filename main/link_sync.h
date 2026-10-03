@@ -36,7 +36,7 @@ void link_start_tempo_listener();
 
 // Main Link Sync Handler function
 void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force_start,
-                       int& lastTicks, int& length, int& lastBeat, int& currentBuzzerFreq, bool& was_playing,
+                       bool& was_playing,
                        const ableton::Link::SessionState& state, const std::chrono::microseconds& time);
 
 #endif // LINK_SYNC_H 

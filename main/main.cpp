@@ -51,10 +51,6 @@ void tickTask(void *userParam) {
     bool was_connected = false;
     int64_t start_wait_time = esp_timer_get_time();
     bool force_start = false;
-    static int lastTicks = 0;
-    static int length = LENGTH_NORMAL;
-    static int lastBeat = -1;
-    static int currentBuzzerFreq = FREQ_NORMAL;
     static bool was_playing = false;
     InputEvent current_input_event;
     uint32_t ulNotifiedValue;
@@ -67,13 +63,10 @@ void tickTask(void *userParam) {
         const auto state = g_link->captureAppSessionState();
 
         if (ulNotifiedValue & 1) {
-            int ticks = lastTicks;
             handle_link_sync(was_connected, start_wait_time, force_start,
-                             ticks, length, lastBeat, currentBuzzerFreq, was_playing,
-                             state, time);
+                             was_playing, state, time);
             update_input_state(current_input_event);
             process_state_event(current_input_event, state, time);
-            lastTicks = ticks;
         }
     }
 }

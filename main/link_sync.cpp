@@ -140,6 +140,12 @@ static volatile double  s_phaseReqQuantum = 4.0; // loop quantum in beats
 // and cannot pollute the Link multicast group.
 #define LINK_STATUS_PORT 20812
 
+// How late the hardware-scheduled metronome/clock alarms actually fire. Exposed over the
+// mesh so the click's stability is measurable from a peer instead of needing a scope on
+// the buzzer; defined with the scheduler below.
+struct MetroStats { uint32_t fired; int64_t last; int64_t worst; double mean; double rms; };
+MetroStats metro_stats();
+
 static void status_responder_task(void*) {
     int rs = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (rs < 0) { vTaskDelete(NULL); return; }
@@ -152,7 +158,7 @@ static void status_responder_task(void*) {
     if (bind(rs, (struct sockaddr*)&ba, sizeof ba) < 0) { close(rs); vTaskDelete(NULL); return; }
 
     uint8_t req[64];
-    char reply[256];
+    char reply[384];
     for (;;) {
         struct sockaddr_in src = {};
         socklen_t sl = sizeof src;
@@ -165,16 +171,20 @@ static void status_responder_task(void*) {
         }
         auto st = g_link->captureAppSessionState();
         const auto now = g_link->clock().micros();
+        const MetroStats ms = metro_stats();
         int len = snprintf(reply, sizeof reply,
             "{\"link\":true,\"peers\":%u,\"bpm\":%.3f,\"playing\":%s,"
-            "\"beat\":%.3f,\"phase\":%.3f,\"quantum\":%.1f,\"ap\":%s}\n",
+            "\"beat\":%.3f,\"phase\":%.3f,\"quantum\":%.1f,\"ap\":%s,"
+            "\"metro\":{\"fired\":%u,\"late_last_us\":%lld,\"late_worst_us\":%lld,"
+            "\"late_mean_us\":%.1f,\"late_rms_us\":%.1f}}\n",
             (unsigned)g_link->numPeers(),
             st.tempo(),
             st.isPlaying() ? "true" : "false",
             st.beatAtTime(now, LINK_QUANTUM),
             st.phaseAtTime(now, LINK_QUANTUM),
             (double)LINK_QUANTUM,
-            wifi_is_ap_active() ? "true" : "false");
+            wifi_is_ap_active() ? "true" : "false",
+            (unsigned)ms.fired, (long long)ms.last, (long long)ms.worst, ms.mean, ms.rms);
         sendto(rs, reply, len, 0, (struct sockaddr*)&src, sl);
     }
 }
@@ -235,7 +245,8 @@ void link_start_tempo_listener() {
 //   Volca Drum       : syncs to clock pulse only; ignores SPP/SPP-spam harmless now that
 //                      SPP fires once per phrase, not every 4 beats.
 //   MicroKorg        : arp/delay sync follows clock; needs a stable (non-bursting) clock
-//                      -- the per-tick cap + resync guarantees that.
+//                      -- the alarm scheduler emits one pulse per due time and drops
+//                      any it cannot reach, so it never bursts.
 //   Micron           : clock + Start; phrase-aligned Start keeps its sequencer in phrase.
 //   MiniNova         : arp/LFO sync to clock; stable clock keeps modulation locked.
 //   RC-505 MK2       : loop station; locks to clock+Start, SPP repositions; note-offs use
@@ -252,8 +263,57 @@ static int s_last_phrase_number = -1;
 static gptimer_handle_t s_link_gptimer = nullptr;
 static esp_timer_handle_t s_buzzer_off_timer = nullptr;
 
+// --- Hardware-scheduled Link-timeline events (metronome click + 24 ppqn MIDI clock) ---
+// Neither can be emitted from the 4 kHz tick task: a tick only discovers a beat AFTER it
+// has already passed, so every click and every 0xF8 inherits that wake-up's own latency
+// plus whatever WiFi, logging and input polling happened during it -- milliseconds of
+// jitter, which is exactly what an audible metronome exposes. Instead the due time of the
+// NEXT pulse is asked for up front (SessionState::timeAtBeat) and one esp_timer alarm is
+// armed to it; the alarm callback does the emitting, so the only error left is the alarm's
+// dispatch latency (tens of microseconds) and it is the same error for the click and the
+// clock. Link's ESP clock IS esp_timer (platforms/esp32/Clock.hpp), so a Link-clock
+// microsecond timestamp is already an esp_timer deadline: no offset, no drift.
+static esp_timer_handle_t s_evt_timer = nullptr;
+static volatile bool      s_evt_armed   = false;
+static volatile bool      s_evt_enabled = false;
+static volatile int64_t   s_evt_due_us   = 0;
+static volatile int64_t   s_last_fire_us = 0;
+static int64_t            s_next_pulse       = 0;
+static bool               s_next_pulse_valid = false;
+static uint32_t           s_next_click_freq  = FREQ_NORMAL;
+static int                s_next_click_ms    = LENGTH_NORMAL;
+
+// Fired-alarm lateness, so the metronome's real stability is measurable over the mesh
+// (UDP status) instead of needing a scope on the buzzer.
+static volatile int64_t  s_fire_late_last_us  = 0;
+static volatile int64_t  s_fire_late_worst_us = 0;
+static volatile uint32_t s_fire_count         = 0;
+static double            s_fire_late_sum_us   = 0.0;
+static double            s_fire_late_sq_us    = 0.0;
+
+MetroStats metro_stats() {
+    MetroStats ms{};
+    ms.fired = s_fire_count;
+    ms.last  = s_fire_late_last_us;
+    ms.worst = s_fire_late_worst_us;
+    ms.mean  = s_fire_count ? s_fire_late_sum_us / (double)s_fire_count : 0.0;
+    ms.rms   = s_fire_count ? std::sqrt(s_fire_late_sq_us / (double)s_fire_count) : 0.0;
+    return ms;
+}
+
+static void metronome_accent_for_beat(double beat, uint32_t& freq, int& ms);
+static void link_event_cb(void*);
+
 static void buzzer_off_cb(void*) {
     set_buzzer_state(false);
+    // Prime the next click's pitch now, while the buzzer is silent: the ON edge then
+    // costs two duty writes instead of a PWM timer reconfigure landing on the beat.
+    if (g_link) {
+        const auto st = g_link->captureAppSessionState();
+        const double beatNow = st.beatAtTime(g_link->clock().micros(), LINK_QUANTUM);
+        metronome_accent_for_beat(std::floor(beatNow) + 1.0, s_next_click_freq, s_next_click_ms);
+    }
+    prime_buzzer_freq(s_next_click_freq);
 }
 
 static bool IRAM_ATTR link_gptimer_callback(gptimer_handle_t timer, const gptimer_alarm_event_data_t *event_data, void *user_data) {
@@ -339,6 +399,11 @@ void init_link_timer(TaskHandle_t task_handle) {
     buzzer_timer_args.callback = buzzer_off_cb;
     buzzer_timer_args.name = "buzzer_off";
     ESP_ERROR_CHECK(esp_timer_create(&buzzer_timer_args, &s_buzzer_off_timer));
+
+    esp_timer_create_args_t evt_timer_args = {};
+    evt_timer_args.callback = link_event_cb;
+    evt_timer_args.name = "link_evt";
+    ESP_ERROR_CHECK(esp_timer_create(&evt_timer_args, &s_evt_timer));
 }
 
 // Send MIDI realtime/transport byte(s). Realtime status bytes (0xF8/0xFA/0xFB/0xFC)
@@ -367,12 +432,86 @@ static void send_song_position(double sessionBeat) {
     send_midi_bytes(spp, sizeof(spp));
 }
 
+// Accent pattern within the quantum, as it was chosen when the beat was scheduled: bar
+// top (16), half (8), quarter (4), else the plain beat.
+static void metronome_accent_for_beat(double beat, uint32_t& freq, int& ms) {
+    double pos = std::fmod(std::floor(beat), LINK_QUANTUM);
+    if (pos < 0.0) pos += LINK_QUANTUM;
+    const int b = static_cast<int>(pos);
+    if (b == 0)          { freq = FREQ_16BEAT; ms = LENGTH_16BEAT; }
+    else if (b % 8 == 0) { freq = FREQ_8BEAT;  ms = LENGTH_8BEAT;  }
+    else if (b % 4 == 0) { freq = FREQ_4BEAT;  ms = LENGTH_4BEAT;  }
+    else                 { freq = FREQ_NORMAL; ms = LENGTH_NORMAL; }
+}
+
+static void arm_event_timer(int64_t dueEspUs) {
+    int64_t delta = dueEspUs - esp_timer_get_time();
+    if (delta < 0) delta = 0;
+    esp_timer_stop(s_evt_timer);
+    if (esp_timer_start_once(s_evt_timer, static_cast<uint64_t>(delta)) != ESP_OK) return;
+    s_evt_due_us = dueEspUs;
+    s_evt_armed  = true;
+}
+
+static void schedule_next_event(const ableton::Link::SessionState& state) {
+    const int64_t nowLink = g_link->clock().micros().count();
+    const double beatNow = state.beatAtTime(std::chrono::microseconds(nowLink), LINK_QUANTUM);
+    const int64_t dueNow = static_cast<int64_t>(std::floor(beatNow * 24.0)) + 1;
+    if (!s_next_pulse_valid || s_next_pulse < dueNow) {
+        if (s_next_pulse_valid && dueNow - s_next_pulse > MIDI_CLOCK_RESYNC_THRESHOLD)
+            ESP_LOGW(TAG_LINK, "clock %lld pulse(s) behind -- resyncing to beat %.2f (no burst)",
+                     (long long)(dueNow - s_next_pulse), beatNow);
+        s_next_pulse = dueNow;
+        s_next_pulse_valid = true;
+    }
+    // A tempo change, or a peer imposing phase, moves the timeline under a pending alarm.
+    // Step forward to a pulse that is still ahead rather than firing a burst for the past.
+    int64_t due = state.timeAtBeat((double)s_next_pulse / 24.0, LINK_QUANTUM).count();
+    for (int guard = 0; due < nowLink && guard < 1024; guard++) {
+        s_next_pulse++;
+        due = state.timeAtBeat((double)s_next_pulse / 24.0, LINK_QUANTUM).count();
+    }
+    arm_event_timer(due);
+}
+
+static void link_event_cb(void*) {
+    if (!g_link) { s_evt_armed = false; return; }
+    const int64_t firedAt = esp_timer_get_time();
+    const int64_t late    = firedAt - s_evt_due_us;
+    s_evt_armed = false;
+    s_last_fire_us = firedAt;
+    s_fire_late_last_us = late;
+    if (late > s_fire_late_worst_us) s_fire_late_worst_us = late;
+    s_fire_count++;
+    s_fire_late_sum_us += (double)late;
+    s_fire_late_sq_us  += (double)late * (double)late;
+
+    if ((s_next_pulse % 24) == 0) {
+        const double beat = (double)s_next_pulse / 24.0;
+        if (beat >= 0.0) {
+            set_buzzer_state(true, s_next_click_freq);
+            esp_timer_stop(s_buzzer_off_timer);
+            esp_timer_start_once(s_buzzer_off_timer, (uint64_t)s_next_click_ms * 1000);
+        }
+    }
+    const uint8_t timing_msg = MIDI_TIMING_CLOCK;
+    send_midi_bytes(&timing_msg, 1);
+
+    s_next_pulse++;
+    if (s_evt_enabled) {
+        schedule_next_event(g_link->captureAppSessionState());
+    } else {
+        s_next_pulse_valid = false;
+        set_buzzer_state(false);
+    }
+}
+
 // Main Link Synchronization Logic (called from tickTask)
 // pending_realign: set when a peer joins or play-state begins; the actual MIDI
 // Start+SPP is held until the next 16-bar phrase boundary so all gear begins the
 // phrase together rather than jerking in mid-phrase.
 void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force_start,
-                        int& lastTicks, int& length, int& lastBeat, int& currentBuzzerFreq, bool& was_playing,
+                        bool& was_playing,
                         const ableton::Link::SessionState& state, const std::chrono::microseconds& time)
 {
     static bool s_pending_realign = false;   // a Start+SPP is owed at the next phrase boundary
@@ -437,6 +576,9 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
                  sip & 0xff, (sip >> 8) & 0xff, (sip >> 16) & 0xff, (sip >> 24) & 0xff,
                  g_link_gw_init_attempts, g_link_gw_init_ok, g_link_gw_init_fail,
                  g_link_send_hook_calls, g_link->numPeers());
+        const MetroStats ms = metro_stats();
+        ESP_LOGI(TAG_LINK, "Metro: fired=%u late last=%lldus worst=%lldus mean=%.0fus rms=%.0fus",
+                 (unsigned)ms.fired, (long long)ms.last, (long long)ms.worst, ms.mean, ms.rms);
     }
 
     // Handle connection changes. On peer join we do NOT immediately Stop/Start; instead
@@ -448,11 +590,9 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
             auto qi = detectQuantumBoundary(state, time);
             ESP_LOGI(TAG_LINK, "Link connected -- beat=%.3f phase=%.3f quantum=%d phrase=%d",
                      qi.sessionBeat, qi.phaseWithinQuantum, qi.currentQuantumNumber, qi.currentPhraseNumber);
-            // Reset lastBeat to avoid spurious trigger from Link phase adjustment
-            lastBeat = qi.beatInQuantum;
-            // Resync clock counter to the live beat so we do not burst clocks for the
-            // beats that elapsed before peering.
-            lastTicks = static_cast<int>(qi.sessionBeat * 24);
+            // Re-anchor the emitted pulse train on the live beat, so peering neither
+            // bursts the pulses that elapsed before it nor leaves the clock behind it.
+            s_next_pulse_valid = false;
             s_pending_realign = true;
         } else {
             // Peer lost -- stop external gear cleanly and clear any held notes.
@@ -468,44 +608,40 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     QuantumInfo quantumInfo = detectQuantumBoundary(state, time);
 
     const double sessionBeat = quantumInfo.sessionBeat;
-    const int beatInQuantum = quantumInfo.beatInQuantum;
-    const bool crossedQuantumBoundary = quantumInfo.crossedQuantumBoundary;
     const bool crossedPhraseBoundary = quantumInfo.crossedPhraseBoundary;
 
-    // Target clock count: 24 per quarter note. Monotonic in sessionBeat.
-    const int midiClocks = static_cast<int>(sessionBeat * 24);
-
-    // Detect beat boundary crossing
-    bool crossedBeat = (beatInQuantum != lastBeat);
-
-    // Metronome and MIDI Sync Logic
-    if (is_connected || force_start) {
-        // Metronome frequency based on beat position (emphasize 16, 8, 4, 1)
-        if (crossedQuantumBoundary) {
-            length = LENGTH_16BEAT;
-            currentBuzzerFreq = FREQ_16BEAT;
-            ESP_LOGI(TAG_LINK, "Quantum boundary at beat %.1f", sessionBeat);
-        } else if (crossedBeat) {
-            if (beatInQuantum % 8 == 0) {
-                length = LENGTH_8BEAT;
-                currentBuzzerFreq = FREQ_8BEAT;
-            } else if (beatInQuantum % 4 == 0) {
-                length = LENGTH_4BEAT;
-                currentBuzzerFreq = FREQ_4BEAT;
-            } else {
-                length = LENGTH_NORMAL;
-                currentBuzzerFreq = FREQ_NORMAL;
-            }
+    // Metronome and MIDI Sync Logic. The click and the 24 ppqn clock are no longer
+    // emitted here: this tick would only notice a beat after it had passed. Enabling
+    // arms the hardware-scheduled pulse train (link_event_cb) instead; this tick keeps
+    // the phrase-aligned transport work, which is not microsecond-critical.
+    const bool clockEnabled = is_connected || force_start;
+    if (clockEnabled != s_evt_enabled) {
+        s_evt_enabled = clockEnabled;
+        s_next_pulse_valid = false;
+        s_evt_armed = false;
+        if (clockEnabled) {
+            metronome_accent_for_beat(std::floor(sessionBeat) + 1.0, s_next_click_freq, s_next_click_ms);
+            prime_buzzer_freq(s_next_click_freq);
+            schedule_next_event(state);
+            ESP_LOGI(TAG_LINK, "Timeline events armed at beat %.1f", sessionBeat);
+        } else {
+            esp_timer_stop(s_evt_timer);
+            set_buzzer_state(false);
+            ESP_LOGI(TAG_LINK, "Timeline events stopped");
         }
+    }
 
-        if (crossedBeat || crossedQuantumBoundary) {
-            lastBeat = beatInQuantum;
-            // Edge-triggered buzzer: fire on beat crossing, schedule off
-            set_buzzer_state(true, currentBuzzerFreq);
-            esp_timer_stop(s_buzzer_off_timer);
-            esp_timer_start_once(s_buzzer_off_timer, (int64_t)length * 1000);
-        }
+    // Watchdog: an alarm that never got re-armed (a failed start, a callback that could
+    // not run) would stop the clock silently, so re-arm from here once a pulse is really
+    // overdue -- the threshold is far longer than the fire/re-arm window it must not race.
+    if (s_evt_enabled && !s_evt_armed) {
+        const double bpm = state.tempo();
+        const int64_t pulseUs = (int64_t)(2.5e6 / (bpm > 1.0 ? bpm : 120.0));
+        if (esp_timer_get_time() - s_last_fire_us > pulseUs * 3 + 5000)
+            schedule_next_event(state);
+    }
 
+    if (clockEnabled) {
         bool is_playing = state.isPlaying();
 
         // Play-state changes: stopping is immediate (and clears held notes); starting
@@ -539,23 +675,5 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
             }
         }
 
-        // Emit due MIDI timing clocks, but cap per-tick output. If we have fallen far
-        // behind the live beat (post-stall), hard-resync the counter instead of bursting
-        // -- a flood of 0xF8 reads as a tempo spike on every target.
-        int behind = midiClocks - lastTicks;
-        if (behind > MIDI_CLOCK_RESYNC_THRESHOLD) {
-            ESP_LOGW(TAG_LINK, "Clock %d behind -- resyncing to beat %.2f (no burst)", behind, sessionBeat);
-            lastTicks = midiClocks;
-        } else {
-            int emitted = 0;
-            while (lastTicks < midiClocks && emitted < MIDI_MAX_CLOCKS_PER_TICK) {
-                lastTicks++;
-                emitted++;
-                const uint8_t timing_msg = MIDI_TIMING_CLOCK;
-                send_midi_bytes(&timing_msg, 1);
-            }
-        }
-    } else {
-        set_buzzer_state(false);
     }
 }

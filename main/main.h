@@ -101,11 +101,6 @@
 #define MIDI_CC_CMD 0xB0
 #define MIDI_CC_ALL_NOTES_OFF 123  // CC123: All Notes Off (sent on all 16 channels at stop)
 
-// Maximum MIDI timing clocks emitted in a single tick. At LINK_TICK_PERIOD=250us
-// (4 kHz) and 24ppqn, even 300 BPM needs <<1 clock/tick, so a healthy tick emits 0-1.
-// Capping catch-up prevents a post-stall burst of 0xF8 bytes that external gear reads
-// as a tempo spike; beyond the cap we resync the counter to the live beat instead.
-#define MIDI_MAX_CLOCKS_PER_TICK 2
 // If the clock counter falls further than this many clocks behind the live Link beat
 // (e.g. after a WiFi/scan stall), abandon catch-up and hard-resync to the current
 // position rather than flooding the bus. 24 clocks = one quarter note.

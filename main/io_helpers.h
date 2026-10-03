@@ -13,6 +13,7 @@ void init_touch_pads();
 esp_err_t read_touch_pad(uint8_t pad_num, uint16_t* value);
 void setup_buzzer();
 void set_buzzer_state(bool on, uint32_t frequency = FREQ_NORMAL);
+void prime_buzzer_freq(uint32_t frequency);
 bool read_controls(
     int pot_vals[NUM_POTS],                 // Output: Scaled value (0-127) based on faster EMA
     int pot_stable_center[NUM_POTS],      // Output: Scaled stable center (0-127) based on slower EMA

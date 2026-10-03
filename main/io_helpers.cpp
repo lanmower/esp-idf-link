@@ -189,41 +189,44 @@ void setup_buzzer()
 }
 
 // Control Buzzer State
-void set_buzzer_state(bool on, uint32_t frequency)
+// The pitch last written to the PWM timer. Kept outside set_buzzer_state so a click's
+// pitch can be primed while the buzzer is silent, leaving the ON edge nothing but two
+// duty writes -- a timer reconfigure at that moment would land its cost on the beat.
+static uint32_t s_buzzer_freq = 0;
+
+void prime_buzzer_freq(uint32_t frequency)
 {
-    static uint32_t lastFreq = 0;
-    if (on)
+    if (frequency == s_buzzer_freq) return;
+    ledc_timer_config_t ledc_timer = {
+        .speed_mode = LEDC_MODE,
+        .duty_resolution = LEDC_DUTY_RES,
+        .timer_num = LEDC_TIMER,
+        .freq_hz = frequency,
+        .clk_cfg = LEDC_AUTO_CLK,
+        .deconfigure = false};
+    esp_err_t err = ledc_timer_config(&ledc_timer);
+    if (err == ESP_OK)
     {
-        if (frequency != lastFreq)
-        {
-             // Only reconfigure timer if frequency actually changed
-            ledc_timer_config_t ledc_timer = {
-                .speed_mode = LEDC_MODE,
-                .duty_resolution = LEDC_DUTY_RES,
-                .timer_num = LEDC_TIMER,
-                .freq_hz = frequency,
-                .clk_cfg = LEDC_AUTO_CLK,
-                .deconfigure = false};
-            esp_err_t err = ledc_timer_config(&ledc_timer);
-            if (err == ESP_OK)
-            { // Update lastFreq only on success
-                 lastFreq = frequency;
-            }
-            else
-            {
-                ESP_LOGE(TAG, "Error setting buzzer frequency: %u", (unsigned int)frequency); // Corrected format specifier
-            }
-        }
-        ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
-        ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+        s_buzzer_freq = frequency;
     }
     else
     {
-        // Unconditionally set duty to 0 if 'on' is false to ensure LED turns off
-            ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, 0);
-            ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
-        lastFreq = 0; // Mark as off (frequency is not relevant when off)
+        ESP_LOGE(TAG, "Error setting buzzer frequency: %u", (unsigned int)frequency);
     }
+}
+
+void set_buzzer_state(bool on, uint32_t frequency)
+{
+    if (!on)
+    {
+        ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, 0);
+        ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+        s_buzzer_freq = 0;
+        return;
+    }
+    prime_buzzer_freq(frequency);
+    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
+    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
 }
 
 // Get touch readings
