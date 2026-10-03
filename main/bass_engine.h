@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <ableton/Link.hpp>
 #include <chrono>
+#include "bassline_interpreter.h"
 
 // A single note event in the 1024-step phrase buffer.
 // pos: position in steps (0.0 - 1023.75), fractional for sub-step placement.
@@ -16,31 +17,32 @@ struct NoteSlot {
     float pitchBend;  // semitones (positive = up)
 };
 
-// 8 genres:
-//   Single tap  on pad 0-3 -> GENRE_FUNK / ITALO / SYNTHPOP / PSYTRANCE
-//   Double tap  on pad 0-3 -> GENRE_PROG / AFROHOUSE / UKG / GFUNK
-enum GenreId {
-    GENRE_FUNK      = 0,
-    GENRE_ITALO     = 1,
-    GENRE_SYNTHPOP  = 2,
-    GENRE_PSYTRANCE = 3,
-    GENRE_PROG      = 4,
-    GENRE_AFROHOUSE = 5,
-    GENRE_UKG       = 6,
-    GENRE_GFUNK     = 7,
-    GENRE_COUNT     = 8
-};
-
+// Control surface: 4 touch pads select which of 4 dial "banks" the
+// project's 2 physical potentiometers currently address (see
+// bassline_interpreter.h for what each bank/dial pair controls). This
+// replaces the old 8-genre tap/double-tap lookup-table scheme -- there is
+// no more discrete genre selection, only continuous interpreted
+// generation. See readme.md for the full interaction model.
 class BassEngine {
 public:
     BassEngine();
 
-    // Select a genre and start playing. Regenerates phrase immediately.
-    void setGenre(int genre_idx);
+    // Tapping a pad selects which bank the 2 pots address. The very first
+    // bank selection also starts playback (with the current -- default,
+    // unless already dialed in -- parameters). Later taps just retarget
+    // the pots; they do not interrupt or regenerate the playing phrase.
+    void setActiveBank(int bank);
+    int  activeBank() const { return m_activeBank; }
 
-    // Macro controls (0.0 - 1.0). Re-generates phrase on the fly.
-    void setCtrl1(float v);
-    void setCtrl2(float v);
+    // Pot movement while a bank is active -- dialIdx is 0 or 1 (which of
+    // the 2 physical pots moved). Re-generates the phrase on the fly (at
+    // the next bar boundary, like the old setCtrl1/2 hot-swap).
+    void setDial(int dialIdx, float v01);
+
+    // Long-press gesture: reroll the current bar with fresh randomness
+    // while keeping the same dial-driven character (same mechanism as a
+    // dial change -- takes effect at the next bar boundary, no click).
+    void nudge();
 
     // Call from the main tick task every timer period.
     void process(const ableton::Link::SessionState& state,
@@ -48,8 +50,8 @@ public:
 
     void stop();
 
-    bool isActive()     const { return m_active; }
-    int  currentGenre() const { return m_genre; }
+    bool isActive() const { return m_active; }
+    const bli::Dials& dials() const { return m_dials; }
 
 private:
     // Internal motif slot (16 per bar, note==-1 means empty)
@@ -68,31 +70,23 @@ private:
     // Phrase generation -- advanceArc=false for mid-phrase hot-swap (no arc increment)
     void regeneratePhrase(bool advanceArc = true);
 
-    // Per-genre motif generators (fill m[0..15])
-    void genFunk     (MS m[16], int root, int scIdx, float c1, float c2);
-    void genItalo    (MS m[16], int root, int scIdx, float c1, float c2);
-    void genSynthpop (MS m[16], int root, int scIdx, float c1, float c2);
-    void genPsytrance(MS m[16], int root, int scIdx, float c1, float c2);
-    void genProg     (MS m[16], int root, int scIdx, float c1, float c2);
-    void genAfrohouse(MS m[16], int root, int scIdx, float c1, float c2);
-    void genUkg      (MS m[16], int root, int scIdx, float c1, float c2);
-    void genGfunk    (MS m[16], int root, int scIdx, float c1, float c2);
+    // Fills m[0..15] by running the interpreted generator (groove
+    // template + DP pitch solver + contour + articulation, see
+    // bassline_interpreter.h) with the current dials, and converts its
+    // output into the MS representation the arc/transform/turnaround
+    // machinery below already knows how to arrange into a 64-bar phrase.
+    void genInterpreted(MS m[16], int root, int scIdx);
 
-    // Motif transforms
+    // Motif transforms (unchanged -- these are generic arrangement
+    // variety on top of whatever generator filled motif A, not part of
+    // the note-generation itself)
     void transformMotif(const MS src[16], MS dst[16], int type, int root, int scIdx);
     // Anchor strong beats and clamp range to prevent tonal drift
     void anchorMotif(MS m[16], int root, int scIdx);
     static void clampRange(MS m[16], int root);
 
-    // Turnarounds - inject notes into m_phrase directly (called at tStart = 248)
-    void turnFunk     (int base, int scIdx, float c1, float c2);
-    void turnItalo    (int base);
-    void turnSynthpop (int base);
-    void turnPsytrance(int base, int scIdx, float c1);
-    void turnProg     (int base);
-    void turnAfrohouse(int base);
-    void turnUkg      (int base);
-    void turnGfunk    (int base, int scIdx, float c1);
+    // Turnaround -- inject notes into m_phrase directly (called at tStart = 1016)
+    void turnInterpreted(int base, int scIdx);
 
     // Helper: append a note to m_phrase
     void addNote(float pos, int note, float len, int vel, int fcc, float pb = 0.f);
@@ -107,9 +101,8 @@ private:
     struct ActiveNote { int note; double offPos; };
     std::vector<ActiveNote> m_activeNotes;
 
-    int    m_genre          = GENRE_FUNK;
-    float  m_ctrl1          = 0.5f;
-    float  m_ctrl2          = 0.5f;
+    int        m_activeBank    = bli::BANK_HARMONY;
+    bli::Dials m_dials;
     bool   m_active         = false;
     int    m_phraseCount    = 0;
     double m_lastPos        = -1.0;

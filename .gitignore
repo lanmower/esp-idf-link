@@ -6,7 +6,6 @@ dependencies.lock
 *.bin
 components/
 # IDE
-.vscode/
 .devcontainer/
 .claude/
 .vexify.db
@@ -52,3 +51,5 @@ components/
 .gm/
 .codeinsight
 .gm/pw-sock-*/
+config.bat
+node_modules

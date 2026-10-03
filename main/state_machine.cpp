@@ -1,10 +1,24 @@
 // state_machine.cpp
 //
-// Simple genre controller:
-//   Single tap  on pad 0-3 -> GENRE_FUNK / ITALO / SYNTHPOP / PSYTRANCE
-//   Double tap  on pad 0-3 -> GENRE_PROG / AFROHOUSE / UKG / GFUNK
-//   Pot 0 -> ctrl1  (macro 1 for active genre)
-//   Pot 1 -> ctrl2  (macro 2 for active genre)
+// Bassline interpreter control surface (see bass_engine.h / readme.md):
+//   Tap a pad (0-3)   -> select which dial bank (Harmony/Groove/Motion/
+//                        Voice) the 2 pots address. Switches instantly on
+//                        press -- no tap/double-tap disambiguation delay,
+//                        unlike the old genre scheme this replaces.
+//                        The very first-ever tap also starts playback.
+//   Long-press a pad  -> nudge: reroll the current bar with fresh
+//                        randomness, same dial-driven character.
+//   Hold all 4 pads   -> panic: stop playback (unchanged).
+//   Pot 0 -> dial 0 of the active bank
+//   Pot 1 -> dial 1 of the active bank
+//
+// No buzzer/LED feedback on bank-select or nudge: the buzzer is already
+// fully committed to the Link-quantum metronome click (link_sync.cpp
+// fires it on every beat), so layering pad-gesture chirps onto the same
+// GPIO would just get masked or would itself mask the metronome. Bank
+// switches are silent context changes (matches the old pot-context-
+// switching behaviour, which was also silent); a nudge is audible
+// through the bassline itself at the next bar.
 
 #include "state_machine.h"
 #include "bass_engine.h"
@@ -12,34 +26,31 @@
 
 static const char* TAG = "SM";
 
-// Double-tap detection window (microseconds)
-static const uint64_t DOUBLE_TAP_US = 400000;
+// Holding a pad this long (without releasing) fires a nudge in addition
+// to the bank-select that already happened on press.
+static const uint64_t NUDGE_HOLD_US = 500000;  // 500ms
 
-// Genre mapping
-// Single tap  -> pad 0..3 -> genre 0..3 (funk, italo, synthpop, psytrance)
-// Double tap  -> pad 0..3 -> genre 4..7 (prog, afrohouse, ukg, gfunk)
-static const int GENRE_SINGLE[4] = {0, 1, 2, 3};
-static const int GENRE_DOUBLE[4] = {4, 5, 6, 7};
-
-// Per-pad: timestamp of the last press (0 = never pressed)
-static uint64_t s_last_press_us[4] = {0, 0, 0, 0};
-// Track previous held state to detect press edges
+// Per-pad: timestamp the current hold started (0 = not held)
+static uint64_t s_press_start_us[4] = {0, 0, 0, 0};
+// Whether the long-press nudge has already fired for the current hold
+static bool s_nudge_fired[4] = {false, false, false, false};
+// Track previous held state to detect press/release edges
 static bool s_was_held[4] = {false, false, false, false};
 
 void process_state_event(const InputEvent& event,
                          const ableton::Link::SessionState& link_state,
                          const std::chrono::microseconds& link_time)
 {
-    // ---- Pots -> macro knobs ----
+    // ---- Pots -> the active bank's 2 dials ----
     if (event.pot_moved[0])
-        g_bassEngine.setCtrl1(event.pot_value[0] / 127.0f);
+        g_bassEngine.setDial(0, event.pot_value[0] / 127.0f);
     if (event.pot_moved[1])
-        g_bassEngine.setCtrl2(event.pot_value[1] / 127.0f);
+        g_bassEngine.setDial(1, event.pot_value[1] / 127.0f);
 
     // ---- All four pads held -> stop MIDI note playback (panic) ----
     // Rising-edge latched: fire stop() once when all 4 first held together, then
-    // suppress the per-pad genre taps this tick so setGenre() does not immediately
-    // re-activate playback. Latch clears when fewer than 4 are held.
+    // suppress the per-pad handling this tick so a subsequent release isn't
+    // read as a bank-select tap. Latch clears when fewer than 4 are held.
     static bool s_all4_latched = false;
     bool all4 = event.pad_held[0] && event.pad_held[1]
              && event.pad_held[2] && event.pad_held[3];
@@ -49,40 +60,40 @@ void process_state_event(const InputEvent& event,
             ESP_LOGI(TAG, "All 4 pads held -> stop playback");
             g_bassEngine.stop();
         }
-        // Consume the gesture: mark pads held and clear tap timers so the release
-        // is not later read as four separate taps that would re-select genres.
+        // Consume the gesture: mark pads held and clear per-pad gesture
+        // state so the eventual release isn't read as a tap or long-press.
         for (int i = 0; i < 4; i++) {
-            s_was_held[i]      = event.pad_held[i];
-            s_last_press_us[i] = 0;
+            s_was_held[i]       = event.pad_held[i];
+            s_press_start_us[i] = 0;
+            s_nudge_fired[i]    = false;
         }
         g_bassEngine.process(link_state, link_time);
         return;
     }
     s_all4_latched = false;
 
-    // ---- Touch pads -> genre selection ----
+    // ---- Touch pads -> bank select (tap) / nudge (long-press) ----
     for (int i = 0; i < 4; i++) {
-        // Detect rising edge (press)
-        bool pressed = event.pad_held[i] && !s_was_held[i];
-        s_was_held[i] = event.pad_held[i];
+        bool held     = event.pad_held[i];
+        bool pressed  = held && !s_was_held[i];   // rising edge
+        bool released = !held && s_was_held[i];   // falling edge
+        s_was_held[i] = held;
 
-        if (!pressed) continue;
-
-        uint64_t now     = event.timestamp_us;
-        uint64_t elapsed = (s_last_press_us[i] > 0) ? (now - s_last_press_us[i]) : UINT64_MAX;
-
-        if (elapsed < DOUBLE_TAP_US) {
-            // Double tap detected -> secondary genre
-            int genre = GENRE_DOUBLE[i];
-            ESP_LOGI(TAG, "Pad %d double-tap -> genre %d", i, genre);
-            g_bassEngine.setGenre(genre);
-            s_last_press_us[i] = 0; // reset so triple-tap won't re-trigger
-        } else {
-            // First (or isolated) tap -> primary genre
-            int genre = GENRE_SINGLE[i];
-            ESP_LOGI(TAG, "Pad %d tap -> genre %d", i, genre);
-            g_bassEngine.setGenre(genre);
-            s_last_press_us[i] = now;
+        if (pressed) {
+            s_press_start_us[i] = event.timestamp_us;
+            s_nudge_fired[i] = false;
+            ESP_LOGI(TAG, "Pad %d -> bank %d", i, i);
+            g_bassEngine.setActiveBank(i);
+        } else if (held && !s_nudge_fired[i]) {
+            uint64_t heldFor = event.timestamp_us - s_press_start_us[i];
+            if (heldFor >= NUDGE_HOLD_US) {
+                s_nudge_fired[i] = true;
+                ESP_LOGI(TAG, "Pad %d long-press -> nudge", i);
+                g_bassEngine.nudge();
+            }
+        } else if (released) {
+            s_press_start_us[i] = 0;
+            s_nudge_fired[i] = false;
         }
     }
 
