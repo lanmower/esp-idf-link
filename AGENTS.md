@@ -136,6 +136,26 @@ and the clock.
 Build trap: **`-Werror=volatile` is on**, so `++` on a `volatile` is a hard
 error -- the fired-alarm counter is deliberately non-volatile.
 
+## Firmware reaches the ticker over USB only
+
+No OTA path and no serial console on this machine: a firmware change gets to
+the device only over USB.
+
+- CI (espressif/idf docker, ESP-IDF 6.2) builds on push to any branch, and on
+  a green `main` it commits the three images into the repo --
+  `build/bootloader/bootloader.bin`,
+  `build/partition_table/partition-table.bin`,
+  `build/link-idf-example.bin` (commit "ci: update firmware binaries
+  [skip ci]"). The flashable images therefore come from git, not from a local
+  build.
+- `node flash-ticker.js [COMx]` (repo root) does the whole thing with esptool
+  5.x (`python -m esptool`; note v5's hyphenated `write-flash` subcommand).
+  Offsets: 0x1000 bootloader, 0x8000 partition table, 0x10000 app. `--list`
+  lists ports, and it refuses to guess when more than one serial port exists
+  -- this machine has two Bluetooth COM ports that are not the ESP32.
+- A COM port only exists while the ESP32 is plugged in; if esptool cannot
+  connect, hold IO0/BOOT while it starts.
+
 ## Mesh UDP protocol and MIDI emission
 
 Ports, all little-endian `int64` payloads on both ends:
