@@ -101,9 +101,8 @@
 #define MIDI_CC_CMD 0xB0
 #define MIDI_CC_ALL_NOTES_OFF 123  // CC123: All Notes Off (sent on all 16 channels at stop)
 
-// If the clock counter falls further than this many clocks behind the live Link beat
-// (e.g. after a WiFi/scan stall), abandon catch-up and hard-resync to the current
-// position rather than flooding the bus. 24 clocks = one quarter note.
+// Log-only now: more than this many pulses behind logs one warning. No catch-up burst
+// is emitted -- the scheduler drops unreachable pulses instead (see AGENTS.md).
 #define MIDI_CLOCK_RESYNC_THRESHOLD 24
 
 // --- Enums ---

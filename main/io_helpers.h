@@ -6,7 +6,6 @@
 #include <esp_adc/adc_cali_scheme.h>
 #include "state_machine.h" // Include for InputEvent definition
 
-// Function Prototypes
 void init_uart_midi();
 void init_adc();
 void init_touch_pads();
@@ -23,21 +22,16 @@ bool read_controls(
     bool last_touch_state[NUM_TOUCH_PADS]   // Input: Previous tick's touch_state output
 );
 
-// MIDI functions
 void send_midi_message(const uint8_t *message, size_t size);
 void send_midi_cc(uint8_t channel, uint8_t cc_num, uint8_t value);
 void send_midi_nrpn(uint8_t channel, uint8_t nrpn_msb, uint8_t nrpn_lsb, uint8_t value_msb);
 
-// Input state update
 void update_input_state(InputEvent& event);
 
-// Debug helper for potentiometer calibration
 void debug_potentiometer_ranges(int duration_ms);
 
-// Helper function to read ADC values
 esp_err_t read_adc(int pot_index, int* adc_value);
 
-// Hall effect sensor functions
 void init_hall_sensor();
 int read_hall_sensor();
 int get_hall_sensor_offset(int min_val, int max_val);
