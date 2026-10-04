@@ -51,5 +51,4 @@ components/
 .gm/
 .codeinsight
 .gm/pw-sock-*/
-config.bat
 node_modules
