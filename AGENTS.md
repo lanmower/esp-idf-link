@@ -21,7 +21,7 @@ the two from meshing, with no error on either side.
 | Channel | SoftAP ch6 | `hostapd.conf` `channel=6` |
 | Link multicast | `224.76.78.75:20808` | same (hardcoded in Link itself — cannot drift) |
 | Link quantum | `main.h` `#define LINK_QUANTUM 16.0` | `link_bridge.cpp` `quantum = 16.0` |
-| Start/stop sync | `main.cpp` `g_link->enableStartStopSync(true)` | `link_bridge.cpp` `enableStartStopSync(true)` |
+| Start/stop sync | `main.cpp` `g_link->enableStartStopSync(false)` | `link_bridge.cpp` `enableStartStopSync(false)` |
 | Host election | lowest MAC/BSSID wins | lowest MAC/BSSID wins |
 
 `PHRASE_BEATS 64.0` is NOT the Link quantum — it is this project's own
@@ -50,14 +50,16 @@ Derived from a full audit of both trees against Link's own header docs.
 - **Thread-correct session-state API.** `captureAppSessionState()` /
   `commitAppSessionState()` off the audio thread; the `AudioSessionState`
   variants only on it. This project uses the App variants throughout.
-- **`enableStartStopSync(true)` must be paired with real transport
-  behaviour.** This project CONSUMES transport (`state.isPlaying()` in
-  `link_sync.cpp` -> MIDI Start/Stop/Continue + all-notes-off) and correctly
-  does NOT call `setIsPlaying` — it has no local play/stop control; it is a
-  clock/transport bridge to downstream gear. `../aloop` is the emitter: it
-  publishes `setIsPlaying` on every play-state edge. If this project ever
-  gains its own transport control, it MUST start calling `setIsPlaying` or
-  its local state will be invisible to peers.
+- **Start/stop sync is OFF on both sides: the mesh is clock-only.** Tempo
+  and phase are shared, transport is not. This project still CONSUMES
+  transport (`state.isPlaying()` in `link_sync.cpp` -> MIDI
+  Start/Stop/Continue + all-notes-off) and correctly does NOT call
+  `setIsPlaying` — it has no local play/stop control. With sync disabled
+  `isPlaying()` reads true for the whole session, so downstream gear gets one
+  Start and never a Stop; that matches `../aloop`, whose transport never
+  stops either (a paused looper is muted, not stopped). Enabling it on one
+  side only splits the mesh, so it MUST be flipped on both in the same
+  change; the ESP32 side additionally needs a firmware flash to take effect.
 - **The three notification callbacks** — `setNumPeersCallback(std::size_t)`,
   `setTempoCallback(double)`, `setStartStopCallback(bool)`. Link's header
   documents each as invoked on a Link-managed thread and **Realtime-safe:

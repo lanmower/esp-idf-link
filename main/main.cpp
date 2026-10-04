@@ -41,9 +41,7 @@ void tickTask(void *userParam) {
     vTaskDelay(pdMS_TO_TICKS(500));
     g_link = std::make_unique<ableton::Link>(120.0);
     g_link->enable(true);
-    // Share transport start/stop across peers so all Ableton Link features work
-    // (tempo + beat/phase quantum already via enable(); this adds start-stop-sync).
-    g_link->enableStartStopSync(true);
+    g_link->enableStartStopSync(false);
     link_start_tempo_listener();   // accept looper LTMP tempo-set commands
 
     ESP_LOGI(TAG, "Link init complete");
