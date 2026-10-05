@@ -53,17 +53,21 @@ jobs:
           git diff --cached --quiet && echo "No binary changes" && exit 0
           git commit -m "ci: update firmware binaries [skip ci]"
           # idf.py build leaves many other unstaged files under build/, so a plain
-          # rebase refuses ("unstaged changes"). Retry the push, and on rejection
-          # rebase the binary commit onto the latest ref with --autostash so the
-          # uncommitted build artifacts are set aside and restored automatically.
-          # A concurrent workflow (e.g. auto-declaudeify) advancing the branch is the
-          # expected rejection cause.
+          # rebase refuses ("unstaged changes"). A concurrent workflow advancing the
+          # branch is the expected rejection cause. Re-committing on top of the latest
+          # remote ref (reset --soft, then re-stage our freshly built binaries) keeps
+          # the working tree and replays one commit: a rebase would try to MERGE the
+          # previous build's .bin files and die on "Cannot merge binary files".
           for attempt in 1 2 3 4 5; do
             if git push origin HEAD:${{ github.ref_name }}; then
               echo "Pushed binaries (attempt $attempt)"; exit 0
             fi
-            echo "Push rejected (attempt $attempt) -- rebasing onto latest ${{ github.ref_name }}"
+            echo "Push rejected (attempt $attempt) -- recommitting onto latest ${{ github.ref_name }}"
             git fetch origin ${{ github.ref_name }}
-            git rebase --autostash origin/${{ github.ref_name }} || { git rebase --abort || true; sleep 3; }
+            git reset --soft FETCH_HEAD
+            git add -f build/link-idf-example.bin build/bootloader/bootloader.bin build/partition_table/partition-table.bin
+            git diff --cached --quiet && echo "Binaries already current on ${{ github.ref_name }}" && exit 0
+            git commit -m "ci: update firmware binaries [skip ci]"
+            sleep 3
           done
           echo "Failed to push binaries after retries"; exit 1
