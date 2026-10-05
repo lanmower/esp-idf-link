@@ -36,7 +36,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ticker-firmware-${{ github.sha }}
-          path: flash-bundle/build
+          path: flash-bundle
           if-no-files-found: error
           retention-days: 90
 
