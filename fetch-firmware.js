@@ -75,27 +75,28 @@ const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ticker-fw-'));
 const d = gh(['run', 'download', String(picked.id), '-n', picked.artifact, '-D', tmp]);
 if (d.status !== 0) die(`gh run download failed: ${d.stderr || d.stdout}`);
 
-const inner = path.join(tmp, picked.artifact);
-if (!fs.existsSync(inner)) die(`download did not produce ${inner}`);
-
-let base = inner;
-for (const [rel] of IMAGES) {
-  if (!fs.existsSync(path.join(inner, rel))) { base = path.join(inner, 'build'); break; }
+const roots = [tmp, path.join(tmp, picked.artifact)];
+const found = [];
+for (const c of roots) {
+  const hits = IMAGES.map(([rel]) => {
+    const withPrefix = path.join(c, rel);
+    if (fs.existsSync(withPrefix)) return withPrefix;
+    const bare = path.join(c, rel.replace(/^build[\\/]/, ''));
+    if (fs.existsSync(bare)) return bare;
+    return null;
+  });
+  if (hits.every(Boolean)) { found.push(...hits); break; }
 }
+if (!found.length) die(`artifact did not contain ${IMAGES.map(([r]) => r).join(', ')} -- refusing to clobber build/`);
 
-for (const [rel] of IMAGES) {
-  const src = path.join(base, rel);
-  if (!fs.existsSync(src)) die(`artifact is missing ${rel} -- refusing to clobber build/`);
-}
-
-for (const [rel] of IMAGES) {
-  const src = path.join(base, rel);
+IMAGES.forEach(([rel], i) => {
+  const src = found[i];
   const dst = path.join(root, rel);
   fs.mkdirSync(path.dirname(dst), { recursive: true });
   fs.copyFileSync(src, dst);
   const st = fs.statSync(dst);
   console.log(`${rel}  ${st.size} bytes`);
-}
+});
 
 fs.rmSync(tmp, { recursive: true, force: true });
 
