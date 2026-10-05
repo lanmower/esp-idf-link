@@ -24,6 +24,22 @@ jobs:
           . /opt/esp/idf/export.sh
           idf.py build
 
+      - name: Stage flash bundle
+        shell: bash
+        run: |
+          mkdir -p flash-bundle/build/bootloader flash-bundle/build/partition_table
+          cp build/link-idf-example.bin                 flash-bundle/build/link-idf-example.bin
+          cp build/bootloader/bootloader.bin            flash-bundle/build/bootloader/bootloader.bin
+          cp build/partition_table/partition-table.bin  flash-bundle/build/partition_table/partition-table.bin
+
+      - name: Upload flash bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ticker-firmware-${{ github.sha }}
+          path: flash-bundle/build
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Commit binaries
         shell: bash
         env:
