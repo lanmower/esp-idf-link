@@ -52,3 +52,4 @@ components/
 .codeinsight
 .gm/pw-sock-*/
 node_modules
+.agentplug-kv/
