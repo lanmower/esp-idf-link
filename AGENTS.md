@@ -152,11 +152,16 @@ the device only over USB.
   build.
 - `node flash-ticker.js [COMx]` (repo root) does the whole thing with esptool
   5.x (`python -m esptool`; note v5's hyphenated `write-flash` subcommand).
-  Offsets: 0x1000 bootloader, 0x8000 partition table, 0x10000 app. `--list`
-  lists ports, and it refuses to guess when more than one serial port exists
-  -- this machine has two Bluetooth COM ports that are not the ESP32.
+  Offsets: 0x1000 bootloader, 0x8000 partition table, and the app at the first
+  app partition of the built table (0x20000 with `partitions_large.csv`; the
+  script reads it, never hardcode 0x10000). `--list` lists ports, and it
+  refuses to guess when more than one serial port exists -- this machine has
+  two Bluetooth COM ports that are not the ESP32.
 - A COM port only exists while the ESP32 is plugged in; if esptool cannot
-  connect, hold IO0/BOOT while it starts.
+  connect, hold IO0/BOOT while it starts. On this Windows host with the CH340
+  boards, esptool's reset sequences and every manual DTR/RTS wiring and timing
+  variant tried left the chip in normal boot (`boot:0x13`), so the BOOT hold is
+  needed.
 
 ## Mesh UDP protocol and MIDI emission
 

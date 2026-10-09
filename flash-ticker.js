@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 const { spawnSync } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 
 function listPorts() {
@@ -35,10 +36,22 @@ if (!port || arg === '--list') {
 }
 
 const root = __dirname;
+const tableFile = path.join(root, 'build', 'partition_table', 'partition-table.bin');
+
+function firstAppOffset(file) {
+  const table = fs.readFileSync(file);
+  for (let i = 0; i + 32 <= table.length; i += 32) {
+    if (table[i] === 0xaa && table[i + 1] === 0x50 && table[i + 2] === 0) {
+      return table.readUInt32LE(i + 4);
+    }
+  }
+  throw new Error(`no app partition in ${file}`);
+}
+
 const images = [
   ['0x1000', path.join(root, 'build', 'bootloader', 'bootloader.bin')],
-  ['0x8000', path.join(root, 'build', 'partition_table', 'partition-table.bin')],
-  ['0x10000', path.join(root, 'build', 'link-idf-example.bin')],
+  ['0x8000', tableFile],
+  ['0x' + firstAppOffset(tableFile).toString(16), path.join(root, 'build', 'link-idf-example.bin')],
 ];
 const args = ['-m', 'esptool', '--chip', 'esp32', '--port', port, '--baud', '921600', 'write-flash', '-z'];
 for (const [addr, file] of images) args.push(addr, file);
