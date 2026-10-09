@@ -31,6 +31,7 @@ static void igmp_join_link(esp_netif_t* netif) {
 static const char* TAG = "WIFI";
 static bool g_wifi_connected = false;
 static bool g_ap_active = false;
+static volatile bool g_sta_wanted = false;
 // Number of stations currently associated to our SoftAP. While >0 we are an
 // established host with real clients, so the supervisor must NOT run the periodic
 // off-channel rescan -- on a single-radio ESP32 that scan tunes away from the AP
@@ -50,6 +51,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t base,
         g_wifi_connected = false;
         wifi_event_sta_disconnected_t* ev = (wifi_event_sta_disconnected_t*)data;
         ESP_LOGW(TAG, "STA disconnected (reason=%d)", ev ? ev->reason : -1);
+        if (g_sta_wanted && !g_ap_active) esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* ev = (ip_event_got_ip_t*)data;
         ESP_LOGI(TAG, "IP: " IPSTR, IP2STR(&ev->ip_info.ip));
@@ -195,10 +197,12 @@ esp_err_t wifi_connect_sta(const char* ssid, const char* password) {
 
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &cfg));
     ESP_LOGI(TAG, "Connecting STA to '%s'", ssid);
+    g_sta_wanted = true;
     return esp_wifi_connect();
 }
 
 esp_err_t wifi_start_link_ap(const char* ssid) {
+    g_sta_wanted = false;
     if (!g_ap_netif) {
         g_ap_netif = esp_netif_create_default_wifi_ap();
     }
@@ -498,6 +502,7 @@ static void wifi_supervisor_task(void* arg) {
                 esp_wifi_connect();
             } else {
                 ESP_LOGW(TAG, "STA down past %d tries -- host '%s' disappeared, re-hosting", RECONNECT_TRIES, ssid);
+                g_sta_wanted = false;
                 esp_wifi_disconnect();
                 esp_wifi_stop();
                 g_wifi_started = false; // driver stopped; next start() must actually run
