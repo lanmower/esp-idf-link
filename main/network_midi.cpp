@@ -5,8 +5,6 @@
 #include "nvs_flash.h"
 #include <cstring>
 #include <algorithm>
-#include <new>
-#include <stdio.h>
 #include <sys/stat.h>
 #include <dirent.h>
 
@@ -14,50 +12,21 @@ static const char* TAG = "NETWORK_MIDI";
 static httpd_handle_t g_server = nullptr;
 static char g_device_ip[16] = {0};
 
-static const char* kLoopsDir = "/spiffs/loops";
-static const char* kUploadPrefix = "/upload/";
-
-static bool is_single_clip_name(const char* name) {
-    if (name[0] == '\0') {
-        return false;
-    }
-    if (strchr(name, '/') != nullptr) {
-        return false;
-    }
-    return strcmp(name, ".") != 0 && strcmp(name, "..") != 0;
-}
-
-static esp_err_t upload_abort(httpd_req_t* req, const char* filepath, const char* reason) {
-    ESP_LOGE(TAG, "Upload aborted: %s", reason);
-    remove(filepath);
-    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, reason);
-    return ESP_FAIL;
-}
-
 static esp_err_t upload_handler(httpd_req_t* req) {
     ESP_LOGI(TAG, "Received file upload request");
 
     const char* filename = nullptr;
-    if (strncmp(req->uri, kUploadPrefix, strlen(kUploadPrefix)) == 0) {
-        filename = req->uri + strlen(kUploadPrefix);
+    if (strlen(req->uri) > 8) {
+        filename = req->uri + 8;
     }
 
-    if (!filename || !is_single_clip_name(filename)) {
+    if (!filename || strlen(filename) == 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Filename required");
         return ESP_FAIL;
     }
 
     char filepath[512];
-    int path_len = snprintf(filepath, sizeof(filepath), "%s/%s", kLoopsDir, filename);
-    if (path_len < 0 || path_len >= (int)sizeof(filepath)) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Filename too long");
-        return ESP_FAIL;
-    }
-
-    if (req->content_len == 0) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
-        return ESP_FAIL;
-    }
+    snprintf(filepath, sizeof(filepath), "/spiffs/loops/%s", filename);
 
     FILE* f = fopen(filepath, "wb");
     if (!f) {
@@ -67,35 +36,20 @@ static esp_err_t upload_handler(httpd_req_t* req) {
     }
 
     const int buf_size = 4096;
-    char* buf = new (std::nothrow) char[buf_size];
-    if (!buf) {
-        fclose(f);
-        return upload_abort(req, filepath, "Out of memory");
-    }
-
+    char* buf = new char[buf_size];
     int received = 0;
-    bool complete = true;
 
-    while ((size_t)received < req->content_len) {
-        int want = std::min(buf_size, (int)(req->content_len - (size_t)received));
-        int read = httpd_req_recv(req, buf, want);
+    while (received < req->content_len) {
+        int read = httpd_req_recv(req, buf, std::min(buf_size, (int)(req->content_len - received)));
         if (read <= 0) {
-            complete = false;
             break;
         }
-        if (fwrite(buf, 1, (size_t)read, f) != (size_t)read) {
-            complete = false;
-            break;
-        }
+        fwrite(buf, 1, read, f);
         received += read;
     }
 
     fclose(f);
     delete[] buf;
-
-    if (!complete) {
-        return upload_abort(req, filepath, "Incomplete upload");
-    }
 
     ESP_LOGI(TAG, "File saved: %s (%d bytes)", filepath, received);
 
@@ -104,8 +58,6 @@ static esp_err_t upload_handler(httpd_req_t* req) {
 }
 
 static esp_err_t info_handler(httpd_req_t* req) {
-    get_device_ip();
-
     char response[256];
     snprintf(response, sizeof(response),
         "{\"device_ip\":\"%s\",\"device_name\":\"ESP32-Link\",\"version\":\"1.0\"}",
@@ -168,10 +120,6 @@ static void get_device_ip() {
 }
 
 void network_midi_init() {
-    if (g_server) {
-        return;
-    }
-
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 8080;
     config.max_uri_handlers = 8;
