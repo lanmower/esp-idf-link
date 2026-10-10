@@ -178,7 +178,7 @@ def main():
     if missing:
         raise SystemExit("missing image(s): %s" % ", ".join(missing))
 
-    argv = ["--before", "no-reset", "--after", "no-reset", "--baud", args.baud]
+    argv = ["--before", "no-reset", "--after", "no-reset-stub", "--baud", args.baud]
     if args.no_stub:
         argv.append("--no-stub")
     argv.append("write-flash")
@@ -186,12 +186,17 @@ def main():
         argv += [off, path]
     print("=== flashing: %s ===" % " ".join(argv[6:]), flush=True)
     import esptool
+    flashed = True
     try:
         esptool.main(argv, esp=esp)
-    except SystemExit as e:
-        print("esptool exited %s" % e, flush=True)
+    except BaseException as e:
+        flashed = False
+        print("  esptool raised %s: %s" % (type(e).__name__, e), flush=True)
 
     print("=== booting the new firmware (EN pulse, IO0 high) ===", flush=True)
+    if not flashed:
+        print("  esptool did not finish: the device may still hold the old image",
+              flush=True)
     txt = boot_app(port)
     for l in txt.split("\n"):
         if "boot:" in l or "MAIN:" in l or "WIFI:" in l:
