@@ -74,9 +74,9 @@ int find_secondary_tapped_pad(int primary_index, const bool pad_pressed_this_tic
 void handle_sidechain_adjust_pots(int pot1_delta, int pot2_delta, bool& pot1_used, bool& pot2_used) {
     if (!g_current_synth) return;
 
-    _update_pot_param(s_current_sidechain_depth, pot1_delta, 0, 127, "SC Duck Depth", pot1_used);
+    _update_pot_param(s_current_sidechain_depth, pot1_delta, SIDECHAIN_DEPTH_MIN, SIDECHAIN_DEPTH_MAX, "SC Duck Depth", pot1_used);
 
-    _update_pot_param(s_current_sidechain_sheer, pot2_delta, 0, 127, "SC Curve", pot2_used);
+    _update_pot_param(s_current_sidechain_sheer, pot2_delta, SIDECHAIN_SHEER_MIN, SIDECHAIN_SHEER_MAX, "SC Curve", pot2_used);
 
     if (g_synth_type == SYNTH_MININOVA) {
         SynthMininova* mininova = static_cast<SynthMininova*>(g_current_synth);

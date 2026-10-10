@@ -121,35 +121,14 @@ void handle_sidechain_active(const ableton::Link::SessionState& state, const std
             const auto& pattern = SIDECHAIN_PATTERNS[s_current_sidechain_pattern_index];
             bool gate_on = pattern[current_step_index];
 
-            uint8_t min_level_target = 127 - clamp_value(depth, 0, 127);
-            uint8_t sheer_param = clamp_value(sheer, 0, 127);
+            uint8_t min_level_target = 127 - clamp_value(depth, SIDECHAIN_DEPTH_MIN, SIDECHAIN_DEPTH_MAX);
+            uint8_t sheer_param = clamp_value(sheer, SIDECHAIN_SHEER_MIN, SIDECHAIN_SHEER_MAX);
 
             float target_level_float = gate_on ? 127.0f : (float)min_level_target;
 
-            float attack_alpha, release_alpha;
+            float smoothing_alpha = sheerSmoothingAlpha(sheer);
 
-            if (gate_on) {
-                if (sheer_param < 32) {
-                    release_alpha = 0.01f + (sheer_param / 32.0f) * 0.09f;
-                } else if (sheer_param < 96) {
-                    release_alpha = 0.1f + ((sheer_param - 32) / 64.0f) * 0.3f;
-                } else {
-                    release_alpha = 0.4f + ((sheer_param - 96) / 31.0f) * 0.59f;
-                }
-
-                s_current_smoothed_level = release_alpha * target_level_float + (1.0f - release_alpha) * s_current_smoothed_level;
-
-            } else {
-                if (sheer_param < 32) {
-                    attack_alpha = 0.01f + (sheer_param / 32.0f) * 0.09f;
-                } else if (sheer_param < 96) {
-                    attack_alpha = 0.1f + ((sheer_param - 32) / 64.0f) * 0.3f;
-                } else {
-                    attack_alpha = 0.4f + ((sheer_param - 96) / 31.0f) * 0.59f;
-                }
-
-                s_current_smoothed_level = attack_alpha * target_level_float + (1.0f - attack_alpha) * s_current_smoothed_level;
-            }
+            s_current_smoothed_level = smoothing_alpha * target_level_float + (1.0f - smoothing_alpha) * s_current_smoothed_level;
 
             uint8_t final_level = (uint8_t)(s_current_smoothed_level + 0.5f);
             final_level = clamp_value(final_level, (uint8_t)0, (uint8_t)127);
@@ -157,7 +136,7 @@ void handle_sidechain_active(const ableton::Link::SessionState& state, const std
             ESP_LOGV(TAG_SC, "SC Pattern %d, Step %d: Gate=%s, Target=%d, MinLevel=%d, Sheer=%d, Alpha=%.2f, Smoothed=%.1f, Final=%d",
                      s_current_sidechain_pattern_index, current_step_index, gate_on ? "ON" : "OFF",
                      (int)target_level_float, min_level_target,
-                     sheer_param, gate_on ? release_alpha : attack_alpha, s_current_smoothed_level, final_level);
+                     sheer_param, smoothing_alpha, s_current_smoothed_level, final_level);
 
             g_current_synth->setSidechainLevel(final_level);
 
