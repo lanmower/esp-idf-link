@@ -151,6 +151,7 @@ static void status_responder_task(void*) {
             (double)LINK_QUANTUM,
             wifi_is_ap_active() ? "true" : "false",
             (unsigned)ms.fired, (long long)ms.last, (long long)ms.worst, ms.mean, ms.rms);
+        if (len > (int)sizeof reply) len = (int)sizeof reply;
         sendto(rs, reply, len, 0, (struct sockaddr*)&src, sl);
     }
 }
@@ -363,10 +364,12 @@ static void metronome_accent_for_beat(double beat, uint32_t& freq, int& ms) {
 static void arm_event_timer(int64_t dueEspUs) {
     int64_t delta = dueEspUs - esp_timer_get_time();
     if (delta < 0) delta = 0;
-    esp_timer_stop(s_evt_timer);
-    if (esp_timer_start_once(s_evt_timer, static_cast<uint64_t>(delta)) != ESP_OK) return;
     s_evt_due_us = dueEspUs;
     s_evt_armed  = true;
+    esp_timer_stop(s_evt_timer);
+    if (esp_timer_start_once(s_evt_timer, static_cast<uint64_t>(delta)) != ESP_OK) {
+        s_evt_armed = false;
+    }
 }
 
 static void schedule_next_event(const ableton::Link::SessionState& state) {
@@ -475,12 +478,14 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
                  (unsigned)ms.fired, (long long)ms.last, (long long)ms.worst, ms.mean, ms.rms);
     }
 
+    QuantumInfo quantumInfo = detectQuantumBoundary(state, time);
+
     if (is_connected != was_connected) {
         ESP_LOGI(TAG_LINK, "Link peers changed: %d", g_link->numPeers());
         if (is_connected) {
-            auto qi = detectQuantumBoundary(state, time);
             ESP_LOGI(TAG_LINK, "Link connected -- beat=%.3f phase=%.3f quantum=%d phrase=%d",
-                     qi.sessionBeat, qi.phaseWithinQuantum, qi.currentQuantumNumber, qi.currentPhraseNumber);
+                     quantumInfo.sessionBeat, quantumInfo.phaseWithinQuantum,
+                     quantumInfo.currentQuantumNumber, quantumInfo.currentPhraseNumber);
             s_next_pulse_valid = false;
             s_pending_realign = true;
         } else {
@@ -492,8 +497,6 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
         }
         was_connected = is_connected;
     }
-
-    QuantumInfo quantumInfo = detectQuantumBoundary(state, time);
 
     const double sessionBeat = quantumInfo.sessionBeat;
     const bool crossedPhraseBoundary = quantumInfo.crossedPhraseBoundary;

@@ -30,10 +30,10 @@ void initialize_inputs() {
 
 bool read_inputs(InputEvent& current_event)
 {
-    int current_pot_val[NUM_POTS];
-    int current_stable_center[NUM_POTS];
-    bool current_pad_touched[NUM_TOUCH_PADS];
-    bool current_pad_pressed_this_tick[NUM_TOUCH_PADS];
+    int current_pot_val[NUM_POTS] = {0, 0};
+    int current_stable_center[NUM_POTS] = {0, 0};
+    bool current_pad_touched[NUM_TOUCH_PADS] = {false, false, false, false};
+    bool current_pad_pressed_this_tick[NUM_TOUCH_PADS] = {false, false, false, false};
 
     current_event.timestamp_us = esp_timer_get_time();
 

@@ -93,6 +93,13 @@ void init_adc()
     ESP_LOGI(TAG, "ADC initialized with max attenuation (12dB) for full 0-3.3V range, 12-bit resolution (0-4095)");
 }
 
+static const touch_pad_t kTouchPads[NUM_TOUCH_PADS] = {
+    (touch_pad_t)TOUCH_PAD_1,
+    (touch_pad_t)TOUCH_PAD_ARP,
+    (touch_pad_t)TOUCH_PAD_REV,
+    (touch_pad_t)TOUCH_PAD_FILT
+};
+
 void init_touch_pads()
 {
     ESP_LOGI(TAG, "Initializing touch pads with legacy touch_pad API...");
@@ -101,16 +108,10 @@ void init_touch_pads()
     ESP_ERROR_CHECK(touch_pad_set_voltage(TOUCH_HVOLT_2V7, TOUCH_LVOLT_0V5, TOUCH_HVOLT_ATTEN_1V));
     ESP_ERROR_CHECK(touch_pad_filter_start(10));
     ESP_ERROR_CHECK(touch_pad_set_fsm_mode(TOUCH_FSM_MODE_TIMER));
-    const touch_pad_t touch_pads[NUM_TOUCH_PADS] = {
-        (touch_pad_t)TOUCH_PAD_1,
-        (touch_pad_t)TOUCH_PAD_ARP,
-        (touch_pad_t)TOUCH_PAD_REV,
-        (touch_pad_t)TOUCH_PAD_FILT
-    };
     static uint16_t pad_base_values[NUM_TOUCH_PADS] = {0};
     for (int i = 0; i < NUM_TOUCH_PADS; i++) {
-        ESP_ERROR_CHECK(touch_pad_config(touch_pads[i], TOUCH_THRESHOLD));
-        ESP_ERROR_CHECK(touch_pad_set_cnt_mode(touch_pads[i], TOUCH_PAD_SLOPE_7, TOUCH_PAD_TIE_OPT_HIGH));
+        ESP_ERROR_CHECK(touch_pad_config(kTouchPads[i], TOUCH_THRESHOLD));
+        ESP_ERROR_CHECK(touch_pad_set_cnt_mode(kTouchPads[i], TOUCH_PAD_SLOPE_7, TOUCH_PAD_TIE_OPT_HIGH));
     }
     vTaskDelay(pdMS_TO_TICKS(50));
     ESP_LOGI(TAG, "Calibrating touch pads...");
@@ -119,7 +120,7 @@ void init_touch_pads()
         uint32_t sum = 0;
         uint16_t value = 0;
         for (int j = 0; j < num_samples; j++) {
-            if (touch_pad_read_filtered(touch_pads[i], &value) == ESP_OK) {
+            if (touch_pad_read_filtered(kTouchPads[i], &value) == ESP_OK) {
                 sum += value;
             }
             vTaskDelay(pdMS_TO_TICKS(10));
@@ -127,7 +128,7 @@ void init_touch_pads()
         pad_base_values[i] = sum / num_samples;
         uint16_t custom_threshold = (uint16_t)(pad_base_values[i] * TOUCH_CALIBRATION_THRESHOLD_RATIO);
         uint16_t final_threshold = (custom_threshold < TOUCH_THRESHOLD) ? custom_threshold : TOUCH_THRESHOLD;
-        ESP_ERROR_CHECK(touch_pad_config(touch_pads[i], final_threshold));
+        ESP_ERROR_CHECK(touch_pad_config(kTouchPads[i], final_threshold));
         ESP_LOGI(TAG, "TouchPad[%d] calibrated: baseline=%u, threshold=%u",
                 i, pad_base_values[i], final_threshold);
     }
@@ -196,17 +197,10 @@ void set_buzzer_state(bool on, uint32_t frequency)
 }
 
 esp_err_t read_touch_pad(uint8_t pad_num, uint16_t* value) {
-    esp_err_t ret = ESP_OK;
-    const touch_pad_t touch_pads[NUM_TOUCH_PADS] = {
-        (touch_pad_t)TOUCH_PAD_1,
-        (touch_pad_t)TOUCH_PAD_ARP,
-        (touch_pad_t)TOUCH_PAD_REV,
-        (touch_pad_t)TOUCH_PAD_FILT
-    };
     if (pad_num >= NUM_TOUCH_PADS) {
         return ESP_ERR_INVALID_ARG;
     }
-    ret = touch_pad_read_filtered(touch_pads[pad_num], value);
+    esp_err_t ret = touch_pad_read_filtered(kTouchPads[pad_num], value);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Error reading touch pad %d: %s", pad_num, esp_err_to_name(ret));
         return ret;
@@ -245,6 +239,11 @@ bool read_controls(
 {
     bool changed = false;
 
+    for (int i = 0; i < NUM_TOUCH_PADS; ++i) {
+        pad_touched[i] = last_pad_touched[i];
+        pad_pressed_this_tick[i] = false;
+    }
+
     static float smoothed_pot1_raw = -1.0f;
     static float smoothed_pot2_raw = -1.0f;
     const float EMA_ALPHA = 0.08f;
@@ -253,28 +252,34 @@ bool read_controls(
     const float STABLE_CENTER_ALPHA = 0.01f;
 
     int pot1_raw = 0, pot2_raw = 0;
-    ESP_ERROR_CHECK(adc_oneshot_read(s_adc_handle, POT_ADC_CHANNEL_1, &pot1_raw));
-    ESP_ERROR_CHECK(adc_oneshot_read(s_adc_handle, POT_ADC_CHANNEL_2, &pot2_raw));
+    const bool pot1_read_ok = s_adc_handle != nullptr
+        && adc_oneshot_read(s_adc_handle, POT_ADC_CHANNEL_1, &pot1_raw) == ESP_OK;
+    const bool pot2_read_ok = s_adc_handle != nullptr
+        && adc_oneshot_read(s_adc_handle, POT_ADC_CHANNEL_2, &pot2_raw) == ESP_OK;
+    if (!pot1_read_ok || !pot2_read_ok) {
+        ESP_LOGW(TAG, "ADC read failed (ch1=%s ch2=%s) -- reusing last smoothed pot values",
+                 pot1_read_ok ? "ok" : "fail", pot2_read_ok ? "ok" : "fail");
+    }
 
-    if (smoothed_pot1_raw < 0.0f)
-    {
-        smoothed_pot1_raw = (float)pot1_raw;
-        stable_center_pot1_raw = (float)pot1_raw;
+    if (pot1_read_ok) {
+        if (smoothed_pot1_raw < 0.0f) {
+            smoothed_pot1_raw = (float)pot1_raw;
+            stable_center_pot1_raw = (float)pot1_raw;
+        } else {
+            smoothed_pot1_raw = EMA_ALPHA * (float)pot1_raw + (1.0f - EMA_ALPHA) * smoothed_pot1_raw;
+            stable_center_pot1_raw = STABLE_CENTER_ALPHA * (float)pot1_raw
+                                   + (1.0f - STABLE_CENTER_ALPHA) * stable_center_pot1_raw;
+        }
     }
-    else
-    {
-        smoothed_pot1_raw = EMA_ALPHA * (float)pot1_raw + (1.0f - EMA_ALPHA) * smoothed_pot1_raw;
-        stable_center_pot1_raw = STABLE_CENTER_ALPHA * (float)pot1_raw + (1.0f - STABLE_CENTER_ALPHA) * stable_center_pot1_raw;
-    }
-    if (smoothed_pot2_raw < 0.0f)
-    {
-        smoothed_pot2_raw = (float)pot2_raw;
-        stable_center_pot2_raw = (float)pot2_raw;
-    }
-    else
-    {
-        smoothed_pot2_raw = EMA_ALPHA * (float)pot2_raw + (1.0f - EMA_ALPHA) * smoothed_pot2_raw;
-        stable_center_pot2_raw = STABLE_CENTER_ALPHA * (float)pot2_raw + (1.0f - STABLE_CENTER_ALPHA) * stable_center_pot2_raw;
+    if (pot2_read_ok) {
+        if (smoothed_pot2_raw < 0.0f) {
+            smoothed_pot2_raw = (float)pot2_raw;
+            stable_center_pot2_raw = (float)pot2_raw;
+        } else {
+            smoothed_pot2_raw = EMA_ALPHA * (float)pot2_raw + (1.0f - EMA_ALPHA) * smoothed_pot2_raw;
+            stable_center_pot2_raw = STABLE_CENTER_ALPHA * (float)pot2_raw
+                                   + (1.0f - STABLE_CENTER_ALPHA) * stable_center_pot2_raw;
+        }
     }
 
     int pot1_smoothed_int = (int)(smoothed_pot1_raw + 0.5f);
@@ -302,7 +307,6 @@ bool read_controls(
         changed = true;
     }
 
-    static int log_counter = 0;
     static uint16_t touch_values[NUM_TOUCH_PADS] = {0};
     const int arp_pad_idx = 1;
     uint16_t arp_touch_value;
@@ -344,9 +348,6 @@ bool read_controls(
         } else {
             pad_touched[i] = last_pad_touched[i];
         }
-    }
-    if (++log_counter >= 1000) {
-        log_counter = 0;
     }
     if (pad_touched[0] && pad_touched[1] && pad_touched[2] && pad_touched[3]) {
         ESP_LOGI(TAG, "ALL PADS HELD: [%d,%d,%d,%d] (values: [%u,%u,%u,%u])",
@@ -405,6 +406,10 @@ void update_input_state(InputEvent& event)
     static uint16_t consecutive_released[NUM_TOUCH_PADS] = {0};
     const uint16_t DEBOUNCE_COUNT = 2;
     for (int i = 0; i < NUM_TOUCH_PADS; i++) {
+        event.pad_held[i] = last_touch_state[i];
+        event.pad_pressed_this_tick[i] = false;
+    }
+    for (int i = 0; i < NUM_TOUCH_PADS; i++) {
         uint16_t touch_value;
         if (read_touch_pad(i, &touch_value) == ESP_OK) {
             all_touch_values[i] = touch_value;
@@ -443,6 +448,11 @@ void update_input_state(InputEvent& event)
     static int adc_log_counter = 0;
     static uint32_t last_pot_values[NUM_POTS] = {0};
     static uint32_t last_smoothed_pot_values[NUM_POTS] = {0};
+    for (int i = 0; i < NUM_POTS; i++) {
+        event.pot_moved[i] = false;
+        event.pot_delta[i] = 0;
+        event.pot_value[i] = static_cast<int>(last_smoothed_pot_values[i]);
+    }
     for (int i = 0; i < NUM_POTS; i++) {
         int adc_reading;
         if (read_adc(i, &adc_reading) == ESP_OK) {
