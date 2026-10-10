@@ -23,7 +23,7 @@ static constexpr int   kTurnaroundTailSteps    = 8;
 static constexpr float kTurnaroundStartStep    = kStepsPerPhrase - kTurnaroundTailSteps;
 
 static constexpr int   kOctaveSemitones        = 12;
-static constexpr int   kMaxSemitonesAboveRoot  = 15;
+static constexpr int   kMaxSemitonesAboveRoot  = bli::kRegisterSpan;
 static constexpr int   kMaxSemitonesBelowRoot  = 12;
 static constexpr int   kFifthScaleDegreeIndex  = 4;
 static constexpr int   kFifthSemitones         = 7;
@@ -245,7 +245,7 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
         int barInCell = barInSec % kBarsPerChordCell;
 
         const int* secProg = kProgs[secProgs[sec]];
-        int rootOffset = secProg[barInCell];
+        int rootSemitoneOffset = secProg[barInCell];
 
         char part;
         if (sec == kFirstSection || sec == kLastSection) {
@@ -263,7 +263,7 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
 
         for (int i = 0; i < bli::kStepsPerBar; i++) {
             if (motif[i].note < 0) continue;
-            int note = motif[i].note + rootOffset;
+            int note = motif[i].note + rootSemitoneOffset;
             note = std::max(0, std::min(127, note));
 
             float tsSteps = motif[i].tsBeats * kStepsPerBeat;
@@ -283,8 +283,8 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
     int turnaroundRate = (m_dials.voiceArtic > kArticulatedTurnaroundThreshold)
                          ? kFrequentTurnaroundPeriodPhrases : kSparseTurnaroundPeriodPhrases;
     if (m_phraseCount % turnaroundRate == 0) {
-        int baseOffset = prog[(kBarsPerSection - 1) % kBarsPerChordCell];
-        int tBase = std::max(0, std::min(127, kRootNoteE2 + baseOffset));
+        int baseSemitoneOffset = prog[(kBarsPerSection - 1) % kBarsPerChordCell];
+        int tBase = std::max(0, std::min(127, kRootNoteE2 + baseSemitoneOffset));
         turnInterpreted(tBase, m_scaleIdx);
     }
 

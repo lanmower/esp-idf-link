@@ -10,8 +10,9 @@ constexpr int kChordFifth = 2;
 constexpr int kChordSeventh = 3;
 
 constexpr int kNumScales = 9;
+constexpr int kScaleRowWidth = 7;
 extern const int kScaleLens[kNumScales];
-extern const int kScales[kNumScales][7];
+extern const int kScales[kNumScales][kScaleRowWidth];
 const char* scaleName(int scaleIdx);
 int scaleDegree(int scaleIdx, int degree);
 void chordToneIntervals(int scaleIdx, int out[4]);
@@ -61,6 +62,7 @@ struct RngSource {
 };
 
 constexpr int kStepsPerBar = 16;
+constexpr int kRegisterSpan = 15;
 
 void generateMotif(Step m[kStepsPerBar], int root, int scaleIdx,
                    const Dials& dials, RngSource& rng);
