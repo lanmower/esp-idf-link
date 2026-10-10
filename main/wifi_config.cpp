@@ -17,14 +17,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-// Ableton Link peer discovery multicast group (224.76.78.75)
-static const ip4_addr_t LINK_MCAST = { .addr = PP_HTONL(LWIP_MAKEU32(224, 76, 78, 75)) };
+static const ip4_addr_t LINK_DISCOVERY_MULTICAST_GROUP = { .addr = PP_HTONL(LWIP_MAKEU32(224, 76, 78, 75)) };
 
 static void igmp_join_link(esp_netif_t* netif) {
     if (!netif) return;
     struct netif* lwip_netif = (struct netif*)esp_netif_get_netif_impl(netif);
     if (!lwip_netif) return;
-    err_t err = igmp_joingroup_netif(lwip_netif, &LINK_MCAST);
+    err_t err = igmp_joingroup_netif(lwip_netif, &LINK_DISCOVERY_MULTICAST_GROUP);
     ESP_LOGI("WIFI", "IGMP join 224.76.78.75: %s", err == ERR_OK ? "ok" : "failed");
 }
 
@@ -32,16 +31,21 @@ static const char* TAG = "WIFI";
 static bool g_wifi_connected = false;
 static bool g_ap_active = false;
 static volatile bool g_sta_wanted = false;
-// Number of stations currently associated to our SoftAP. While >0 we are an
-// established host with real clients, so the supervisor must NOT run the periodic
-// off-channel rescan -- on a single-radio ESP32 that scan tunes away from the AP
-// channel and drops our own clients (the STA-flap that kept Link at 0 peers).
 static volatile int g_ap_client_count = 0;
-// Associated-station IPs, populated from IP_EVENT_AP_STAIPASSIGNED (no version-fragile
-// sta_list header needed). The Link relay unicast-fans-out to these because the SoftAP
-// does not carry multicast host<->station. 0 = empty slot.
+
+static bool ap_has_associated_stations() {
+    return g_ap_client_count > 0;
+}
+
 #define MAX_AP_STA_IPS 8
+static const uint32_t AP_STA_IP_SLOT_EMPTY = 0;
 static volatile uint32_t g_ap_sta_ips[MAX_AP_STA_IPS] = {0};
+
+static void remember_ap_sta_ip(uint32_t ip) {
+    for (int i = 0; i < MAX_AP_STA_IPS; i++) if (g_ap_sta_ips[i] == ip) return;
+    for (int i = 0; i < MAX_AP_STA_IPS; i++) if (g_ap_sta_ips[i] == AP_STA_IP_SLOT_EMPTY) { g_ap_sta_ips[i] = ip; return; }
+}
+
 static esp_netif_t* g_sta_netif = NULL;
 static esp_netif_t* g_ap_netif = NULL;
 
@@ -60,27 +64,20 @@ static void wifi_event_handler(void* arg, esp_event_base_t base,
         ESP_LOGI(TAG, "AP started");
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STACONNECTED) {
         wifi_event_ap_staconnected_t* ev = (wifi_event_ap_staconnected_t*)data;
-        g_ap_client_count = g_ap_client_count + 1; // explicit (volatile ++ is deprecated in C++20+)
+        g_ap_client_count = g_ap_client_count + 1;
         ESP_LOGI(TAG, "Client joined: " MACSTR " (clients=%d)", MAC2STR(ev->mac), g_ap_client_count);
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STADISCONNECTED) {
         wifi_event_ap_stadisconnected_t* ev = (wifi_event_ap_stadisconnected_t*)data;
-        if (g_ap_client_count > 0) g_ap_client_count = g_ap_client_count - 1; // explicit (volatile -- deprecated)
-        // We only have the MAC here, not the IP; when the last client leaves, clear the
-        // whole IP table (a surviving client re-registers on its next DHCP assignment).
+        if (g_ap_client_count > 0) g_ap_client_count = g_ap_client_count - 1;
         if (g_ap_client_count == 0) {
-            for (int i = 0; i < MAX_AP_STA_IPS; i++) g_ap_sta_ips[i] = 0;
+            for (int i = 0; i < MAX_AP_STA_IPS; i++) g_ap_sta_ips[i] = AP_STA_IP_SLOT_EMPTY;
         }
         ESP_LOGI(TAG, "Client left: " MACSTR " (clients=%d)", MAC2STR(ev->mac), g_ap_client_count);
     } else if (base == IP_EVENT && id == IP_EVENT_AP_STAIPASSIGNED) {
         ip_event_ap_staipassigned_t* ev = (ip_event_ap_staipassigned_t*)data;
         uint32_t ip = ev->ip.addr;
         ESP_LOGI(TAG, "Station got IP: " IPSTR, IP2STR(&ev->ip));
-        // Record the station IP for the Link relay unicast fan-out (dedup + first free slot).
-        bool present = false;
-        for (int i = 0; i < MAX_AP_STA_IPS; i++) if (g_ap_sta_ips[i] == ip) { present = true; break; }
-        if (!present) {
-            for (int i = 0; i < MAX_AP_STA_IPS; i++) if (g_ap_sta_ips[i] == 0) { g_ap_sta_ips[i] = ip; break; }
-        }
+        remember_ap_sta_ip(ip);
     }
 }
 
@@ -95,13 +92,6 @@ esp_err_t wifi_config_init() {
 
 static bool g_wifi_started = false;
 
-// Ensure the driver is started in a SCANNABLE mode without tearing down an active AP.
-// esp_wifi_scan_start fails unless the driver is started AND the mode includes STA, so:
-//  - create the STA netif once (no leak across rescans);
-//  - if the AP is up, use APSTA (keep hosting while we scan); else STA;
-//  - call esp_wifi_start() exactly once (tracked), since the mode defaults to STA after
-//    esp_wifi_init but the driver is NOT started yet -- the original bug skipped start()
-//    because get_mode already returned STA, so the very first scan failed.
 static void ensure_sta_started() {
     if (!g_sta_netif) {
         g_sta_netif = esp_netif_create_default_wifi_sta();
@@ -113,17 +103,11 @@ static void ensure_sta_started() {
     }
     if (!g_wifi_started) {
         esp_err_t err = esp_wifi_start();
-        if (err == ESP_OK || err == ESP_ERR_WIFI_CONN /* already started */) {
-            g_wifi_started = true;
-        } else {
+        const bool start_tolerated = (err == ESP_OK || err == ESP_ERR_WIFI_CONN);
+        if (!start_tolerated) {
             ESP_LOGW(TAG, "esp_wifi_start: %s", esp_err_to_name(err));
-            // Treat ESP_ERR_WIFI_NOT_STOPPED etc. as already-running.
-            g_wifi_started = true;
         }
-        // Disable modem power-save: with WIFI_PS_MIN_MODEM (the default) the radio
-        // sleeps between DTIM beacons and multicast frames are buffered/dropped, which
-        // delayed Ableton Link discovery (all multicast on 224.76.78.75:20808) by
-        // minutes. These are USB/mains-powered devices, so PS_NONE has no downside.
+        g_wifi_started = true;
         esp_err_t pserr = esp_wifi_set_ps(WIFI_PS_NONE);
         if (pserr != ESP_OK) ESP_LOGW(TAG, "esp_wifi_set_ps: %s", esp_err_to_name(pserr));
         else ESP_LOGI(TAG, "WiFi power-save disabled (reliable multicast)");
@@ -134,10 +118,6 @@ void wifi_get_sta_mac(uint8_t out_mac[6]) {
     esp_read_mac(out_mac, ESP_MAC_WIFI_STA);
 }
 
-// Scan for `ssid`. esp_wifi_scan_start(.,true) blocks until the scan completes, so the
-// AP count/records read immediately after are valid. With cfg.ssid set, the driver
-// filters to matching SSIDs. Returns match count; fills out_best_bssid with the lowest
-// BSSID among matches (or leaves it untouched on zero matches).
 int wifi_scan_best_bssid(const char* ssid, uint8_t out_best_bssid[6]) {
     ensure_sta_started();
 
@@ -159,7 +139,6 @@ int wifi_scan_best_bssid(const char* ssid, uint8_t out_best_bssid[6]) {
         return 0;
     }
 
-    // Pull records to inspect BSSIDs for the tie-break.
     static const uint16_t MAX_RECORDS = 12;
     wifi_ap_record_t records[MAX_RECORDS];
     uint16_t n = (count < MAX_RECORDS) ? count : MAX_RECORDS;
@@ -217,8 +196,6 @@ esp_err_t wifi_start_link_ap(const char* ssid) {
     cfg.ap.beacon_interval = 100;
 
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &cfg));
-    // The driver may already be started (a prior scan called esp_wifi_start). Starting
-    // again returns an error we tolerate; only the mode/config change matters here.
     if (!g_wifi_started) {
         esp_err_t serr = esp_wifi_start();
         if (serr != ESP_OK) ESP_LOGW(TAG, "esp_wifi_start (AP): %s", esp_err_to_name(serr));
@@ -234,7 +211,7 @@ esp_err_t wifi_start_link_ap(const char* ssid) {
     ESP_ERROR_CHECK(esp_netif_dhcps_start(g_ap_netif));
 
     g_ap_active = true;
-    g_ap_client_count = 0; // fresh AP has no clients yet; STACONNECTED events count up
+    g_ap_client_count = 0;
     ESP_LOGI(TAG, "Link AP '%s' on ch6, 192.168.4.1, max 8 clients", ssid);
     igmp_join_link(g_ap_netif);
     return ESP_OK;
@@ -244,45 +221,27 @@ void wifi_join_link_multicast() {
     igmp_join_link(g_sta_netif);
 }
 
-// Called by Ableton Link's Socket wrapper (platforms/asio/Socket.hpp) for EVERY
-// multicast discovery datagram it sends to 224.76.78.75:20808. The ESP32 SoftAP does
-// not carry multicast between the host and its stations, so we ALSO deliver a UNICAST
-// copy of the exact bytes across that boundary (unicast DOES cross -- DHCP works). Once
-// discovery crosses, Link's own unicast Ping/Pong clock measurement to each peer's real
-// advertised IP proceeds natively. Hub topology, scales to N members:
-//   - AP host: unicast the packet to every associated station IP.
-//   - STA:     unicast the packet to the AP gateway (192.168.4.1), which then (as host)
-//              fans it out to the other stations.
-// dport is the Link multicast port (20808). Best-effort, non-blocking, fire-and-forget.
-// Total Link send() calls seen by the hook (witnessed from a normal task context to
-// avoid relying on ESP_LOGI from Link's pinned/privileged asio thread).
 volatile uint32_t g_link_send_hook_calls = 0;
 volatile uint32_t g_link_send_last_dstip = 0;
 volatile uint32_t g_link_send_last_dport = 0;
-// Counts ServiceRunner poll_one() iterations -- witnesses whether Link's discovery
-// io_service is actually being pumped (defined here, incremented in Context.hpp).
 volatile uint32_t g_link_pump_calls = 0;
-// Witness Link's interface scan (ScanIpIfAddrs): how many times it ran, how many
-// interface addresses it returned, and the last IP -- tells us whether Link found a
-// usable interface to broadcast discovery on.
 volatile uint32_t g_link_scan_calls = 0;
 volatile uint32_t g_link_scan_last_ip = 0;
 volatile uint32_t g_link_scan_last_count = 0;
-// Witness Link peer-gateway creation (PeerGateways.hpp): attempts vs successes vs
-// failures -- a gateway that fails to init (socket bind on the interface throws) means
-// discovery never broadcasts on that interface.
 volatile uint32_t g_link_gw_init_attempts = 0;
 volatile uint32_t g_link_gw_init_ok = 0;
 volatile uint32_t g_link_gw_init_fail = 0;
+
+static bool is_ipv4_multicast_dst(unsigned dstip) {
+    const uint8_t first_octet = dstip & 0xff;
+    return first_octet >= 224 && first_octet <= 239;
+}
 
 extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, unsigned dport, unsigned dstip) {
     g_link_send_hook_calls = g_link_send_hook_calls + 1;
     g_link_send_last_dstip = dstip;
     g_link_send_last_dport = dport;
-    // Only bridge multicast-destined packets (Link discovery). Unicast measurement to a
-    // peer's real IP already crosses the SoftAP natively and must NOT be re-forwarded.
-    uint8_t first = dstip & 0xff; // 224.x for multicast (224-239 => 0xE0-0xEF)
-    if (first < 224 || first > 239) return;
+    if (!is_ipv4_multicast_dst(dstip)) return;
 
     static int s_fwd_sock = -1;
     if (s_fwd_sock < 0) {
@@ -295,18 +254,16 @@ extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, u
 
     static int s_fwd_log = 0;
     if (g_ap_active) {
-        // Host -> every associated station.
         int sent = 0;
         for (int i = 0; i < MAX_AP_STA_IPS; i++) {
             uint32_t ip = g_ap_sta_ips[i];
-            if (ip == 0) continue;
+            if (ip == AP_STA_IP_SLOT_EMPTY) continue;
             dst.sin_addr.s_addr = ip;
             sendto(s_fwd_sock, data, len, 0, (struct sockaddr*)&dst, sizeof(dst));
             sent++;
         }
         if (s_fwd_log < 8) { ESP_LOGI(TAG, "LINK fwd(AP) %u bytes -> %d station(s)", len, sent); s_fwd_log++; }
     } else if (g_sta_netif) {
-        // Station -> AP gateway (the hub redistributes to other stations + its host Link).
         esp_netif_ip_info_t staip = {};
         if (esp_netif_get_ip_info(g_sta_netif, &staip) == ESP_OK && staip.gw.addr != 0) {
             dst.sin_addr.s_addr = staip.gw.addr;
@@ -316,16 +273,12 @@ extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, u
     }
 }
 
-// Relay Ableton Link multicast (224.76.78.75:20808) between AP clients.
-// Uses lwip raw PCB (raw_sendto_if_src) to preserve the original sender's
-// source IP, which Ableton Link requires for direct peer connections.
 static void link_multicast_relay_task(void*) {
     static const char* RELAY_TAG = "LINK_RELAY";
     static const char* MCAST_ADDR = "224.76.78.75";
     static const char* AP_ADDR    = "192.168.4.1";
     static const uint16_t LINK_PORT = 20808;
 
-    // Receive socket: join multicast on AP interface
     int rs = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (rs < 0) { ESP_LOGE(RELAY_TAG, "recv socket failed"); vTaskDelete(NULL); return; }
     int one = 1;
@@ -342,7 +295,6 @@ static void link_multicast_relay_task(void*) {
     inet_aton(AP_ADDR,    &mreq.imr_interface);
     setsockopt(rs, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
 
-    // Raw PCB for sending with original source IP preserved
     LOCK_TCPIP_CORE();
     struct raw_pcb* rpcb = raw_new(IPPROTO_UDP);
     UNLOCK_TCPIP_CORE();
@@ -354,7 +306,8 @@ static void link_multicast_relay_task(void*) {
     uint32_t ap_ip    = inet_addr(AP_ADDR);
     uint32_t mcast_ip = inet_addr(MCAST_ADDR);
 
-    static uint8_t payload[1472]; // MTU(1500) - IP(20) - UDP(8)
+    static const uint16_t MAX_UDP_PAYLOAD_BYTES = 1500 - 20 - 8;
+    static uint8_t payload[MAX_UDP_PAYLOAD_BYTES];
 
     int rx_log = 0;
 
@@ -366,29 +319,12 @@ static void link_multicast_relay_task(void*) {
         int n = recvfrom(rs, payload, sizeof(payload), 0, (struct sockaddr*)&src, &sl);
         if (n <= 0) continue;
 
-        // Two kinds of inbound packets now arrive here:
-        //  - from a STATION (unicast-forwarded by its bridge): redistribute to the host
-        //    Link socket AND every OTHER station.
-        //  - from OURSELVES (the host's own Link multicast, looped back): fan out to the
-        //    stations only (they cannot hear our multicast across the SoftAP). Do NOT
-        //    re-multicast our own packet (it would loop back here forever) and do not
-        //    re-deliver it to our own Link socket (it already has it).
         bool from_self = (src.sin_addr.s_addr == ap_ip);
 
-        // Self-populate the station-IP table from real forwarded traffic, so the Link
-        // send-hook fan-out works even when IP_EVENT_AP_STAIPASSIGNED did not fire (e.g.
-        // a station reused a cached DHCP lease). Any non-self source that reaches this
-        // AP socket is an associated station forwarding its Link discovery to us.
         if (!from_self && src.sin_addr.s_addr != 0) {
-            uint32_t sip = src.sin_addr.s_addr;
-            bool known = false;
-            for (int i = 0; i < MAX_AP_STA_IPS; i++) if (g_ap_sta_ips[i] == sip) { known = true; break; }
-            if (!known) {
-                for (int i = 0; i < MAX_AP_STA_IPS; i++) if (g_ap_sta_ips[i] == 0) { g_ap_sta_ips[i] = sip; break; }
-            }
+            remember_ap_sta_ip(src.sin_addr.s_addr);
         }
 
-        // Diagnostic: log the first several received packets (src + size).
         if (rx_log < 10) {
             ESP_LOGI(RELAY_TAG, "rx from %s:%u (%d bytes)%s",
                      inet_ntoa(src.sin_addr), ntohs(src.sin_port), n,
@@ -396,32 +332,29 @@ static void link_multicast_relay_task(void*) {
             rx_log++;
         }
 
-        // Build UDP header + payload in a pbuf
         struct pbuf* p = pbuf_alloc(PBUF_RAW, (uint16_t)(8 + n), PBUF_RAM);
         if (!p) continue;
 
-        // UDP header (network byte order)
         uint8_t* buf = (uint8_t*)p->payload;
         uint16_t sport = src.sin_port;
         uint16_t dport = PP_HTONS(LINK_PORT);
         uint16_t ulen  = lwip_htons((uint16_t)(8 + n));
+        const uint16_t udp_checksum_omitted = 0;
         memcpy(buf + 0, &sport, 2);
         memcpy(buf + 2, &dport, 2);
         memcpy(buf + 4, &ulen,  2);
-        buf[6] = 0; buf[7] = 0; // checksum = 0 (optional for IPv4)
+        memcpy(buf + 6, &udp_checksum_omitted, 2);
         memcpy(buf + 8, payload, n);
 
         ip_addr_t src_addr, dst_addr;
         ip_addr_set_ip4_u32(&src_addr, src.sin_addr.s_addr);
         ip_addr_set_ip4_u32(&dst_addr, mcast_ip);
 
-        // Snapshot associated-station IPs (from the IP_EVENT_AP_STAIPASSIGNED table)
-        // before taking the TCPIP core lock. Skip the packet's own origin.
         uint32_t sta_ips[MAX_AP_STA_IPS];
         int sta_ip_count = 0;
         for (int i = 0; i < MAX_AP_STA_IPS; i++) {
             uint32_t sta_ip = g_ap_sta_ips[i];
-            if (sta_ip == 0 || sta_ip == src.sin_addr.s_addr) continue;
+            if (sta_ip == AP_STA_IP_SLOT_EMPTY || sta_ip == src.sin_addr.s_addr) continue;
             sta_ips[sta_ip_count++] = sta_ip;
         }
 
@@ -429,23 +362,11 @@ static void link_multicast_relay_task(void*) {
         struct netif* ap_lwip = (struct netif*)esp_netif_get_netif_impl(g_ap_netif);
         if (ap_lwip) {
             if (!from_self) {
-                // (1) Re-emit to the multicast group so OTHER AP clients receive it.
                 raw_sendto_if_src(rpcb, p, &dst_addr, ap_lwip, &src_addr);
-                // (2) Deliver a unicast copy to the AP's own IP so the HOST's own
-                // Ableton Link socket receives this station's packet -- the raw
-                // multicast re-send above is not looped back to local sockets by lwIP.
-                // Unicast to 192.168.4.1 preserves the original source IP (required for
-                // Link's direct peer connect).
                 ip_addr_t ap_addr;
                 ip_addr_set_ip4_u32(&ap_addr, ap_ip);
                 raw_sendto_if_src(rpcb, p, &ap_addr, ap_lwip, &src_addr);
             }
-            // (3) UNICAST fan-out to every associated station (except the packet's own
-            // origin). The ESP32 SoftAP does not carry multicast host<->station, but
-            // unicast UDP does. This delivers BOTH a station's packet to the other
-            // stations AND -- for from_self packets -- the host's own Link output to
-            // every station. Preserves the original source for Link direct-peer-connect.
-            // Scales to N members: every member reaches every other via the host.
             for (int i = 0; i < sta_ip_count; i++) {
                 ip_addr_t sta_addr;
                 ip_addr_set_ip4_u32(&sta_addr, sta_ips[i]);
@@ -462,40 +383,29 @@ void wifi_start_link_relay() {
     xTaskCreate(link_multicast_relay_task, "link_relay", 4096, NULL, 5, NULL);
 }
 
-// Self-healing supervisor. Runs forever. Two roles:
-//  - STA role (g_ap_active == false): if the STA connection drops, retry esp_wifi_connect
-//    a few times; if it stays down, fall back to hosting the AP so the mesh self-heals
-//    when the previous host disappears.
-//  - AP role (g_ap_active == true): periodically re-scan; if another 'ticker' AP exists
-//    whose BSSID is LOWER than our own STA MAC, we lost the tie-break (both ended up
-//    hosting) -- drop the AP and join the lower one so exactly one host remains.
 static void wifi_supervisor_task(void* arg) {
     const char* ssid = (const char*)arg;
-    const int RECONNECT_TRIES = 6;     // ~6 * 2s = 12s before re-hosting
+    const int RECONNECT_TRIES = 6;
+    const int IGMP_REASSERT_TICKS = 5;
     uint8_t my_mac[6];
     wifi_get_sta_mac(my_mac);
 
     int sta_down_count = 0;
-    int join_refresh_left = 5; // re-assert the multicast join for a few ticks after connect
+    int igmp_reassert_ticks_left = IGMP_REASSERT_TICKS;
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(2000));
 
         if (!g_ap_active) {
-            // STA role
             if (g_wifi_connected) {
                 sta_down_count = 0;
-                // The single IGMP join at GOT_IP can race netif readiness so the
-                // membership doesn't stick. Re-assert it for the first ~10s after a
-                // connection so the 224.76.78.75 group membership reliably takes and
-                // Ableton Link discovery converges in seconds, not minutes.
-                if (join_refresh_left > 0) {
+                if (igmp_reassert_ticks_left > 0) {
                     igmp_join_link(g_sta_netif);
-                    join_refresh_left--;
+                    igmp_reassert_ticks_left--;
                 }
                 continue;
             }
-            join_refresh_left = 5; // schedule re-joins for when we next connect
+            igmp_reassert_ticks_left = IGMP_REASSERT_TICKS;
             sta_down_count++;
             if (sta_down_count <= RECONNECT_TRIES) {
                 ESP_LOGW(TAG, "STA down (%d/%d) -- reconnecting", sta_down_count, RECONNECT_TRIES);
@@ -505,36 +415,22 @@ static void wifi_supervisor_task(void* arg) {
                 g_sta_wanted = false;
                 esp_wifi_disconnect();
                 esp_wifi_stop();
-                g_wifi_started = false; // driver stopped; next start() must actually run
+                g_wifi_started = false;
                 if (g_sta_netif) { esp_netif_destroy(g_sta_netif); g_sta_netif = NULL; }
                 wifi_start_link_ap(ssid);
                 wifi_start_link_relay();
                 sta_down_count = 0;
             }
         } else {
-            // AP role: detect a co-host with a lower BSSID and yield to it so
-            // exactly one host remains. Combined with the MAC-ordered boot election
-            // (higher MACs defer hosting) a persistent dual-host is rare and always
-            // resolves to the lowest BSSID.
-            //
-            // CRITICAL: only rescan while we have NO associated stations. The scan
-            // runs in APSTA and tunes the single radio off our AP channel; doing that
-            // while a client is connected drops the client (STA-flap -> Link never
-            // peers). An established host with >=1 client has already won the
-            // election -- there is nothing to resolve, so stay put and keep the AP
-            // rock-stable. If a co-host with no clients exists, one of the two has
-            // zero clients and will still rescan and yield, so convergence holds.
-            if (g_ap_client_count > 0) {
+            if (ap_has_associated_stations()) {
                 continue;
             }
             uint8_t best[6];
             int matches = wifi_scan_best_bssid(ssid, best);
-            // Our own AP shows up in the scan as our AP MAC (STA MAC + 1 on ESP32).
-            // Only yield if a DIFFERENT, strictly-lower BSSID is present.
             if (matches > 0 && memcmp(best, my_mac, 6) < 0) {
                 ESP_LOGW(TAG, "Lost dual-host tie-break (lower BSSID seen) -- dropping AP, joining");
                 esp_wifi_stop();
-                g_wifi_started = false; // driver stopped; ensure_sta_started must re-start it
+                g_wifi_started = false;
                 if (g_ap_netif) { esp_netif_destroy(g_ap_netif); g_ap_netif = NULL; }
                 g_ap_active = false;
                 ensure_sta_started();
@@ -545,7 +441,6 @@ static void wifi_supervisor_task(void* arg) {
 }
 
 void wifi_start_supervisor(const char* ssid) {
-    // ssid is a string literal in app_main; safe to pass by pointer.
     xTaskCreate(wifi_supervisor_task, "wifi_super", 4096, (void*)ssid, 4, NULL);
 }
 

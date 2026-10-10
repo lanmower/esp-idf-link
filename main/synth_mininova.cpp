@@ -1,34 +1,28 @@
 #include "synth_mininova.h"
-#include "midi_helpers.h" // For send_midi_cc, send_midi_nrpn
-#include "main.h" // For MIDI command constants
+#include "midi_helpers.h"
+#include "main.h"
 #include <freertos/FreeRTOS.h>
-#include <freertos/task.h> // For vTaskDelay
-#include "esp_log.h" // For logging if needed
+#include <freertos/task.h>
+#include "esp_log.h"
 
-// Define the logging tag for this file
 static const char *TAG_MININOVA = "SYNTH_MININOVA";
 
-// --- Mininova Specific MIDI Constants ---
-// Moved from main.h and effect_filter.cpp
 namespace {
-    // General MIDI
-    // const uint8_t MIDI_NOTE_OFF_CMD = 0x80; // Removed - Defined as macro in main.h
     const uint8_t MIDI_ALL_NOTES_OFF_CC = 123;
+    constexpr uint8_t kCcModWheel = 1;
+    constexpr uint8_t kMidiBipolarCenter = 64;
+    constexpr uint8_t kMidiMax = 127;
 
-    // FX Routing Type
     const uint8_t FX_ROUTING_NRPN_MSB = 0;
     const uint8_t FX_ROUTING_NRPN_LSB = 98;
-    const uint8_t FX_ROUTING_TYPE_1 = 1;  // 0-indexed, second routing type
+    const uint8_t FX_ROUTING_TYPE_SECOND_SLOT = 1;
 
-    // Sidechain
-    const uint8_t SIDECHAIN_CC = 59; // PostFXLevel used as ducking control
+    const uint8_t SIDECHAIN_POSTFX_LEVEL_CC = 59;
 
-    // Gate Effect (for sidechain)
     const uint8_t GATE_SELECT_NRPN_MSB = 0;
     const uint8_t GATE_SELECT_NRPN_LSB = 97;
-    const uint8_t GATE_EFFECT_CODE = 1;  // Gate effect code
+    const uint8_t GATE_EFFECT_CODE = 1;
 
-    // Gate Parameters
     const uint8_t GATE_HOLD_NRPN_MSB = 1;
     const uint8_t GATE_HOLD_NRPN_LSB = 1;
     const uint8_t GATE_ESLEW_NRPN_MSB = 1;
@@ -56,14 +50,19 @@ namespace {
     const uint8_t GATE_LVL8_NRPN_MSB = 1;
     const uint8_t GATE_LVL8_NRPN_LSB = 17;
 
-    // Delay/Reverb FX Slot 1 Control
+    constexpr uint8_t kGateHoldDefault = 73;
+    constexpr uint8_t kGateESlewDefault = 104;
+    constexpr uint8_t kGateKeySyncOn = 1;
+    constexpr uint8_t kGateDelayValueForMinus15 = 49;
+    constexpr uint8_t kGateRSyncSecond = 2;
+    constexpr uint8_t kGateLevel1AlwaysSilent = 0;
+
     const uint8_t FX1_SELECT_NRPN_MSB = 0;
     const uint8_t FX1_SELECT_NRPN_LSB = 99;
     const uint8_t FX1_EFFECT_DELAY1 = 6;
     const uint8_t FX1_EFFECT_REVERB1 = 8;
     const uint8_t FX1_LEVEL_CC = 91;
 
-    // Delay 1 Parameters
     const uint8_t DELAY1_TIME_NRPN_MSB = 1;
     const uint8_t DELAY1_TIME_NRPN_LSB = 6;
     const uint8_t DELAY1_FEEDBACK_NRPN_MSB = 1;
@@ -71,28 +70,24 @@ namespace {
     const uint8_t DELAY1_SYNC_NRPN_MSB = 1;
     const uint8_t DELAY1_SYNC_NRPN_LSB = 7;
 
-    // Reverb 1 Parameters
     const uint8_t REVERB1_DECAY_NRPN_MSB = 1;
     const uint8_t REVERB1_DECAY_NRPN_LSB = 19;
     const uint8_t REVERB1_DAMPING_NRPN_MSB = 1;
     const uint8_t REVERB1_DAMPING_NRPN_LSB = 20;
 
-    // Filter 1 Parameters
     const uint8_t FILT1_FREQ_CC = 74;
     const uint8_t FILT1_RES_CC = 71;
     const uint8_t FILT1_TYPE_NRPN_MSB = 0;
     const uint8_t FILT1_TYPE_NRPN_LSB = 68;
     const uint8_t FILT1_TYPE_LP24 = 3;
 
-    // LFO 2 Parameters
     const uint8_t LFO2_SHAPE_NRPN_MSB = 0;
     const uint8_t LFO2_SHAPE_NRPN_LSB = 40;
-    const uint8_t LFO2_SYNC_ENABLE_NRPN_MSB = 1; // Assumed
-    const uint8_t LFO2_SYNC_ENABLE_NRPN_LSB = 40; // Assumed
+    const uint8_t LFO2_SYNC_ENABLE_NRPN_MSB = 1;
+    const uint8_t LFO2_SYNC_ENABLE_NRPN_LSB = 40;
     const uint8_t LFO2_RATE_SYNC_NRPN_MSB = 0;
     const uint8_t LFO2_RATE_SYNC_NRPN_LSB = 86;
 
-    // Mod Matrix Slot 1 Parameters
     const uint8_t MOD1_SOURCE_NRPN_MSB = 0;
     const uint8_t MOD1_SOURCE_NRPN_LSB = 56;
     const uint8_t MOD1_DEST_NRPN_MSB = 0;
@@ -100,20 +95,16 @@ namespace {
     const uint8_t MOD1_DEPTH_NRPN_MSB = 0;
     const uint8_t MOD1_DEPTH_NRPN_LSB = 58;
 
-    // Mod Matrix Source/Destination Values
-    const uint8_t MOD_SRC_LFO2 = 8;         // LFO2+
-    const uint8_t MOD_DEST_FILT1_FREQ = 21; // Filter 1 Freq
-} // end anonymous namespace
+    const uint8_t MOD_SRC_LFO2 = 8;
+    const uint8_t MOD_DEST_FILT1_FREQ = 21;
+}
 
-// --- Constructor ---
 SynthMininova::SynthMininova(uint8_t channel) : midi_channel(channel) {
     if (midi_channel == 0 || midi_channel > 16) {
         ESP_LOGW(TAG_MININOVA, "Invalid MIDI channel %d, defaulting to 1", channel);
         midi_channel = 1;
     }
 }
-
-// --- Interface Implementation ---
 
 void SynthMininova::sendNoteOff(uint8_t note, uint8_t velocity) {
     uint8_t note_off_msg[] = {static_cast<uint8_t>(MIDI_NOTE_OFF_CMD | (midi_channel - 1)), note, velocity};
@@ -130,7 +121,7 @@ void SynthMininova::sendControlChange(uint8_t controller, uint8_t value) {
 
 void SynthMininova::sendModWheel(uint8_t value) {
     ESP_LOGD(TAG_MININOVA, "Setting Modwheel (CC 1): %d", value);
-    send_midi_cc(midi_channel, 1, value);
+    send_midi_cc(midi_channel, kCcModWheel, value);
 }
 
 void SynthMininova::sendPitchBend(int16_t value) {
@@ -145,49 +136,38 @@ void SynthMininova::sendPitchBend(int16_t value) {
 
 void SynthMininova::setSidechainLevel(uint8_t level) {
     ESP_LOGD(TAG_MININOVA, "Setting Sidechain Level (CC 59): %d", level);
-    send_midi_cc(midi_channel, SIDECHAIN_CC, level);
+    send_midi_cc(midi_channel, SIDECHAIN_POSTFX_LEVEL_CC, level);
 }
 
 void SynthMininova::setSidechainPattern(uint8_t pattern_index) {
     ESP_LOGI(TAG_MININOVA, "Setting Sidechain Pattern (Placeholder NRPN 1:80): %d", pattern_index);
-    
-    // First, ensure the effect routing is set to type 1 (second slot)
-    send_midi_nrpn(midi_channel, FX_ROUTING_NRPN_MSB, FX_ROUTING_NRPN_LSB, FX_ROUTING_TYPE_1);
+
+    send_midi_nrpn(midi_channel, FX_ROUTING_NRPN_MSB, FX_ROUTING_NRPN_LSB, FX_ROUTING_TYPE_SECOND_SLOT);
     vTaskDelay(pdMS_TO_TICKS(1));
-    
-    // Set Gate as the first effect in the chain
+
     send_midi_nrpn(midi_channel, GATE_SELECT_NRPN_MSB, GATE_SELECT_NRPN_LSB, GATE_EFFECT_CODE);
     vTaskDelay(pdMS_TO_TICKS(1));
-    
-    // Configure gate effect parameters
-    // Hold: 73
-    send_midi_nrpn(midi_channel, GATE_HOLD_NRPN_MSB, GATE_HOLD_NRPN_LSB, 73);
+
+    send_midi_nrpn(midi_channel, GATE_HOLD_NRPN_MSB, GATE_HOLD_NRPN_LSB, kGateHoldDefault);
     vTaskDelay(pdMS_TO_TICKS(1));
-    
-    // E-Slew: 104
-    send_midi_nrpn(midi_channel, GATE_ESLEW_NRPN_MSB, GATE_ESLEW_NRPN_LSB, 104);
+
+    send_midi_nrpn(midi_channel, GATE_ESLEW_NRPN_MSB, GATE_ESLEW_NRPN_LSB, kGateESlewDefault);
     vTaskDelay(pdMS_TO_TICKS(1));
-    
-    // Keysync: On (1)
-    send_midi_nrpn(midi_channel, GATE_KEYSYNC_NRPN_MSB, GATE_KEYSYNC_NRPN_LSB, 1);
+
+    send_midi_nrpn(midi_channel, GATE_KEYSYNC_NRPN_MSB, GATE_KEYSYNC_NRPN_LSB, kGateKeySyncOn);
     vTaskDelay(pdMS_TO_TICKS(1));
-    
-    // Delay: -15 (convert to 0-127 range, 0 = max negative)
-    send_midi_nrpn(midi_channel, GATE_DELAY_NRPN_MSB, GATE_DELAY_NRPN_LSB, 49);  // -15 mapped to 0-127 range
+
+    send_midi_nrpn(midi_channel, GATE_DELAY_NRPN_MSB, GATE_DELAY_NRPN_LSB, kGateDelayValueForMinus15);
     vTaskDelay(pdMS_TO_TICKS(1));
-    
-    // R-Sync: 2nd
-    send_midi_nrpn(midi_channel, GATE_RSYNC_NRPN_MSB, GATE_RSYNC_NRPN_LSB, 2);
+
+    send_midi_nrpn(midi_channel, GATE_RSYNC_NRPN_MSB, GATE_RSYNC_NRPN_LSB, kGateRSyncSecond);
     vTaskDelay(pdMS_TO_TICKS(1));
-    
-    // Set gate levels based on pattern index
-    // GtLvl1: 0 (default always 0)
-    send_midi_nrpn(midi_channel, GATE_LVL1_NRPN_MSB, GATE_LVL1_NRPN_LSB, 0);
+
+    send_midi_nrpn(midi_channel, GATE_LVL1_NRPN_MSB, GATE_LVL1_NRPN_LSB, kGateLevel1AlwaysSilent);
     vTaskDelay(pdMS_TO_TICKS(1));
-    
-    // Configure different gate patterns based on the pattern index
+
     switch (pattern_index) {
-        case 0:  // Basic 4/4 house pattern
+        case 0:
             send_midi_nrpn(midi_channel, GATE_LVL2_NRPN_MSB, GATE_LVL2_NRPN_LSB, 127);
             send_midi_nrpn(midi_channel, GATE_LVL3_NRPN_MSB, GATE_LVL3_NRPN_LSB, 127);
             send_midi_nrpn(midi_channel, GATE_LVL4_NRPN_MSB, GATE_LVL4_NRPN_LSB, 127);
@@ -196,7 +176,7 @@ void SynthMininova::setSidechainPattern(uint8_t pattern_index) {
             send_midi_nrpn(midi_channel, GATE_LVL7_NRPN_MSB, GATE_LVL7_NRPN_LSB, 127);
             send_midi_nrpn(midi_channel, GATE_LVL8_NRPN_MSB, GATE_LVL8_NRPN_LSB, 127);
             break;
-        case 1:  // Techno pattern with gaps
+        case 1:
             send_midi_nrpn(midi_channel, GATE_LVL2_NRPN_MSB, GATE_LVL2_NRPN_LSB, 127);
             send_midi_nrpn(midi_channel, GATE_LVL3_NRPN_MSB, GATE_LVL3_NRPN_LSB, 0);
             send_midi_nrpn(midi_channel, GATE_LVL4_NRPN_MSB, GATE_LVL4_NRPN_LSB, 127);
@@ -205,7 +185,7 @@ void SynthMininova::setSidechainPattern(uint8_t pattern_index) {
             send_midi_nrpn(midi_channel, GATE_LVL7_NRPN_MSB, GATE_LVL7_NRPN_LSB, 127);
             send_midi_nrpn(midi_channel, GATE_LVL8_NRPN_MSB, GATE_LVL8_NRPN_LSB, 0);
             break;
-        case 2:  // Complex pattern
+        case 2:
             send_midi_nrpn(midi_channel, GATE_LVL2_NRPN_MSB, GATE_LVL2_NRPN_LSB, 100);
             send_midi_nrpn(midi_channel, GATE_LVL3_NRPN_MSB, GATE_LVL3_NRPN_LSB, 50);
             send_midi_nrpn(midi_channel, GATE_LVL4_NRPN_MSB, GATE_LVL4_NRPN_LSB, 127);
@@ -214,7 +194,7 @@ void SynthMininova::setSidechainPattern(uint8_t pattern_index) {
             send_midi_nrpn(midi_channel, GATE_LVL7_NRPN_MSB, GATE_LVL7_NRPN_LSB, 127);
             send_midi_nrpn(midi_channel, GATE_LVL8_NRPN_MSB, GATE_LVL8_NRPN_LSB, 60);
             break;
-        case 3:  // Fast pumping pattern
+        case 3:
             send_midi_nrpn(midi_channel, GATE_LVL2_NRPN_MSB, GATE_LVL2_NRPN_LSB, 0);
             send_midi_nrpn(midi_channel, GATE_LVL3_NRPN_MSB, GATE_LVL3_NRPN_LSB, 127);
             send_midi_nrpn(midi_channel, GATE_LVL4_NRPN_MSB, GATE_LVL4_NRPN_LSB, 0);
@@ -223,7 +203,7 @@ void SynthMininova::setSidechainPattern(uint8_t pattern_index) {
             send_midi_nrpn(midi_channel, GATE_LVL7_NRPN_MSB, GATE_LVL7_NRPN_LSB, 127);
             send_midi_nrpn(midi_channel, GATE_LVL8_NRPN_MSB, GATE_LVL8_NRPN_LSB, 0);
             break;
-        default:  // Default pattern (all full)
+        default:
             send_midi_nrpn(midi_channel, GATE_LVL2_NRPN_MSB, GATE_LVL2_NRPN_LSB, 127);
             send_midi_nrpn(midi_channel, GATE_LVL3_NRPN_MSB, GATE_LVL3_NRPN_LSB, 127);
             send_midi_nrpn(midi_channel, GATE_LVL4_NRPN_MSB, GATE_LVL4_NRPN_LSB, 127);
@@ -236,21 +216,17 @@ void SynthMininova::setSidechainPattern(uint8_t pattern_index) {
 }
 
 void SynthMininova::activateDelay() {
-    // First, ensure the effect routing is set to type 1 (second slot)
-    send_midi_nrpn(midi_channel, FX_ROUTING_NRPN_MSB, FX_ROUTING_NRPN_LSB, FX_ROUTING_TYPE_1);
+    send_midi_nrpn(midi_channel, FX_ROUTING_NRPN_MSB, FX_ROUTING_NRPN_LSB, FX_ROUTING_TYPE_SECOND_SLOT);
     vTaskDelay(pdMS_TO_TICKS(1));
-    
-    // Set delay as the second effect in the chain
+
     send_midi_nrpn(midi_channel, FX1_SELECT_NRPN_MSB, FX1_SELECT_NRPN_LSB, FX1_EFFECT_DELAY1);
     vTaskDelay(pdMS_TO_TICKS(1));
 }
 
 void SynthMininova::activateReverb() {
-    // First, ensure the effect routing is set to type 1 (second slot)
-    send_midi_nrpn(midi_channel, FX_ROUTING_NRPN_MSB, FX_ROUTING_NRPN_LSB, FX_ROUTING_TYPE_1);
+    send_midi_nrpn(midi_channel, FX_ROUTING_NRPN_MSB, FX_ROUTING_NRPN_LSB, FX_ROUTING_TYPE_SECOND_SLOT);
     vTaskDelay(pdMS_TO_TICKS(1));
-    
-    // Set reverb as the third effect in the chain
+
     send_midi_nrpn(midi_channel, FX1_SELECT_NRPN_MSB, FX1_SELECT_NRPN_LSB, FX1_EFFECT_REVERB1);
     vTaskDelay(pdMS_TO_TICKS(1));
 }
@@ -268,7 +244,7 @@ void SynthMininova::setDelaySyncRate(uint8_t rate_val) {
 }
 
 void SynthMininova::disableDelaySync() {
-    send_midi_nrpn(midi_channel, DELAY1_SYNC_NRPN_MSB, DELAY1_SYNC_NRPN_LSB, 0); // Value 0 disables sync
+    send_midi_nrpn(midi_channel, DELAY1_SYNC_NRPN_MSB, DELAY1_SYNC_NRPN_LSB, 0);
 }
 
 void SynthMininova::setReverbDecay(uint8_t value) {
@@ -292,20 +268,16 @@ void SynthMininova::setFxSlot1Level(uint8_t level) {
 }
 
 void SynthMininova::activateFilter(uint8_t default_cutoff, uint8_t default_res) {
-    // Set Filter Type to LP24
     send_midi_nrpn(midi_channel, FILT1_TYPE_NRPN_MSB, FILT1_TYPE_NRPN_LSB, FILT1_TYPE_LP24);
     vTaskDelay(pdMS_TO_TICKS(1));
-    // Set default Cutoff and Resonance
     setFilterCutoff(default_cutoff);
     setFilterResonance(default_res);
 }
 
 void SynthMininova::deactivateFilter() {
-    setFilterCutoff(127); // Set cutoff fully open
+    setFilterCutoff(kMidiMax);
     setFilterResonance(0);
-    // Maybe set filter routing to bypass? Requires NRPN 0/60 value 0
-    // send_midi_nrpn(midi_channel, 0, 60, 0); // Optional: Bypass filter
-    unpatchLfoFromFilter(); // Ensure LFO is unpatched
+    unpatchLfoFromFilter();
 }
 
 void SynthMininova::setFilterCutoff(uint8_t value) {
@@ -324,13 +296,12 @@ void SynthMininova::patchLfoToFilter(uint8_t initial_depth_midi) {
     vTaskDelay(pdMS_TO_TICKS(1));
     send_midi_nrpn(midi_channel, MOD1_DEPTH_NRPN_MSB, MOD1_DEPTH_NRPN_LSB, initial_depth_midi);
     vTaskDelay(pdMS_TO_TICKS(1));
-    setLfoSyncEnabled(true); // Ensure LFO sync is ON when patching
+    setLfoSyncEnabled(true);
 }
 
 void SynthMininova::unpatchLfoFromFilter() {
     ESP_LOGD(TAG_MININOVA, "Unpatching LFO from Filter (Mod Slot 1 Depth = 64)");
-    // Set depth to 0 (MIDI value 64) to disable modulation
-    send_midi_nrpn(midi_channel, MOD1_DEPTH_NRPN_MSB, MOD1_DEPTH_NRPN_LSB, 64);
+    send_midi_nrpn(midi_channel, MOD1_DEPTH_NRPN_MSB, MOD1_DEPTH_NRPN_LSB, kMidiBipolarCenter);
 }
 
 void SynthMininova::setLfoShape(uint8_t shape_val) {
@@ -339,13 +310,11 @@ void SynthMininova::setLfoShape(uint8_t shape_val) {
 
 void SynthMininova::setLfoRateSync(uint8_t rate_val) {
     send_midi_nrpn(midi_channel, LFO2_RATE_SYNC_NRPN_MSB, LFO2_RATE_SYNC_NRPN_LSB, rate_val);
-    // Ensure sync is enabled if we are setting a sync rate
     setLfoSyncEnabled(true);
 }
 
 void SynthMininova::setLfoDepth(int8_t signed_depth) {
-    // Convert signed -64 to +63 to MIDI 0-127
-    int midi_depth = signed_depth + 64;
+    int midi_depth = signed_depth + kMidiBipolarCenter;
     if (midi_depth < 0) midi_depth = 0;
     if (midi_depth > 127) midi_depth = 127;
     send_midi_nrpn(midi_channel, MOD1_DEPTH_NRPN_MSB, MOD1_DEPTH_NRPN_LSB, (uint8_t)midi_depth);
@@ -364,13 +333,11 @@ void SynthMininova::sendNoteOn(uint8_t note, uint8_t velocity) {
 }
 
 void SynthMininova::setGateESlew(uint8_t value) {
-    // Set E-Slew parameter for the gate effect
     ESP_LOGD(TAG_MININOVA, "Setting Gate E-Slew: %d", value);
     send_midi_nrpn(midi_channel, GATE_ESLEW_NRPN_MSB, GATE_ESLEW_NRPN_LSB, value);
 }
 
 void SynthMininova::setGateWetDry(uint8_t value) {
-    // Set Wet/Dry mix for the gate effect (FX1 level)
     ESP_LOGD(TAG_MININOVA, "Setting Gate Wet/Dry: %d", value);
     send_midi_cc(midi_channel, FX1_LEVEL_CC, value);
-} 
+}

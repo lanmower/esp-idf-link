@@ -6,20 +6,17 @@
 
 namespace bli {
 
-// =================================================================
-// 1. Scales -- unchanged from the legacy bass_engine.cpp table.
-// =================================================================
 const int kScaleLens[kNumScales] = {7, 7, 7, 5, 7, 7, 7, 7, 7};
 const int kScales[kNumScales][7] = {
-    {0, 2, 3, 5, 7, 9, 10},   // 0 dorian
-    {0, 2, 3, 5, 7, 8, 10},   // 1 aeolian
-    {0, 1, 3, 5, 7, 8, 10},   // 2 phrygian
-    {0, 3, 5, 7, 10, 3, 5},   // 3 minorPentatonic (5 real notes, last 2 repeated)
-    {0, 2, 3, 5, 7, 9, 11},   // 4 melodicMinor
-    {0, 2, 4, 5, 7, 9, 10},   // 5 mixolydian
-    {0, 1, 4, 5, 7, 8, 10},   // 6 phrygianDom
-    {0, 2, 3, 5, 7, 8, 11},   // 7 harmonicMinor
-    {0, 2, 3, 6, 7, 8, 11},   // 8 hungarianMinor
+    {0, 2, 3, 5, 7, 9, 10},
+    {0, 2, 3, 5, 7, 8, 10},
+    {0, 1, 3, 5, 7, 8, 10},
+    {0, 3, 5, 7, 10, 3, 5},
+    {0, 2, 3, 5, 7, 9, 11},
+    {0, 2, 4, 5, 7, 9, 10},
+    {0, 1, 4, 5, 7, 8, 10},
+    {0, 2, 3, 5, 7, 8, 11},
+    {0, 2, 3, 6, 7, 8, 11},
 };
 static const char* kScaleNames[kNumScales] = {
     "dorian", "aeolian", "phrygian", "minorPentatonic", "melodicMinor",
@@ -36,18 +33,12 @@ int scaleDegree(int scaleIdx, int degree) {
 }
 
 void chordToneIntervals(int scaleIdx, int out[4]) {
-    // Root/3rd/5th/7th built by stacking scale-degree thirds (same
-    // construction SUBSTRATE's buildChords() and the DawDreamer Python
-    // port's chord_tones() use).
-    out[0] = scaleDegree(scaleIdx, 0);
-    out[1] = scaleDegree(scaleIdx, 2);
-    out[2] = scaleDegree(scaleIdx, 4);
-    out[3] = scaleDegree(scaleIdx, 6);
+    out[kChordRoot]    = scaleDegree(scaleIdx, 0);
+    out[kChordThird]   = scaleDegree(scaleIdx, 2);
+    out[kChordFifth]   = scaleDegree(scaleIdx, 4);
+    out[kChordSeventh] = scaleDegree(scaleIdx, 6);
 }
 
-// =================================================================
-// 2. Dials
-// =================================================================
 float Dials::get(int bank, int dialIdx) const {
     switch (bank) {
         case BANK_HARMONY: return dialIdx == 0 ? harmonyGravity : harmonyColor;
@@ -69,13 +60,6 @@ void Dials::set(int bank, int dialIdx, float v01) {
     }
 }
 
-// =================================================================
-// 3. Groove templates -- 16th-note onset probability, condensed from
-//    the DawDreamer-validated Python set (dropped the busiest DnB/
-//    footwork templates that need a drum bed to make sense; this is a
-//    solo bass voice). Ordered sparse -> busy so a single "energy"
-//    dial sweeps through a coherent progression.
-// =================================================================
 struct Groove { const char* name; float w[kStepsPerBar]; };
 static const Groove kGrooves[] = {
     {"minimal",      {1, 0, 0, 0,  0, 0, .3f, 0,   .5f, 0, 0, 0,   0, 0, .3f, 0}},
@@ -90,17 +74,11 @@ static const Groove kGrooves[] = {
 };
 static constexpr int kNumGrooves = sizeof(kGrooves) / sizeof(kGrooves[0]);
 
-// 4/4 metric weight of each 16th -- strong on downbeats, weaker off-grid.
 static const float kMetric[kStepsPerBar] = {
     1, .12f, .34f, .16f,  .78f, .12f, .36f, .16f,
     .9f, .12f, .34f, .16f, .72f, .14f, .4f, .28f,
 };
 
-// =================================================================
-// 4. Contour shapes -- x in [0,1] -> [0,1]. Cheap to evaluate: only
-//    called once per onset when a motif is (re)generated, never per
-//    audio sample.
-// =================================================================
 enum ContourShape { CT_LEVEL, CT_CLIMB, CT_DESCEND, CT_ARCH, CT_VALLEY, CT_WAVE, CT_ZIGZAG, CT_TERRACED, CT_COUNT };
 
 static float evalContour(int shape, float x) {
@@ -117,13 +95,9 @@ static float evalContour(int shape, float x) {
     }
 }
 
-// =================================================================
-// 5. Rhythm: onset generation from a groove template blended toward
-//    density/syncopation, mirroring SUBSTRATE's buildRhythm().
-// =================================================================
 static int buildOnsets(const Dials& dials, RngSource& rng, int outSteps[kStepsPerBar]) {
     float energy = dials.grooveEnergy;
-    float sync = dials.grooveSwing;  // swing dial also pushes syncopation weight
+    float sync = dials.grooveSwing;
 
     int gIdx = Dials::bandIndex(energy, kNumGrooves);
     const float* tmpl = kGrooves[gIdx].w;
@@ -139,7 +113,6 @@ static int buildOnsets(const Dials& dials, RngSource& rng, int outSteps[kStepsPe
     }
     if (n == 0 || outSteps[0] != 0) {
         if (rng.next01() < 0.7f) {
-            // insert a downbeat if missing (shift array right)
             for (int k = std::min(n, kStepsPerBar - 1); k > 0; k--) outSteps[k] = outSteps[k - 1];
             outSteps[0] = 0;
             n = std::min(n + 1, kStepsPerBar);
@@ -149,23 +122,16 @@ static int buildOnsets(const Dials& dials, RngSource& rng, int outSteps[kStepsPe
     return n;
 }
 
-// =================================================================
-// 6. Pitch: constrained DP (Viterbi) over the in-scale candidate pool
-//    within [root, root+span] -- identical structure to SUBSTRATE's
-//    buildPitches() / Liu's eq.28, restricted to scale tones only
-//    (validated in the DawDreamer experiments: no audible loss for a
-//    bass voice, and keeps the embedded candidate pool small).
-// =================================================================
-static constexpr int kRegisterSpan = 15;   // semitones, matches the old anchorMotif clamp
+static constexpr int kRegisterSpan = 15;
 static constexpr int kMaxCandidates = 16;
 
 static float harmonicCost(int m, int root, const int chordTones[4], float tension) {
     int pc = ((m - root) % 12 + 12) % 12;
-    if (pc == chordTones[0] % 12) return 0.f;
-    if (pc == chordTones[2] % 12) return 0.09f;   // 5th
-    if (pc == chordTones[1] % 12) return 0.14f;   // 3rd
-    if (pc == chordTones[3] % 12) return 0.21f;   // 7th
-    return 0.52f * (1.f - 0.75f * tension);       // other scale tone
+    if (pc == chordTones[kChordRoot] % 12) return 0.f;
+    if (pc == chordTones[kChordFifth] % 12) return 0.09f;
+    if (pc == chordTones[kChordThird] % 12) return 0.14f;
+    if (pc == chordTones[kChordSeventh] % 12) return 0.21f;
+    return 0.52f * (1.f - 0.75f * tension);
 }
 
 static float transCost(int a, int b, int leap, float octAppetite, float repeat) {
@@ -178,8 +144,6 @@ static float transCost(int a, int b, int leap, float octAppetite, float repeat) 
     return c;
 }
 
-// xorshift-free "gumbel-ish" noise from the injected RNG, matching the
-// SUBSTRATE / Python port's exploration temperature term.
 static float gumbelNoise(RngSource& rng) {
     float u = std::max(1e-6f, std::min(1.f - 1e-6f, rng.next01()));
     return -std::log(-std::log(u));
@@ -199,7 +163,6 @@ static void buildPitches(const int onsets[], int n, int root, int scaleIdx,
 
     int contourShape = Dials::bandIndex(dials.motionContour, CT_COUNT);
 
-    // Scale-restricted candidate pool within [root, root+span].
     int pool[kMaxCandidates];
     int poolLen = 0;
     for (int m = root; m <= root + kRegisterSpan && poolLen < kMaxCandidates; m++) {
@@ -257,12 +220,6 @@ static void buildPitches(const int onsets[], int n, int root, int scaleIdx,
     }
 }
 
-// =================================================================
-// 7. Articulation: gate length, accent/ghost/slide, filter-CC sweep
-//    (driven by the same contour that shapes pitch -- validated in
-//    the DawDreamer experiments to read as a natural "brightness
-//    follows pitch" correlation without a dedicated curve-shape dial).
-// =================================================================
 static void buildArticulation(const int onsets[], const int pitches[], int n,
                                const Dials& dials, RngSource& rng, Step m[kStepsPerBar]) {
     float artic = dials.voiceArtic;
@@ -299,16 +256,12 @@ static void buildArticulation(const int onsets[], const int pitches[], int n,
         m[s].fcc = fcc;
         m[s].pb = 0.f;
         if (slide) {
-            // subtle slide flavor: a small pitch-bend ramp toward the next note
             int nextPitch = (i + 1 < n) ? pitches[i + 1] : pitches[i];
             m[s].pb = std::max(-3.f, std::min(3.f, (nextPitch - pitches[i]) * 0.4f));
         }
     }
 }
 
-// =================================================================
-// 8. Top-level entry points
-// =================================================================
 void generateMotif(Step m[kStepsPerBar], int root, int scaleIdx,
                     const Dials& dials, RngSource& rng) {
     for (int i = 0; i < kStepsPerBar; i++) m[i] = Step{};
@@ -324,15 +277,11 @@ void generateMotif(Step m[kStepsPerBar], int root, int scaleIdx,
 
 int generateTurnaround(TurnNote out[3], int root, int scaleIdx,
                         const Dials& dials, RngSource& rng) {
-    // Output notes are absolute MIDI (root + interval), matching the old
-    // turnXXX functions' convention: they wrote directly into m_phrase via
-    // addNote(), bypassing the "motif + per-bar rootOffset" pipeline that
-    // generateMotif's callers use, so they must already be absolute.
     int chordTones[4];
     chordToneIntervals(scaleIdx, chordTones);
-    int fifth = chordTones[2];
-    int third = chordTones[1];
-    int seventh = chordTones[3];
+    int fifth = chordTones[kChordFifth];
+    int third = chordTones[kChordThird];
+    int seventh = chordTones[kChordSeventh];
 
     int n = 0;
     bool useFifth = rng.next01() < (0.4f + dials.harmonyGravity * 0.4f);

@@ -1,11 +1,3 @@
-"""GET_DTRRTS lies on this driver (it reports DTR=0 RTS=0 even right after
-SETRTS, and RTS demonstrably works), so the only remaining software window
-onto DTR is the DCB. If fDtrControl is DTR_CONTROL_HANDSHAKE the driver owns
-the line and is entitled to ignore every explicit set -- which would explain
-'esptool accepts the call, the chip never sees IO0 low'.
-
-DTR_CONTROL_DISABLE=0 ENABLE=1 HANDSHAKE=2
-"""
 import sys, time, ctypes, serial
 from ctypes import wintypes
 from esptool.targets.esp32 import ESP32ROM

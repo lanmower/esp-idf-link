@@ -1,7 +1,3 @@
-"""Does DTR reach GPIO0? Immune to the 'DTR kills this handle's RX' confound:
-apply the sequence, close the handle, reopen clean, then ask the ROM to answer.
-In download mode the ROM answers sync forever; the running app just prints.
-"""
 import sys, time, serial
 from esptool.targets.esp32 import ESP32ROM
 

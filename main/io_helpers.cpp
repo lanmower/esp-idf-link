@@ -219,10 +219,10 @@ int scale_pot_value(int value, int min_observed, int max_observed, double expone
 bool read_controls(
     int pot_vals[NUM_POTS],
     int pot_stable_center[NUM_POTS],
-    bool touch_state[NUM_TOUCH_PADS],
+    bool pad_touched[NUM_TOUCH_PADS],
     bool pad_pressed_this_tick[NUM_TOUCH_PADS],
     int last_pot_vals[NUM_POTS],
-    bool last_touch_state[NUM_TOUCH_PADS])
+    bool last_pad_touched[NUM_TOUCH_PADS])
 {
     bool changed = false;
 
@@ -290,18 +290,18 @@ bool read_controls(
     if (read_touch_pad(arp_pad_idx, &arp_touch_value) == ESP_OK) {
         touch_values[arp_pad_idx] = arp_touch_value;
         bool current_pad_state = (arp_touch_value < TOUCH_THRESHOLD);
-        pad_pressed_this_tick[arp_pad_idx] = current_pad_state && !last_touch_state[arp_pad_idx];
+        pad_pressed_this_tick[arp_pad_idx] = current_pad_state && !last_pad_touched[arp_pad_idx];
         if (pad_pressed_this_tick[arp_pad_idx]) {
             ESP_LOGI(TAG, "TouchPad[%d]: PAD PRESSED! Value=%u (threshold=%d)",
                     arp_pad_idx, arp_touch_value, TOUCH_THRESHOLD);
         }
-        if (current_pad_state != last_touch_state[arp_pad_idx]) {
+        if (current_pad_state != last_pad_touched[arp_pad_idx]) {
             ESP_LOGI(TAG, "TouchPad[%d]: State change to %s (value=%u)",
                     arp_pad_idx, current_pad_state ? "PRESSED" : "RELEASED", arp_touch_value);
-            touch_state[arp_pad_idx] = current_pad_state;
+            pad_touched[arp_pad_idx] = current_pad_state;
             changed = true;
         } else {
-            touch_state[arp_pad_idx] = last_touch_state[arp_pad_idx];
+            pad_touched[arp_pad_idx] = last_pad_touched[arp_pad_idx];
         }
     }
     for (int i = 0; i < NUM_TOUCH_PADS; ++i) {
@@ -312,26 +312,26 @@ bool read_controls(
         }
         touch_values[i] = touch_value;
         bool current_pad_state = (touch_value < TOUCH_THRESHOLD);
-        pad_pressed_this_tick[i] = current_pad_state && !last_touch_state[i];
+        pad_pressed_this_tick[i] = current_pad_state && !last_pad_touched[i];
         if (pad_pressed_this_tick[i]) {
             ESP_LOGI(TAG, "TouchPad[%d]: PAD PRESSED! Value=%u (threshold=%d)",
                     i, touch_value, TOUCH_THRESHOLD);
         }
-        if (current_pad_state != last_touch_state[i]) {
+        if (current_pad_state != last_pad_touched[i]) {
             ESP_LOGI(TAG, "TouchPad[%d]: State change to %s (value=%u)",
                     i, current_pad_state ? "PRESSED" : "RELEASED", touch_value);
-            touch_state[i] = current_pad_state;
+            pad_touched[i] = current_pad_state;
             changed = true;
         } else {
-            touch_state[i] = last_touch_state[i];
+            pad_touched[i] = last_pad_touched[i];
         }
     }
     if (++log_counter >= 1000) {
         log_counter = 0;
     }
-    if (touch_state[0] && touch_state[1] && touch_state[2] && touch_state[3]) {
+    if (pad_touched[0] && pad_touched[1] && pad_touched[2] && pad_touched[3]) {
         ESP_LOGI(TAG, "ALL PADS HELD: [%d,%d,%d,%d] (values: [%u,%u,%u,%u])",
-                touch_state[0], touch_state[1], touch_state[2], touch_state[3],
+                pad_touched[0], pad_touched[1], pad_touched[2], pad_touched[3],
                 touch_values[0], touch_values[1], touch_values[2], touch_values[3]);
     }
     return changed;

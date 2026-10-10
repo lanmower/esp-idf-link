@@ -1,19 +1,3 @@
-"""The one transition no sweep has tried: 0x40 -> 0x20.
-
-The board is a Wemos D1 R32 (ESPDuino-32). Its auto-reset circuit is
-DIFFERENTIAL, not the usual emitter-to-GND pair:
-
-    EN  pulled low only when (DTR# high, RTS# low)  -> control 0x40
-    IO0 pulled low only when (DTR# low, RTS# high)  -> control 0x20
-
-so asserting both (0x60) makes NEITHER transistor conduct -- which is why every
-"hold IO0 + EN" trial left the app running. The download-mode entry is therefore
-the two-state flip 0x40 -> 0x20: EN is released (its RC rises) while IO0 is
-already low. esptool's own sequence assumes the opposite convention, which is
-why it has never worked here.
-
-Oracle is a ROM sync over bulk IN, not a banner: sync proves download mode.
-"""
 import importlib.util, os, sys, time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -41,7 +25,6 @@ def trial(port, label, steps, hi=0xFF, settle=9.0):
 
 
 def open_port(tries=10, gap=6.0):
-    """usbipd keeps the device attached to the last client for a while; retry."""
     for i in range(tries):
         try:
             return UsbipPort()

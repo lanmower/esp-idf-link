@@ -321,7 +321,7 @@ static void send_all_notes_off_all_channels() {
 
 static void send_song_position(double sessionBeat) {
     uint16_t spp_units = static_cast<uint16_t>(sessionBeat * 4.0) & 0x3FFF;
-    const uint8_t spp[] = { MIDI_SPP,
+    const uint8_t spp[] = { MIDI_SONG_POSITION_POINTER,
                             (uint8_t)(spp_units & 0x7F),
                             (uint8_t)((spp_units >> 7) & 0x7F) };
     send_midi_bytes(spp, sizeof(spp));

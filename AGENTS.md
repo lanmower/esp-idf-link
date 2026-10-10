@@ -141,6 +141,13 @@ and the clock.
 Build trap: **`-Werror=volatile` is on**, so `++` on a `volatile` is a hard
 error -- the fired-alarm counter is deliberately non-volatile.
 
+Build trap: **`CONFIG_LWIP_MAX_SOCKETS=16` in `sdkconfig.defaults` is
+load-bearing, not a tuning knob.** The default 10 is exhausted by the app's own
+UDP sockets (Link relay, LCLK/TTMP broadcast, tempo listener, discovery
+forward), leaving too few for Ableton Link's per-interface discovery gateway,
+which then fails to open with EMFILE ("Too many open files") and never
+broadcasts -> peers never discover each other. 16 is the ESP32 maximum.
+
 ## Firmware reaches the ticker over USB only
 
 No OTA path and no serial console on this machine: a firmware change gets to
@@ -155,7 +162,8 @@ the device only over USB.
   build.
 - `node flash-ticker.js [COMx]` (repo root) does the whole thing over a COM
   port with esptool 5.x (`python -m esptool`; note v5's hyphenated
-  `write-flash` subcommand). Offsets: 0x1000 bootloader, 0x8000 partition
+  `write-flash` subcommand -- though the underscored `write_flash` alias still
+  works on 5.5.0, which `flash_midi_data.sh` relies on). Offsets: 0x1000 bootloader, 0x8000 partition
   table, and the app at the first app partition of the BUILT table (0x20000
   with `partitions_large.csv`; the script reads
   `build/partition_table/partition-table.bin`, never hardcode 0x10000).
@@ -168,6 +176,14 @@ the device only over USB.
   not the ESP32. esptool 5.x dropped `--verify` because it always verifies
   ("Hash of data verified" per image), so a `--verify` flag is not ignored --
   it aborts `write-flash` with "No such option" and flashes nothing.
+
+- The SPIFFS `storage` partition (the MIDI files) is flashed separately from
+  the firmware: `flash_midi_data.sh` builds a `0x19000` (100K) image from
+  `./data` and writes it at **`0x317000`**. That offset is NOT re-derivable
+  from `partitions_large.csv` -- the `storage` row leaves its offset blank
+  (only `nvs` has one) because the build computes it. `0x317000` appears
+  nowhere else in the repo but that script's own argument, so if the layout
+  changes, re-read it from the built partition-table binary.
 
 ### No BOOT hold: `python tools/flash-usbip.py` flashes it hands-free
 
@@ -319,8 +335,48 @@ code that reads the macro):
   press latency stays lowest.
 - Pots are raw ADC 0-4095 mapped to MIDI 0-127; a slow EMA tracks the
   "stable center" alongside the fast one used for control.
+- Pad gesture timings are in `main/main.cpp`: `DOUBLE_TAP_TIME_MS = 300`,
+  `HOLD_TIME_MS = 200` (both milliseconds).
+- Synth target is one of `SynthType { SYNTH_MININOVA, SYNTH_MICROKORG }` in
+  `g_synth_type` (`main/main.h`); the per-target MIDI behaviour is listed
+  under MIDI emission above.
 
-### The SoftAP multicast gap is this project's, and may not be aloop's
+## Constants whose constraint is not visible in the code
+
+Several constants survive with the right values but no longer carry the rule
+that makes the value correct. All were comments; none can be expressed in code.
+
+- `MAX_ARP_INDEX_WRAP = 128` (`main/arp_constants.h`) wraps the raw note index
+  in `effect_handler`. It must stay **larger than the longest reasonably
+  expected progression sequence** -- that bound, not 128, is the requirement.
+  It is currently unreferenced, so nothing enforces or exercises it.
+- **E-Slew default is 104**, and 104 is not an independent number: `effect_handler`
+  computes `64 + (s_current_sidechain_sheer / 2)`, so it is the sheer default
+  (80) halved and offset. `reset_sidechain_to_default()`'s `setGateESlew(104)`
+  is the same value written as a bare literal. Changing one without the other
+  silently changes the sidechain's default sound.
+- `kScales[3]` in `main/bassline_interpreter.cpp` is `{0, 3, 5, 7, 10, 3, 5}`
+  while `kScaleLens[3] == 5`. The trailing `{3, 5}` is deliberate padding, not
+  a typo: the row is sized to match its neighbours and only its first five
+  entries are ever read. Do not "fix" it to five entries.
+- `kRegisterSpan = 15` (`main/bassline_interpreter.cpp`, semitones) must track
+  the anchorMotif clamp in `bass_engine.cpp`. That coupling is recorded nowhere
+  else and neither file references the other.
+
+## Synth CC/NRPN facts that are not derivable from the code
+
+- **MicroKorg**: LFO2 shape is CC 75 (`kCcLfo2Shape`); delay sync is CC 13
+  (`kCcDelaySync`), where 0 = off and 1..32 are sync values.
+- **MiniNova**: `LFO2_SYNC_ENABLE` NRPN is (MSB 1, LSB 40), and that pair is an
+  **assumption never confirmed on hardware** -- the one NRPN in the tree with no
+  verified source. Filter bypass exists as NRPN 0/60 value 0 and is deliberately
+  NOT sent by `deactivateFilter()`, which unpatches only the LFO.
+- **Contradiction, pre-existing:** `main/synth_mininova.h` declares
+  `sendNoteOff(uint8_t note, uint8_t velocity = 64)`, defaulting to 64 -- the
+  opposite of the velocity-0 rule above. Callers must pass 0 explicitly until
+  that default is changed.
+
+## The SoftAP multicast gap is this project's, and may not be aloop's
 
 The ESP32 SoftAP does not carry Link's multicast between host and stations,
 which is why `link_multicast_relay_task` exists: it re-emits each Link

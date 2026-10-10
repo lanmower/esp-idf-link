@@ -4,7 +4,7 @@
 #include "main.h"
 #include <esp_adc/adc_cali.h>
 #include <esp_adc/adc_cali_scheme.h>
-#include "state_machine.h" // Include for InputEvent definition
+#include "state_machine.h"
 
 void init_uart_midi();
 void init_adc();
@@ -14,12 +14,12 @@ void setup_buzzer();
 void set_buzzer_state(bool on, uint32_t frequency = FREQ_NORMAL);
 void prime_buzzer_freq(uint32_t frequency);
 bool read_controls(
-    int pot_vals[NUM_POTS],                 // Output: Scaled value (0-127) based on faster EMA
-    int pot_stable_center[NUM_POTS],      // Output: Scaled stable center (0-127) based on slower EMA
-    bool touch_state[NUM_TOUCH_PADS],       // Output: Current touch state (true=pressed)
-    bool pad_pressed_this_tick[NUM_TOUCH_PADS], // Output: True if pad just pressed this tick
-    int last_pot_vals[NUM_POTS],            // Input: Previous tick's pot_vals output
-    bool last_touch_state[NUM_TOUCH_PADS]   // Input: Previous tick's touch_state output
+    int pot_vals[NUM_POTS],
+    int pot_stable_center[NUM_POTS],
+    bool pad_touched[NUM_TOUCH_PADS],
+    bool pad_pressed_this_tick[NUM_TOUCH_PADS],
+    int last_pot_vals[NUM_POTS],
+    bool last_pad_touched[NUM_TOUCH_PADS]
 );
 
 void send_midi_message(const uint8_t *message, size_t size);
@@ -36,4 +36,4 @@ void init_hall_sensor();
 int read_hall_sensor();
 int get_hall_sensor_offset(int min_val, int max_val);
 
-#endif // IO_HELPERS_H 
+#endif // IO_HELPERS_H

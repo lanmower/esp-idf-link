@@ -1,16 +1,3 @@
-"""The one combination never yet run: hold DTR from the moment the port opens,
-THEN pulse EN with RTS.
-
-Linux's ch341 driver asserts DTR and RTS at open (tty_port_raise_dtr_rts) and
-sends both line bits in one atomic vendor request, which is the one structural
-difference from Windows. Every Windows trial so far toggled DTR after the port
-was already open -- and in probe-dcb2 the dtr=True trials never pulsed RTS at
-all, so the chip was never reset while IO0 was held.
-
-Also tries DTR_CONTROL_HANDSHAKE, where the driver itself asserts DTR as long
-as the receive buffer is below XoffLim -- another way to get the pin driven
-without relying on EscapeCommFunction.
-"""
 import sys, time, ctypes, serial
 from ctypes import wintypes
 from esptool.targets.esp32 import ESP32ROM

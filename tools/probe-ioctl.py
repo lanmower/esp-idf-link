@@ -1,11 +1,3 @@
-"""Last admin-free hypothesis: the WCH driver may implement the serial IOCTLs
-(IOCTL_SERIAL_SET_DTR/CLR_DTR/SET_RTS/CLR_RTS) even though EscapeCommFunction --
-what pyserial and therefore esptool use -- does not reach GPIO0.
-
-Each trial applies a line sequence through raw DeviceIoControl, closes the
-handle, reopens it clean, reads, then asks the ROM to answer sync. In download
-mode the ROM answers sync forever; the running app just prints.
-"""
 import sys, time, ctypes, serial
 from ctypes import wintypes
 from esptool.targets.esp32 import ESP32ROM

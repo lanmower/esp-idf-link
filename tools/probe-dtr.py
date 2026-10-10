@@ -1,8 +1,3 @@
-"""Isolate what DTR and RTS each actually do on this board.
-
-A reset always emits the ROM banner, so 'boot:' seen after a toggle proves that
-line reaches EN. Absence of a banner after a reset pulse proves download mode.
-"""
 import sys, time, re, ctypes, serial
 from ctypes import wintypes
 from esptool.targets.esp32 import ESP32ROM

@@ -1,11 +1,3 @@
-"""Is the bulk-OUT write path actually reaching the ESP32?
-
-flash-usbip.py gets "waiting for download" (so entry works) but the ROM never
-answers a sync. usbip-enter.py trial B synced fine with the same write path, so
-the difference must be isolated: run the exact trial-B path, print the OUT URB
-status (silent on error elsewhere), then write the SLIP sync frame by hand and
-show whatever comes back.
-"""
 import importlib.util, os, socket, struct, sys, time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -16,8 +8,8 @@ _spec.loader.exec_module(_m)
 UsbipPort = _m.UsbipPort
 
 import struct
-SYNC = (b"\xc0" + struct.pack("<BBHI", 0x00, 0x08, 36, 0)
-        + b"\x07\x07\x12\x20" + b"\x55" * 32 + b"\xc0")   # esptool framing: hdr+payload
+ESPTOOL_SYNC_FRAME = (b"\xc0" + struct.pack("<BBHI", 0x00, 0x08, 36, 0)
+                      + b"\x07\x07\x12\x20" + b"\x55" * 32 + b"\xc0")
 
 
 def open_port(tries=10, gap=6.0):
@@ -30,8 +22,7 @@ def open_port(tries=10, gap=6.0):
     raise SystemExit("no attach")
 
 
-def out(port, data, label):
-    """One OUT URB, status printed -- _bulk_out swallows it."""
+def out_reporting_status(port, data, label):
     port.s.sendall(struct.pack(">IIIIIIIIII", 1, port.seq, port.devid,
                                0, 0x02, 0, len(data), 0, 0, 0)
                    + b"\0" * 8 + data)
@@ -39,11 +30,10 @@ def out(port, data, label):
     hdr = _m.recvn(port.s, 48)
     f = struct.unpack(">IIIIIIIIII", hdr[:40])
     print("  OUT %-12s len=%-3d status=%d actual=%d" % (label, len(data), f[5], f[6]),
-          flush=True)   # RET_SUBMIT carries no payload for an OUT
+          flush=True)
 
 
 def pump(port, sec):
-    """One IN URB with a short socket timeout -- returns True if bytes landed."""
     try:
         port.s.sendall(struct.pack(">IIIIIIIIII", 1, port.seq, port.devid,
                                    1, 0x82, 0, 4096, 0, 0, 0) + b"\0" * 8)
@@ -77,9 +67,9 @@ def main():
     for i in range(4):
         port.rxbuf.clear()
         tw = time.time()
-        out(port, SYNC, "frame%d" % i)
+        out_reporting_status(port, ESPTOOL_SYNC_FRAME, "frame%d" % i)
         nothing = True
-        for k in range(8):                       # 8 x 0.25s waiting for the reply
+        for k in range(8):
             if pump(port, 0.25):
                 print("     frame%d: reply after %.2fs %s"
                       % (i, time.time() - tw, repr(port.rxbuf[:20])), flush=True)
@@ -88,7 +78,7 @@ def main():
         if nothing:
             print("     frame%d: nothing for 2s -- kicking with a bare 0xC0" % i,
                   flush=True)
-            out(port, b"\xc0", "kick")           # empty SLIP frame: ignored by both ends
+            out_reporting_status(port, b"\xc0", "kick")
             for k in range(8):
                 if pump(port, 0.25):
                     print("     frame%d: reply %.2fs after the kick %s"

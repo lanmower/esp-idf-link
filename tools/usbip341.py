@@ -1,18 +1,3 @@
-"""Drive the CH341 modem lines the way Linux does: one atomic vendor request.
-
-The WCH Windows driver has never moved DTR for us (75+ trials, every mechanism
-always boot:0x13). Linux works because drivers/usb/serial/ch341.c writes BOTH
-lines in a single control-out:
-
-    ch341_control_out(dev, 0xA4, ~((dtr<<6)|(rts<<5)), 0)
-
-usbipd-win already shares this device (busid 2-2) and listens on 3240, so a
-USB/IP client on the Windows side can issue that very request without any
-driver install, without elevation and without WSL.
-
-Step 1 of this script only proves the channel: list, import, send one request,
-release, and confirm COM12 comes back afterwards.
-"""
 import socket, struct, sys, time
 
 HOST, PORT = "127.0.0.1", 3240
@@ -73,7 +58,6 @@ def control_out(s, devid, seq, wvalue, windex=0, request=REQ, bmrt=0x40):
 
 
 def handshake(s, devid, seq, control, inverted=True):
-    """control: bit6 = DTR, bit5 = RTS, in Linux tty terms."""
     return control_out(s, devid, seq, (~control & 0xFF) if inverted else control)
 
 

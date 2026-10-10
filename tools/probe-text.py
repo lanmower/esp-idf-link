@@ -1,8 +1,3 @@
-"""Print the real boot text after each DTR/RTS sequence.
-
-Byte counts were ambiguous (the app logs in bursts). 'waiting for download' is
-the only unambiguous proof the ROM bootloader is running.
-"""
 import sys, time, serial
 
 PORT = sys.argv[1] if len(sys.argv) > 1 else "COM12"

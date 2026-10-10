@@ -1,6 +1,3 @@
-"""After the DTR/RTS sequence the port goes silent. Find out whether that is
-ROM download mode with a broken RX path (recoverable) or a held-in-reset chip.
-"""
 import sys, time, serial
 from esptool.targets.esp32 import ESP32ROM
 

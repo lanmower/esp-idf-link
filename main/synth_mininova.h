@@ -2,15 +2,12 @@
 #define SYNTH_MININOVA_H
 
 #include "synth_interface.h"
-// #include "main.h" // Removed - EffectType comes via synth_interface.h -> types.h
 
-// Implementation of SynthInterface for Novation Mininova
 class SynthMininova : public SynthInterface {
 public:
-    SynthMininova(uint8_t channel = 1); // Constructor with MIDI channel
+    SynthMininova(uint8_t channel = 1);
     virtual ~SynthMininova() override = default;
 
-    // Override all pure virtual functions from SynthInterface
     void sendNoteOff(uint8_t note, uint8_t velocity = 64) override;
     void sendAllNotesOff() override;
     void sendControlChange(uint8_t controller, uint8_t value) override;
@@ -39,8 +36,7 @@ public:
     void setLfoSyncEnabled(bool enabled) override;
     void sendNoteOn(uint8_t note, uint8_t velocity) override;
     void setSidechainPattern(uint8_t pattern_index) override;
-    
-    // Additional methods specific to Mininova
+
     void setGateESlew(uint8_t value);
     void setGateWetDry(uint8_t value);
 
@@ -48,4 +44,4 @@ private:
     uint8_t midi_channel;
 };
 
-#endif // SYNTH_MININOVA_H 
+#endif // SYNTH_MININOVA_H

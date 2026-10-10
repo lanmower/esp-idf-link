@@ -1,15 +1,3 @@
-"""Before blaming the driver, prove the instrument moves pins at all.
-
-Every "IOCTL DTR did nothing" result is worthless until an IOCTL has been shown
-to move a pin -- so drive RTS (EN) through the exact same DeviceIoControl path
-and demand a reset. If that resets the chip, the path is live and the DTR
-result is real evidence. If it does not, the IOCTL path is inert and every
-IOCTL trial so far was a no-op.
-
-Then sweep all three mechanisms for the one thing that has never been seen:
-boot:0x3. Each trial holds the IO0 line through the EN edge, waits well past
-the strapping sample, releases it, and only then syncs.
-"""
 import sys, time, ctypes, serial
 from ctypes import wintypes
 from esptool.targets.esp32 import ESP32ROM

@@ -1,16 +1,3 @@
-"""Two-phase entry, the shape that survives every defect seen so far.
-
-Phase 1: drive the EN edge with IO0 held (whatever DTR does), and leave the
-        chip alone -- do NOT read through a port that has DTR asserted, because
-        the WCH 3.9 read path is the documented defect here.
-Phase 2: close the port, reopen it with DTR and RTS clear, and sync with
-        --before no_reset. The ROM latched download mode at the EN edge, so
-        releasing IO0 afterwards cannot lose it -- and the reopen clears any
-        DTR-related RX wedge before a single byte is read.
-
-Trial 6 of probe-map was SILENT where trial 5 booted: the first real sign DTR
-changes anything. Chase it.
-"""
 import sys, time, ctypes, serial
 from ctypes import wintypes
 from esptool.targets.esp32 import ESP32ROM
@@ -64,7 +51,6 @@ def opened(dtr=False, rts=False, timeout=0.2):
 
 
 def reopen(dtr=False, rts=False):
-    """Phase 2: fresh handle, lines clear, no reset."""
     s = serial.Serial()
     s.port, s.baudrate, s.timeout = PORT, BAUD, 0.3
     s.dtr, s.rts = dtr, rts
@@ -103,7 +89,6 @@ def peek(s, sec=1.5):
 
 
 def two_phase(tag, phase1, reopen_state=None):
-    """Run phase1 on one handle, then re-open clean and sync."""
     s = opened()
     try:
         phase1(s)

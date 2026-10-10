@@ -1,20 +1,10 @@
-"""Read the ESP32's UART while usbipd owns the device.
-
-Every result so far has been read back through a port the WCH driver owns
-again, so "silence" could mean the chip, the reclaim, or the driver's cached
-line state. Bulk IN over USB/IP removes all three: the bytes come straight
-from the CH340 with Windows out of the loop.
-
-Also the direct oracle for line polarity: assert a line that is wired to EN
-and the app's log stops dead; on release the ROM banner appears. No reclaim,
-no guessing.
-"""
 import socket, struct, sys, time
 
 HOST, PORT = "127.0.0.1", 3240
 BUSID = "2-2"
 REQ_MODEM = 0xA4
 BIT_RTS, BIT_DTR = 1 << 5, 1 << 6
+ENDPOINT_DESCRIPTOR = 0x05
 
 
 def connect():
@@ -65,13 +55,12 @@ def hs(s, devid, seq, control):
 
 
 def endpoints(cfg):
-    """Yield (address, attributes) for every endpoint in a config descriptor."""
     out, i = [], 0
     while i + 1 < len(cfg):
         blen, btype = cfg[i], cfg[i + 1]
         if blen < 2:
             break
-        if btype == 0x05 and blen >= 7:
+        if btype == ENDPOINT_DESCRIPTOR and blen >= 7:
             out.append((cfg[i + 2], cfg[i + 3]))
         i += blen
     return out

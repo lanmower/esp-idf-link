@@ -1,6 +1,3 @@
-"""Trial 2 of the IOCTL probe produced 910 bytes -- neither a full app boot
-(2667) nor silence. Print every byte it says and hammer the ROM with sync.
-"""
 import sys, time, ctypes, serial
 from ctypes import wintypes
 from esptool.targets.esp32 import ESP32ROM

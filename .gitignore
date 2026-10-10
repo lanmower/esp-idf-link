@@ -10,6 +10,10 @@ components/
 .claude/
 .vexify.db
 
+# Python bytecode (these were committed once by accident and never removed)
+__pycache__/
+*.pyc
+
 # Prerequisites
 *.d
 

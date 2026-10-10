@@ -1,15 +1,3 @@
-"""Two decisive measurements the research agent named:
-
-1. pyserial calls EscapeCommFunction and DISCARDS the BOOL with no GetLastError,
-   so a driver that accepts-and-no-ops is invisible through esptool. Call it via
-   ctypes and read the result.
-2. IOCTL_SERIAL_GET_DTRRTS reports what the driver believes DTR/RTS to be.
-   GetCommModemStatus cannot see DTR at all.
-
-Also re-applies COMMTIMEOUTS after asserting DTR: the documented 3.9.2024.9
-defect is a SetCommTimeouts/read-timeout bug ("port spuriously closed right
-after open"), which would show up as reads that return 0 bytes forever.
-"""
 import sys, time, ctypes, serial
 from ctypes import wintypes
 from esptool.targets.esp32 import ESP32ROM

@@ -24,7 +24,6 @@ QuantumInfo detectQuantumBoundary(const ableton::Link::SessionState& state,
 
 void init_link_timer(TaskHandle_t task_handle);
 
-// Call after g_link is created and WiFi is up.
 void link_start_tempo_listener();
 
 void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force_start,

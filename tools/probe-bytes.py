@@ -1,12 +1,3 @@
-"""The DTR trials produce 8192 bytes with NO boot banner at all, while the
-control prints 'rst:0x1 (POWERON_RESET),boot:0x13' cleanly. Two different
-behaviours, so stop guessing from byte counts and read the actual bytes.
-
-Also fixes a methodological flaw in every earlier probe: they drained 2.5s of
-RX before syncing. If the WCH 3.9 read path wedges after one large read (its
-documented defect), that drain is what breaks sync, not the line state. So
-sync FIRST, with no pre-read, then dump whatever is left.
-"""
 import sys, time, ctypes, serial
 from ctypes import wintypes
 from esptool.targets.esp32 import ESP32ROM

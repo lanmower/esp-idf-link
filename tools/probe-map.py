@@ -1,18 +1,3 @@
-"""Which net is DTR actually on?
-
-Observations to explain:
-  - an RTS pulse always resets the chip            -> RTS is on EN
-  - DTR=1 or DTR=0 both give boot:0x13 at boot     -> DTR is NOT on IO0
-  - with dtr=1 the RTS pulse stops resetting        -> DTR overrides EN
-
-The last one is what you get if DTR drives EN HIGH while RTS pulls it LOW
-open-collector: RTS cannot win against an active high drive, and the chip
-simply never resets. So toggle DTR ALONE, with RTS untouched, and watch for a
-reset. A reset proves DTR is on EN; silence proves it is on nothing we can use.
-
-Every line change is one atomic SetCommState carrying both lines, because that
-is the only form where the RTS pulse survives DTR being asserted.
-"""
 import sys, time, ctypes, serial
 from ctypes import wintypes
 from esptool.targets.esp32 import ESP32ROM

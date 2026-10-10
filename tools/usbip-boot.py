@@ -1,15 +1,3 @@
-"""Find the 0xA4 control bits that put the ESP32 in ROM download mode.
-
-Windows has never moved DTR. The Linux ch341 driver writes both lines in one
-vendor control-out (0xA4). We now have that channel from Windows through
-usbipd, so sweep it: hold a state, flip one bit to release EN, close the
-connection so the device comes back as COM12, and read what the ROM printed.
-
-The banner is the oracle:
-    boot:0x3               -> IO0 was low at the EN edge. Found it.
-    boot:0x13              -> IO0 was high, or the chip never reset.
-    waiting for download   -> ROM serial bootloader, sync will work.
-"""
 import socket, struct, sys, time, serial
 from esptool.targets.esp32 import ESP32ROM
 
@@ -53,9 +41,6 @@ def hs(s, devid, seq, control):
 
 
 def read_rom(sec=12.0):
-    """Poll long: usbipd's reclaim re-enumerates the device, and a read issued
-    while Windows is still rebinding gets nothing at all -- which is what made
-    every trial read as 'silence' the first time round."""
     try:
         s = serial.Serial()
         s.port, s.baudrate, s.timeout = COMPORT, 115200, 0.4

@@ -1,18 +1,16 @@
-"""A CH341 serial port over raw USB/IP: no Windows driver, no WSL, no elevation.
-
-Init follows drivers/usb/serial/ch341.c exactly -- 0x5F version, 0xA1 serial
-init, 0x9A divisor/lcr, then 0xA4 for the modem lines. The divisor word goes in
-wIndex (0xCC83 = 115200 with BIT7 set, since version 0x31 > 0x27), not wValue --
-every earlier tap put it in the wrong field and read garbage.
-
-This makes the lines observable for the first time: assert the line wired to EN
-and the app's log must stop dead; release it and the ROM banner must appear.
-"""
 import socket, struct, time, sys
 
 HOST, PORT, BUSID = "127.0.0.1", 3240, "2-2"
+
+STANDARD_OUT, VENDOR_IN, VENDOR_OUT = 0x00, 0xC0, 0x40
+REQ_SET_CONFIGURATION, REQ_READ_VERSION = 0x09, 0x5F
+REQ_SERIAL_INIT, REQ_WRITE_REG, REQ_MODEM_CTRL = 0xA1, 0x9A, 0xA4
+REG_PRESCALER, REG_DIVISOR, REG_LCR, REG_LCR2 = 0x12, 0x13, 0x18, 0x25
+LCR_ENABLE_RX, LCR_ENABLE_TX, LCR_CS8 = 0x80, 0x40, 0x03
+
 BIT_DTR, BIT_RTS = 0x20, 0x40
-DIV115200, LCR = 0xCC83, 0x00C3   # (0x100-52)<<8 | 0<<2 | 3 | BIT7,  RX|TX|CS8
+DIV115200 = 0xCC83
+LCR = LCR_ENABLE_RX | LCR_ENABLE_TX | LCR_CS8
 
 def recvn(s, n):
     b = b""
@@ -43,15 +41,15 @@ class Ch341:
         return f[5], (recvn(self.s, f[6]) if f[6] else b"")
 
     def init(self, div=DIV115200):
-        self.ctl(0x00, 0x09, 1, 0)                 # SET_CONFIGURATION: bulk IN is
-        ver = self.ctl(0xC0, 0x5F, 0, 0, 2)[1]     # dead until this lands
-        self.ctl(0x40, 0xA1, 0, 0)                 # SERIAL_INIT
-        self.ctl(0x40, 0x9A, 0x1312, div)          # divisor/prescaler/factor
-        self.ctl(0x40, 0x9A, 0x2518, LCR)          # LCR2/LCR
+        self.ctl(STANDARD_OUT, REQ_SET_CONFIGURATION, 1, 0)
+        ver = self.ctl(VENDOR_IN, REQ_READ_VERSION, 0, 0, 2)[1]
+        self.ctl(VENDOR_OUT, REQ_SERIAL_INIT, 0, 0)
+        self.ctl(VENDOR_OUT, REQ_WRITE_REG, (REG_DIVISOR << 8) | REG_PRESCALER, div)
+        self.ctl(VENDOR_OUT, REQ_WRITE_REG, (REG_LCR2 << 8) | REG_LCR, LCR)
         return ver
 
     def hs(self, control, hi=0xFF):
-        return self.ctl(0x40, 0xA4, (hi << 8) | (~control & 0xFF), 0)[0]
+        return self.ctl(VENDOR_OUT, REQ_MODEM_CTRL, (hi << 8) | (~control & 0xFF), 0)[0]
 
     def read(self, sec=3.0, blk=4096, idle_break=0.4):
         buf = bytearray(); t0 = time.time(); last = time.time()

@@ -1,17 +1,3 @@
-"""Separate the three candidate root causes.
-
-1. go-serial#35: on Windows, changing RTS silently RELEASES DTR. esptool's
-   classic sequence asserts DTR then releases RTS, so IO0 is already high when
-   EN rises -> boot:0x13. Test: read back fDtrControl after every line change,
-   for each of the three ways to set a line.
-2. DTR reaches GPIO0 but the WCH 3.9 driver stops delivering RX once DTR is
-   asserted (its documented defect is a read-timeout bug). Test: clear DTR
-   AFTER the reset edge -- the ROM latches download mode at boot, so clearing
-   IO0 afterwards cannot lose it -- then read and sync on the SAME handle.
-3. DTR does not reach GPIO0 at all.
-
-Download mode is detected two ways: the ROM banner, and an actual sync.
-"""
 import sys, time, ctypes, serial
 from ctypes import wintypes
 from esptool.targets.esp32 import ESP32ROM
@@ -90,8 +76,6 @@ def escape(h, fn):
 
 
 def lines(h):
-    """What the driver believes. GET_DTRRTS needs an output buffer like the
-    SET/CLR ioctls do; fall back to the DCB if it still refuses."""
     v = wintypes.DWORD()
     got = wintypes.DWORD()
     if k32.DeviceIoControl(h, GET_DTRRTS, None, 0, ctypes.byref(v), 64,

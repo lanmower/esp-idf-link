@@ -1,28 +1,13 @@
-"""A real serial port on top of the CH341 over USB/IP -- Windows never touched.
-
-ch341.py proved bulk IN works (the app's log is legible) and that the 0xA4
-control byte moves EN (bit6) and IO0 (bit5). It had no write path, so esptool
-could never talk over this channel and every entry attempt had to hand the
-device back to the WCH driver -- whose DTR has never moved in 75+ trials.
-
-This adds bulk OUT and the pyserial subset esptool needs, so one process holds
-the EN edge, the IO0 level and the UART at the same time. That removes the last
-confound: no reclaim, no driver line state, no reopen glitch.
-
-    python tools/usbip-port.py           # sweep entry sequences, sync each
-"""
 import os, socket, struct, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ch341 import Ch341, recvn
 
-BIT_DTR, BIT_RTS = 0x20, 0x40          # 0xA4 control byte, as ch341.c drives it
+BIT_DTR, BIT_RTS = 0x20, 0x40
 EP_IN, EP_OUT = 0x82, 0x02
 
 
 class UsbipPort(Ch341):
-    """Ch341 + bulk OUT + the pyserial surface esptool uses."""
-
     def __init__(self, timeout=1.0):
         Ch341.__init__(self)
         self.rxbuf = bytearray()
@@ -35,7 +20,6 @@ class UsbipPort(Ch341):
         self.rts = False
         self.is_open = True
 
-    # -- bulk OUT ------------------------------------------------------
     def _bulk_out(self, data, chunk=64):
         for i in range(0, len(data), chunk):
             part = data[i:i + chunk]
@@ -52,7 +36,6 @@ class UsbipPort(Ch341):
     def write(self, data):
         return self._bulk_out(bytes(data))
 
-    # -- bulk IN -------------------------------------------------------
     def _pump(self):
         try:
             self.s.sendall(struct.pack(">IIIIIIIIII", 1, self.seq, self.devid,
@@ -81,7 +64,6 @@ class UsbipPort(Ch341):
         self._pump()
         return len(self.rxbuf)
 
-    # -- pyserial surface ----------------------------------------------
     @property
     def in_waiting(self):
         return self.inWaiting()
@@ -110,7 +92,6 @@ class UsbipPort(Ch341):
     def close(self):
         self.is_open = False
 
-    # -- helpers -------------------------------------------------------
     def drain(self, sec):
         t0 = time.time()
         while time.time() - t0 < sec:
@@ -146,8 +127,7 @@ class UsbipPort(Ch341):
 
 
 def trial(port, label, steps, settle=10.0):
-    """steps: list of (control_byte, hold_seconds). Then read the ROM, then sync."""
-    port.drain(settle)                       # let the app get chatty first
+    port.drain(settle)
     for control, hold in steps:
         port.hs(control)
         if hold:

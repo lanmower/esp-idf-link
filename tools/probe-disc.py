@@ -1,5 +1,3 @@
-"""DTR sustained: does it hold the chip in reset (banner appears once DTR is
-released) or does it kill the RX path (nothing ever arrives again)?"""
 import sys, time, serial
 
 PORT = sys.argv[1] if len(sys.argv) > 1 else "COM12"

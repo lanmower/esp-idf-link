@@ -1,16 +1,3 @@
-"""probe-bytes settled it: with dtr=1 the app reports I(74589) -- 74s of uptime
-right after the pulse, so the RTS/EN pulse NEVER FIRED. With dtr=0 the same
-pulse gives a fresh boot:0x13 banner. Asserting DTR breaks the RTS pulse on
-this driver.
-
-Linux's ch341 driver sets both modem bits in ONE atomic vendor control-out
-(ch341_set_handshake writes CH341_BIT_DTR|CH341_BIT_RTS together) and asserts
-both at open. Windows gets two independent calls. The closest Windows analogue
-is a single SetCommState carrying BOTH fDtrControl and fRtsControl -- never
-tried; every earlier probe changed one line per call.
-
-Reset is detected by the ROM banner, not byte counts.
-"""
 import sys, time, ctypes, serial
 from ctypes import wintypes
 from esptool.targets.esp32 import ESP32ROM
@@ -37,7 +24,6 @@ class DCB(ctypes.Structure):
 
 
 def both(h, dtr=None, rts=None):
-    """One SetCommState carrying both lines -- the atomic form."""
     d = DCB()
     d.DCBlength = ctypes.sizeof(DCB)
     if not k32.GetCommState(h, ctypes.byref(d)):
