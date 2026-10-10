@@ -460,15 +460,21 @@ effect `.cpp`s; `midi_file.h` only by `effect_arp.h` and `midi_file.cpp`). So
 the MIDI-file-player behaviour in `CLAUDE.md` is not running on the device, and
 edits there cannot break the build. Adding them to SRCS is a behaviour change.
 
-## CI commits binaries with `reset --soft`, never a rebase
+## CI commits binaries from the commit that built them, never a rebase
 
 `.github/workflows/build.yml` commits the three `.bin` files and pushes them.
 `idf.py build` leaves other unstaged files under `build/`, so a plain rebase
 refuses ("unstaged changes"); a concurrent workflow advancing the branch is the
-expected cause of a rejected push. The retry loop fetches, `git reset --soft
-FETCH_HEAD`, re-stages only the three `.bin`s and re-commits once, up to 5
-attempts. A rebase would MERGE the previous build's `.bin`s and die on "Cannot
-merge binary files".
+expected cause of a rejected push, and a rebase would MERGE the previous
+build's `.bin`s and die on "Cannot merge binary files". So the retry loop
+fetches, `git reset --hard FETCH_HEAD`, restores the three `.bin`s from the
+commit that built them (`git checkout "$BUILT_SHA" -- ...`) and commits with
+those three paths as an explicit pathspec, up to 5 attempts. `reset --soft` is
+NOT usable here: it moves HEAD to the fetched tip but leaves the index on the
+tree this checkout built, so the commit diffs `built_tree` minus `remote_tip`
+and silently reverts every source commit that landed in between -- seen as
+autobumps carrying `AGENTS.md`/`main/*.cpp`/`tools/*` reverts (`49cd311`,
+`9eb06bd`).
 
 ## ESP-IDF 6.x API breaks this tree has already absorbed
 

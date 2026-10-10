@@ -50,19 +50,30 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}"
-          git add -f build/link-idf-example.bin build/bootloader/bootloader.bin build/partition_table/partition-table.bin
+          BINS="build/link-idf-example.bin build/bootloader/bootloader.bin build/partition_table/partition-table.bin"
+          git add -f $BINS
           git diff --cached --quiet && echo "No binary changes" && exit 0
-          git commit -m "ci: update firmware binaries [skip ci]"
+          # Pathspec-limited commit: the tree is HEAD plus these three working-tree
+          # files, so nothing else in the index can enter it.
+          git commit -m "ci: update firmware binaries [skip ci]" -- $BINS
+          BUILT_SHA=$(git rev-parse HEAD)
           for attempt in 1 2 3 4 5; do
             if git push origin HEAD:${{ github.ref_name }}; then
               echo "Pushed binaries (attempt $attempt)"; exit 0
             fi
-            echo "Push rejected (attempt $attempt) -- recommitting onto latest ${{ github.ref_name }}"
+            echo "Push rejected (attempt $attempt) -- recommitting the built images onto latest ${{ github.ref_name }}"
             git fetch origin ${{ github.ref_name }}
-            git reset --soft FETCH_HEAD
-            git add -f build/link-idf-example.bin build/bootloader/bootloader.bin build/partition_table/partition-table.bin
+            # NOT --soft: that moves HEAD to the fetched tip but leaves the index on the
+            # tree this checkout built, so the next commit diffs built_tree minus
+            # remote_tip and silently reverts every source commit that landed in
+            # between. Move branch, index and worktree to the fetched tip instead, then
+            # restore only the three images from the commit that built them: the diff
+            # is then bins-only by construction.
+            git reset --hard FETCH_HEAD
+            git checkout "$BUILT_SHA" -- $BINS
             git diff --cached --quiet && echo "Binaries already current on ${{ github.ref_name }}" && exit 0
-            git commit -m "ci: update firmware binaries [skip ci]"
+            git commit -m "ci: update firmware binaries [skip ci]" -- $BINS
+            BUILT_SHA=$(git rev-parse HEAD)
             sleep 3
           done
           echo "Failed to push binaries after retries"; exit 1
