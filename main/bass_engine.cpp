@@ -18,11 +18,12 @@ static constexpr int   kBarsPerSection         = kBarsPerPhrase / kSectionsPerPh
 static constexpr int   kBarsPerChordCell       = 4;
 static constexpr int   kFirstSection           = 0;
 static constexpr int   kBridgeSection          = 1;
+static constexpr int   kPeakSection            = 2;
 static constexpr int   kLastSection            = kSectionsPerPhrase - 1;
 static constexpr int   kHalfPhraseSteps        = kStepsPerPhrase / 2;
 static constexpr double kMaxAdvanceBeatsPerProcess = 1.0;
 static constexpr double kMaxAdvanceStepsPerProcess = kMaxAdvanceBeatsPerProcess * kStepsPerBeat;
-static constexpr int   kTurnaroundTailSteps    = 8;
+static constexpr int   kTurnaroundTailSteps    = 16;
 static constexpr float kTurnaroundStartStep    = kStepsPerPhrase - kTurnaroundTailSteps;
 
 static constexpr int   kOctaveSemitones        = 12;
@@ -45,11 +46,18 @@ static constexpr float kDriftTailProbability   = 0.5f;
 
 static constexpr float kScaleJitterProbability = 0.35f;
 static constexpr int   kScaleJitterRange       = 3;
-static constexpr int   kScaleHoldMinPhrases    = 2;
-static constexpr int   kScaleHoldRangePhrases  = 3;
+static constexpr int   kScaleHoldMinPhrases    = 1;
+static constexpr int   kScaleHoldRangePhrases  = 2;
 static constexpr int   kArcPeriodPhrases       = 8;
-static constexpr float kMotifBlendProbability  = 0.4f;
+static constexpr float kMotifBlendProbability  = 0.15f;
 static constexpr float kMaxSwingSteps          = 0.4f;
+static constexpr int   kGhostVelocity          = 38;
+static constexpr float kGhostLengthSteps       = 0.25f;
+static constexpr int   kAccentVelocityBoost    = 14;
+static constexpr int   kAccentVelocityDrop     = 6;
+static constexpr int   kDropBarPeriod          = 16;
+static constexpr int   kDropBarIndex           = kDropBarPeriod - 1;
+static constexpr float kMicroTimingFullDepth   = 0.06f;
 static constexpr float kArticulatedTurnaroundThreshold = 0.6f;
 static constexpr int   kFrequentTurnaroundPeriodPhrases = 2;
 static constexpr int   kSparseTurnaroundPeriodPhrases   = 4;
@@ -208,21 +216,29 @@ void BassEngine::turnInterpreted(int base, int scIdx, const bli::Dials& dials) {
 const BassEngine::ApproachShape& BassEngine::shapeFor(int approach) {
     static const ApproachShape kShapes[APP_COUNT] = {
         {1.00f, 0.50f, 0.10f, 0.00f, 0.35f,  6.f, 18.f, 0.02f, true,  false, false,
-         0.18f,  0.44f,  0.19f, -0.05f, -0.05f,  0.06f},
-        {0.85f, 0.45f, 0.08f, 0.15f, 0.50f, 22.f, 55.f, 0.00f, false, false, false,
-         0.14f,  0.00f,  0.44f,  0.04f, -0.05f, -0.04f},
+         0.22f,  0.44f,  0.19f, -0.05f, -0.05f,  0.06f,
+         0.00f, 0.02f, 2, 0,  0.00f, 0x1111, 0.00f},
+        {0.72f, 0.80f, 0.08f, 0.15f, 0.50f, 22.f, 55.f, 0.00f, false, false, false,
+         0.20f,  0.00f,  0.44f,  0.04f, -0.05f, -0.04f,
+         0.05f, 0.04f, 4, 0, -0.04f, 0x4448, 0.08f},
         {0.50f, 0.55f, 0.12f, 0.38f, 0.60f, 30.f, 25.f, 0.05f, false, true,  true,
-         0.22f,  0.33f,  0.06f,  0.19f,  0.15f,  0.28f},
+         0.30f,  0.33f,  0.06f,  0.19f,  0.15f,  0.28f,
+         0.35f, 0.03f, 4, 0, -0.12f, 0x4441, 0.26f},
         {0.32f, 0.70f, 0.18f, 0.45f, 0.75f, 34.f, 30.f, 0.09f, false, true,  true,
-         0.10f,  0.11f,  0.31f, -0.16f, -0.25f,  0.40f},
-        {0.25f, 0.22f, 0.35f, 0.50f, 0.25f, 12.f, 15.f, 0.00f, false, false, false,
-         0.10f, -0.11f, -0.44f, -0.06f, -0.30f, -0.26f},
-        {0.40f, 1.60f, 0.06f, 0.10f, 0.20f, 10.f, 45.f, 0.03f, false, false, false,
-         0.70f, -0.33f, -0.31f, -0.26f,  0.55f, -0.15f},
+         0.20f,  0.11f,  0.31f, -0.16f, -0.25f,  0.40f,
+         0.10f, 0.12f, 3, 4, -0.08f, 0x1224, 0.14f},
+        {0.25f, 0.22f, 0.35f, 0.50f, 0.25f, 12.f, 15.f, 0.045f, false, false, false,
+         0.20f, -0.11f, -0.44f, -0.06f, -0.30f, -0.26f,
+         0.00f, 0.18f, 2, 0,  0.00f, 0x4444, 0.00f},
+        {0.40f, 1.60f, 0.14f, 0.10f, 0.30f, 10.f, 45.f, 0.03f, false, false, false,
+         0.70f, -0.33f, -0.31f, -0.26f,  0.55f, -0.15f,
+         0.00f, 0.10f, 2, 0,  0.00f, 0x0009, 0.05f},
         {0.20f, 2.50f, 0.15f, 0.20f, 0.15f,  8.f, 35.f, 0.00f, false, false, false,
-         1.10f, -0.44f, -0.44f, -0.36f,  0.60f, -0.26f},
+         1.10f, -0.44f, -0.44f, -0.36f,  0.60f, -0.26f,
+         0.00f, 0.06f, 8, 0,  0.00f, 0x0001, 0.00f},
         {0.55f, 0.35f, 0.22f, 0.50f, 0.85f, 36.f, 40.f, 0.06f, false, true,  true,
-         0.16f,  0.22f, -0.06f,  0.09f, -0.10f,  0.17f},
+         0.24f,  0.22f, -0.06f,  0.09f, -0.10f,  0.17f,
+         0.05f, 0.22f, 4, 6, -0.10f, 0x0812, 0.20f},
     };
     if (approach < APP_ROLL || approach >= APP_COUNT) approach = APP_ROLL;
     return kShapes[approach];
@@ -250,6 +266,32 @@ float BassEngine::syncopationFraction(const MS m[bli::kStepsPerBar]) {
     return occupied > 0 ? (float)offGrid / (float)occupied : 0.f;
 }
 
+void BassEngine::rotateMotif(const MS src[bli::kStepsPerBar], MS dst[bli::kStepsPerBar],
+                             int shiftSteps) {
+    const int shift = ((shiftSteps % bli::kStepsPerBar) + bli::kStepsPerBar) % bli::kStepsPerBar;
+    for (int i = 0; i < bli::kStepsPerBar; i++)
+        dst[(i + shift) % bli::kStepsPerBar] = src[i];
+}
+
+void BassEngine::insertGhosts(MS m[bli::kStepsPerBar], const ApproachShape& sh) {
+    if (sh.ghostProb <= 0.f) return;
+    bool real[bli::kStepsPerBar];
+    for (int i = 0; i < bli::kStepsPerBar; i++) real[i] = (m[i].note >= 0);
+    for (int i = 0; i < bli::kStepsPerBar; i++) {
+        if (real[i]) continue;
+        const int left  = (i > 0) ? i - 1 : bli::kStepsPerBar - 1;
+        const int right = (i + 1) % bli::kStepsPerBar;
+        int src = -1;
+        if (real[left]) src = left;
+        else if (real[right]) src = right;
+        if (src < 0) continue;
+        if (!randChance(sh.ghostProb)) continue;
+        m[i] = m[src];
+        m[i].vel = kGhostVelocity;
+        m[i].len = kGhostLengthSteps;
+    }
+}
+
 void BassEngine::shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPerBar],
                           int bar, int root, int scIdx) {
     static constexpr float kMetricalWeightUnit = 0.3333333f;
@@ -259,8 +301,11 @@ void BassEngine::shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPer
     static constexpr int   kQuestionGapStart   = 8;
     static constexpr int   kQuestionGapEnd     = 12;
     static constexpr float kAnswerFillProb     = 0.6f;
-    static constexpr int   kSyncAdjustPasses   = 4;
+    static constexpr int   kSyncAdjustPasses   = 16;
     static constexpr float kSyncTolerance      = 0.02f;
+    static constexpr int   kSyncBoundaryBars   = 4;
+    static constexpr float kSyncBoundaryGain   = 1.6f;
+    static constexpr float kSyncBodyScale      = 0.70f;
     static constexpr float kOctaveJumpStepProb = 0.35f;
     static constexpr float kPickupProb         = 0.35f;
     static constexpr float kPickupLengthSteps  = 0.25f;
@@ -270,6 +315,11 @@ void BassEngine::shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPer
     static constexpr float kQuarterTurn        = 1.57079632679489661923f;
 
     const ApproachShape& sh = shapeFor(m_approach);
+
+    if (bar % kDropBarPeriod == kDropBarIndex || randChance(sh.restBarProb)) {
+        for (int i = 0; i < bli::kStepsPerBar; i++) out[i] = mn(kEmptyNote, 0.f, 0, 0);
+        return;
+    }
 
     for (int i = 0; i < bli::kStepsPerBar; i++) out[i] = src[i];
 
@@ -305,22 +355,29 @@ void BassEngine::shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPer
         }
     }
 
-    if (sh.syncTarget > 0.f) {
+    const int barInSection = bar % kBarsPerSection;
+    const float syncTarget = std::min(1.0f, sh.syncTarget *
+        (barInSection >= kBarsPerSection - kSyncBoundaryBars ? kSyncBoundaryGain : kSyncBodyScale));
+
+    if (syncTarget > 0.f) {
         for (int pass = 0; pass < kSyncAdjustPasses; pass++) {
             const float frac = syncopationFraction(out);
-            if (frac >= sh.syncTarget - kSyncTolerance && frac <= sh.syncTarget + kSyncTolerance) break;
-            const bool needMore = frac < sh.syncTarget;
+            if (frac >= syncTarget - kSyncTolerance && frac <= syncTarget + kSyncTolerance) break;
+            const bool needMore = frac < syncTarget;
+            bool moved = false;
             for (int i = 0; i < bli::kStepsPerBar; i++) {
                 const bool offGrid = (i % 2 != 0);
                 if (needMore == offGrid) continue;
                 if (out[i].note < 0) continue;
                 const int target = needMore ? i + 1 : i - 1;
                 if (target < 0 || target >= bli::kStepsPerBar) continue;
-                if (out[target].note >= 0) continue;
+                const MS tmp = out[target];
                 out[target] = out[i];
-                out[i].note = kEmptyNote;
+                out[i] = tmp;
+                moved = true;
                 break;
             }
+            if (!moved) break;
         }
     }
 
@@ -353,7 +410,7 @@ void BassEngine::shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPer
             if (out[i].note >= 0 && randChance(kOctaveJumpStepProb)) out[i].note += kOctaveSemitones;
     }
 
-    if (sh.pickups && bar % kBarsPerChordCell == kBarsPerChordCell - 1 && randChance(kPickupProb)) {
+    if (sh.pickups && bar % sh.cellBars == sh.cellBars - 1 && randChance(kPickupProb)) {
         const int last = bli::kStepsPerBar - 1;
         if (out[last].note < 0) {
             MS lead = mn(kEmptyNote, 0.f, 0, 0);
@@ -367,18 +424,24 @@ void BassEngine::shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPer
         }
     }
 
-    const float barPhase = (float)(bar % kBarsPerSection) / (float)kBarsPerSection;
+    const float barPhase = (float)barInSection / (float)kBarsPerSection;
     const float velLfo   = std::sin(kTwoPi * barPhase);
     const float filtLfo  = std::sin(kTwoPi * barPhase + kQuarterTurn);
+
+    const float microDepth = std::min(1.0f, sh.timingSteps / kMicroTimingFullDepth);
 
     for (int i = 0; i < bli::kStepsPerBar; i++) {
         if (out[i].note < 0) continue;
         out[i].len = std::max(sh.minGateSteps, out[i].len * sh.gate);
         out[i].vel = std::max(1, std::min(127,
-            out[i].vel + (int)(velLfo * sh.velDrift) + (randBelow(kVelocityWobble * 2 + 1) - kVelocityWobble)));
+            out[i].vel + (int)(velLfo * sh.velDrift) + (randBelow(kVelocityWobble * 2 + 1) - kVelocityWobble)
+            + ((sh.accentMask >> i) & 1 ? kAccentVelocityBoost : -kAccentVelocityDrop)));
         out[i].fcc = std::max(0, std::min(127, out[i].fcc + (int)(filtLfo * sh.filtSweepDepth)));
-        out[i].tsBeats += (rand01() * 2.0f - 1.0f) * sh.timingSteps / (float)kStepsPerBeat;
+        out[i].tsBeats += (bli::microOffsetForStep(i) * microDepth + sh.voiceOffsetSteps)
+                          / (float)kStepsPerBeat;
     }
+
+    insertGhosts(out, sh);
 
     clampRange(out, root);
 }
@@ -439,38 +502,67 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
 
     int secProgs[kSectionsPerPhrase] = {m_progIdx, (m_progIdx + 1) % kNumProgs,
                                         (m_progIdx + 2) % kNumProgs, m_progIdx};
+    secProgs[kBridgeSection] = randBelow(kNumProgs);
+    secProgs[kPeakSection]   = randBelow(kNumProgs);
 
-    float swingSteps = voice.grooveSwing * kMaxSwingSteps;
+    const ApproachShape& sh = shapeFor(m_approach);
+    const int cellBars = std::max(1, sh.cellBars);
+    const float swingSteps = std::min(kMaxSwingSteps, sh.swingSteps);
+
+    int distinctBars = 0;
+    int syncPermilleSum = 0;
+    int noteMin = 127;
+    int noteMax = 0;
+    uint32_t barHash[kBarsPerPhrase] = {};
+    int seenCount = 0;
 
     for (int bar = 0; bar < kBarsPerPhrase; bar++) {
         int sec       = bar / kBarsPerSection;
-        int barInSec  = bar % kBarsPerSection;
-        int barInCell = barInSec % kBarsPerChordCell;
+        int cellIdx   = (bar / cellBars) % kBarsPerChordCell;
 
         const int* secProg = kChordDegreeProgs[secProgs[sec]];
-        int rootSemitoneOffset = scaleDegreeSemitones(m_scaleIdx, secProg[barInCell]);
+        int rootSemitoneOffset = scaleDegreeSemitones(m_scaleIdx, secProg[cellIdx]);
 
         char part;
         if (sec == kFirstSection || sec == kLastSection) {
-            part = structure[barInCell];
+            part = structure[cellIdx];
         } else if (sec == kBridgeSection) {
             static const char BRIDGE[kBarsPerChordCell] = {'B','A','B','A'};
-            part = BRIDGE[barInCell];
+            part = BRIDGE[cellIdx];
         } else {
             static const char PEAK[kBarsPerChordCell]   = {'C','B','C','B'};
-            part = PEAK[barInCell];
+            part = PEAK[cellIdx];
         }
 
         const MS* motif = (part=='A') ? motA : (part=='B') ? motB :
                           (part=='C') ? motC : motD;
 
+        MS rotated[bli::kStepsPerBar];
+        if (sh.phaseShiftBars > 0) {
+            rotateMotif(motif, rotated, (bar / sh.phaseShiftBars) % bli::kStepsPerBar);
+            motif = rotated;
+        }
+
         MS barMotif[bli::kStepsPerBar];
         shapeBar(barMotif, motif, bar, kRootNoteE2, m_scaleIdx);
+
+        uint32_t h = 2166136261u;
+        for (int i = 0; i < bli::kStepsPerBar; i++) {
+            h = (h ^ (uint32_t)(barMotif[i].note + 1)) * 16777619u;
+            h = (h ^ (uint32_t)(int)(barMotif[i].tsBeats * 64.f)) * 16777619u;
+        }
+        bool dup = false;
+        for (int k = 0; k < seenCount; k++) if (barHash[k] == h) { dup = true; break; }
+        if (!dup) barHash[seenCount++] = h;
+        if (!dup) distinctBars++;
+        syncPermilleSum += (int)(syncopationFraction(barMotif) * 1000.f);
 
         for (int i = 0; i < bli::kStepsPerBar; i++) {
             if (barMotif[i].note < 0) continue;
             int note = barMotif[i].note + rootSemitoneOffset;
             note = std::max(0, std::min(127, note));
+            noteMin = std::min(noteMin, note);
+            noteMax = std::max(noteMax, note);
 
             float tsSteps = barMotif[i].tsBeats * kStepsPerBeat;
             float basePos = (float)(bar * bli::kStepsPerBar + i);
@@ -501,9 +593,12 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
                   return a.posInSteps < b.posInSteps;
               });
 
-    ESP_LOGI(TAG, "Phrase[%d] approach=%d bank=%d scale=%s prog=%d notes=%d bars=64",
+    ESP_LOGI(TAG, "Phrase[%d] approach=%d bank=%d scale=%s prog=%d notes=%d bars=%d"
+                  " uniq=%d sync=%d reg=%d..%d",
              m_phraseCount, m_approach, m_activeBank, bli::scaleName(m_scaleIdx), m_progIdx,
-             (int)m_phrase.size());
+             (int)m_phrase.size(), kBarsPerPhrase, distinctBars,
+             syncPermilleSum / kBarsPerPhrase,
+             noteMin <= noteMax ? noteMin : 0, noteMin <= noteMax ? noteMax : 0);
 }
 
 void BassEngine::playNote(const NoteSlot& n, double bpm) {

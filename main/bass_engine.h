@@ -95,12 +95,22 @@ private:
         float swingBias;
         float articBias;
         float colorBias;
+        float   ghostProb;
+        float   restBarProb;
+        int     cellBars;
+        int     phaseShiftBars;
+        float   voiceOffsetSteps;
+        uint16_t accentMask;
+        float   swingSteps;
     };
     static const ApproachShape& shapeFor(int approach);
     bli::Dials dialsForApproach() const;
     void shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPerBar],
                   int bar, int root, int scIdx);
     static float syncopationFraction(const MS m[bli::kStepsPerBar]);
+    static void rotateMotif(const MS src[bli::kStepsPerBar], MS dst[bli::kStepsPerBar],
+                            int shiftSteps);
+    void insertGhosts(MS m[bli::kStepsPerBar], const ApproachShape& sh);
 
     void turnInterpreted(int base, int scIdx, const bli::Dials& dials);
 
