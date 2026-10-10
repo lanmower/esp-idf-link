@@ -99,6 +99,13 @@ carry multicast. Committed here in `88d6866` / `622f7ca`.
 **Any future Link version bump must re-apply that hook.** Losing it
 compiles perfectly and fails only at runtime, as silent non-discovery.
 
+There is no `.gitmodules` in this repo. `Dockerfile`, `setup.sh` and
+`.github/workflows/build.yml` therefore deliberately do NOT initialise
+submodules: with nothing declared those steps were no-ops, but they are exactly
+the mechanism that would overwrite the fork above the moment a `.gitmodules`
+entry comes back. Do not re-add them, and do not reintroduce Link as a submodule
+to satisfy them.
+
 ## Metronome and MIDI clock are hardware-scheduled, not tick-emitted
 
 The click and the 24 ppqn `0xF8` come from a **hardware-scheduled
@@ -231,7 +238,9 @@ the port -- passing `--baud` into the sync is what made the first 921600
 attempt fail. Measured on the 1262560-byte app image: **115200 -> 72.2 s**
 (139.9 kbit/s) versus **460800 -> 19.4 s** (519.9 kbit/s, `Hash of data
 verified`, boots `boot:0x13`). Two consecutive runs both measured 19.4 s, so
-460800 is repeatable, not a lucky run. 921600 dies right after `Changing baud rate to 921600...
+460800 is repeatable, not a lucky run. Both numbers are the USB/IP path only;
+`flash-ticker.js` drives a real COM port through the WCH driver at `--baud
+921600`, a different transport that was not the one measured here. 921600 dies right after `Changing baud rate to 921600...
 Changed.` with `FatalError: No more data to read from the serial port` from
 `reset_chip -> soft_reset -> flash_begin`: no `Writing` line at all, nothing
 written, chip left in the stub. `--dry` recovers it and the old firmware is

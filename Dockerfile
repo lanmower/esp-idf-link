@@ -15,7 +15,5 @@ RUN echo "source /opt/esp/idf/export.sh > /dev/null 2>&1" >> ~/.bashrc
 
 COPY . .
 
-RUN git submodule update --init --recursive
-
 ENTRYPOINT [ "/opt/esp/entrypoint.sh" ]
 CMD ["/bin/bash", "-c"]

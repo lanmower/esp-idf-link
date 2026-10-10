@@ -20,9 +20,9 @@ if (spawnSync('gh', ['--version'], { encoding: 'utf8' }).status !== 0) {
 }
 
 const IMAGES = [
-  ['build/bootloader/bootloader.bin', '0x1000'],
-  ['build/partition_table/partition-table.bin', '0x8000'],
-  ['build/link-idf-example.bin', '0x10000'],
+  'build/bootloader/bootloader.bin',
+  'build/partition_table/partition-table.bin',
+  'build/link-idf-example.bin',
 ];
 
 let runId = null;
@@ -78,7 +78,7 @@ if (d.status !== 0) die(`gh run download failed: ${d.stderr || d.stdout}`);
 const roots = [tmp, path.join(tmp, picked.artifact)];
 const found = [];
 for (const c of roots) {
-  const hits = IMAGES.map(([rel]) => {
+  const hits = IMAGES.map((rel) => {
     const withPrefix = path.join(c, rel);
     if (fs.existsSync(withPrefix)) return withPrefix;
     const bare = path.join(c, rel.replace(/^build[\\/]/, ''));
@@ -87,9 +87,9 @@ for (const c of roots) {
   });
   if (hits.every(Boolean)) { found.push(...hits); break; }
 }
-if (!found.length) die(`artifact did not contain ${IMAGES.map(([r]) => r).join(', ')} -- refusing to clobber build/`);
+if (!found.length) die(`artifact did not contain ${IMAGES.join(', ')} -- refusing to clobber build/`);
 
-IMAGES.forEach(([rel], i) => {
+IMAGES.forEach((rel, i) => {
   const src = found[i];
   const dst = path.join(root, rel);
   fs.mkdirSync(path.dirname(dst), { recursive: true });

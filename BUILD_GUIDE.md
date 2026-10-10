@@ -16,7 +16,6 @@ bash setup.sh
 This script will:
 - Check for Docker installation
 - Build the Docker image with all ESP-IDF dependencies pre-configured
-- Initialize all git submodules
 
 ### Building the Project
 
@@ -96,8 +95,8 @@ docker run --rm \
 - `main/io_helpers.cpp` - Hardware I/O utilities (ADC, touch, buzzer)
 - `main/midi_file.cpp` - MIDI file loading
 - `main/network_midi.cpp` - HTTP server for MIDI uploads
-- `main/wifi_config.cpp` - WiFi provisioning
-- `main/effect_*.cpp` - Audio effects (arp, filter, sidechain)
+- `main/wifi_config.cpp` - WiFi mesh AP/STA host election and Link multicast relay
+- `main/effect_*.cpp` - Audio effects (arp, filter, sidechain) -- not listed in `main/CMakeLists.txt` SRCS, so not compiled today
 - `main/synth_*.cpp` - Synthesizer implementations
 
 ### Docker Configuration
@@ -136,8 +135,8 @@ docker run --rm -it --device=/dev/ttyUSB0 -v $(pwd):/project -w /project esp-idf
 
 ## Docker Image Details
 
-The Docker image is built from `espressif/idf:v6.1-full` which includes:
-- ESP-IDF v6.1 framework
+The Docker image is built from `espressif/idf:latest`, an unpinned tag, so the framework version
+is whatever that tag resolves to at build time. It includes:
 - All required toolchains (xtensa-esp-elf, etc.)
 - All ESP-IDF components
 - Pre-built WiFi binaries for all ESP32 variants
@@ -147,12 +146,7 @@ The Docker image is built from `espressif/idf:v6.1-full` which includes:
 ## Customization
 
 ### Build Directory
-Default: `build/`
-
-To use a different directory:
-```bash
-BUILD_DIR=/custom/path bash build.sh
-```
+Always `build/` -- `build.sh` hardcodes it and takes no directory argument; `clean` is its only one.
 
 ### Docker Image Name
 Default: `esp-idf-link:latest`
@@ -184,7 +178,7 @@ sudo usermod -a -G dialout $USER
 ### Build Fails Inside Container
 ```bash
 # Pull latest ESP-IDF image
-docker pull espressif/idf:v6.1-full
+docker pull espressif/idf:latest
 
 # Rebuild the image
 docker build --no-cache -t esp-idf-link .
@@ -239,16 +233,15 @@ docker run --rm --device=/dev/ttyUSB0 -v $(pwd):/project -w /project esp-idf-lin
 
 Expected output on serial monitor:
 - System initialization messages
-- WiFi connection attempts or provisioning mode
+- WiFi mesh host-election or station-join attempts
 - SPIFFS filesystem initialization
 - Link sync and MIDI processing ready
 
 ## Build Output Locations
 
-- **Application Binary**: `build/esp-idf/main/link-idf-example.bin`
-- **Bootloader**: `build/esp-idf/esp32/bootloader/bootloader.bin`
-- **Partition Table**: `build/esp-idf/esp32/partitions.bin`
-- **Build Logs**: `build/log/`
+- **Application Binary**: `build/link-idf-example.bin`
+- **Bootloader**: `build/bootloader/bootloader.bin`
+- **Partition Table**: `build/partition_table/partition-table.bin`
 
 ## Clean Build
 

@@ -25,14 +25,6 @@ echo "Building Docker image: $IMAGE_NAME:$IMAGE_TAG"
 docker build --no-cache -t "$IMAGE_NAME:$IMAGE_TAG" "$SCRIPT_DIR"
 
 echo ""
-echo "Initializing git submodules..."
-docker run --rm \
-  -v "$SCRIPT_DIR":/project \
-  -w /project \
-  "$IMAGE_NAME:$IMAGE_TAG" \
-  bash -c "git submodule update --init --recursive"
-
-echo ""
 echo "[OK] Setup complete!"
 echo ""
 echo "To build the project:"
