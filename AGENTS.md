@@ -374,8 +374,9 @@ code that reads the macro):
   field comments said "speed" and "transpose" -- those were stale and are gone.
   The accessors are still `getPot1Value`/`getPot2Value`, called from
   `effect_arp.cpp`.
-- Pad gesture timings are in `main/main.cpp`: `DOUBLE_TAP_TIME_MS = 300`,
-  `HOLD_TIME_MS = 200` (both milliseconds).
+- `DOUBLE_TAP_TIME_MS = 300` and `HOLD_TIME_MS = 200` (`main/main.cpp`,
+  externed in `main/main.h`) are **dead constants**: nothing reads either one,
+  so they are not the pad gesture timings despite their names.
 - Synth target is one of `SynthType { SYNTH_MININOVA, SYNTH_MICROKORG }` in
   `g_synth_type` (`main/main.h`); the per-target MIDI behaviour is listed
   under MIDI emission above.

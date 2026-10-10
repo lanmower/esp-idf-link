@@ -13,10 +13,12 @@ bash setup.sh
 # Build firmware
 bash build.sh
 
-# Flash to device
-docker run --rm --device=/dev/ttyUSB0 -v $(pwd):/project \
-  esp-idf-link bash -c \
-  "source /opt/esp/idf/export.sh && idf.py -p /dev/ttyUSB0 flash"
+# Flash to device (Windows)
+node flash-ticker.js COM3       # needs the BOOT/IO0 button held
+python tools/flash-usbip.py     # no BOOT hold (USB/IP)
+
+# Flash on Linux/WSL2 instead (serial device at /dev/ttyUSB0)
+docker compose run --rm flash
 ```
 
 See [BUILD_GUIDE.md](BUILD_GUIDE.md) for detailed build instructions and [QUICK_BUILD.txt](QUICK_BUILD.txt) for quick reference.

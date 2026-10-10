@@ -11,7 +11,8 @@ FIRST TIME SETUP:
 BUILD PROJECT:
   bash build.sh
 
-BUILD WITH DOCKER-COMPOSE:
+BUILD WITH DOCKER-COMPOSE (hangs on WSL2 + Docker Desktop when only sources
+changed -- prefer "bash build.sh", which runs docker directly):
   docker-compose run --rm build
 
 FLASH TO DEVICE (replace /dev/ttyUSB0 with your port):
@@ -43,8 +44,11 @@ FULL DOCKER IMAGE REBUILD:
   docker build --no-cache -t esp-idf-link .
   bash build.sh
 
-CUSTOM BUILD DIRECTORY:
-  BUILD_DIR=/custom/path bash build.sh
+BUILD ARGUMENTS:
+  bash build.sh          # incremental
+  bash build.sh clean    # rm -rf build/ first
+  # build/ is hardcoded -- build.sh accepts no BUILD_DIR override
+  # override the image with IMAGE_NAME=... IMAGE_TAG=... bash build.sh
 
 BUILD AND FLASH IN ONE COMMAND:
   bash build.sh && docker run --rm --device=/dev/ttyUSB0 \

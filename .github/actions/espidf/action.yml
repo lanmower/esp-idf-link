@@ -9,11 +9,11 @@ branding:
 inputs:
   path:
     description: "Relative path under $GITHUB_WORKSPACE to place the repository"
-    default: "link-esp-example"
+    default: "."
     required: false
   esp_idf_version:
     description: "Version of ESP-IDF docker image to use"
-    default: "v4.4.4"
+    default: "latest"
     required: false
   esp_idf_docker_image:
     description: "Docker Repository to obtain the ESP-IDF image from"

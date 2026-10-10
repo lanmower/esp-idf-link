@@ -8,7 +8,7 @@ if [ ! -e "$DEVICE" ]; then
 fi
 
 echo "Erasing NVS (WiFi credentials and settings)..."
-python -m esptool --chip esp32 --port "$DEVICE" erase-region 0x9000 0x6000
+python -m esptool --chip esp32 --port "$DEVICE" erase-region 0x11000 0x6000
 
 echo ""
 echo "[OK] NVS erased! Device will now enter provisioning mode on next boot."

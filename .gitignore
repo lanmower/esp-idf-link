@@ -4,7 +4,8 @@ sdkconfig
 sdkconfig.old
 dependencies.lock
 *.bin
-components/
+components/*
+!components/link-esp/
 # IDE
 .devcontainer/
 .claude/

@@ -41,6 +41,7 @@ jobs:
           retention-days: 90
 
       - name: Commit binaries
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
