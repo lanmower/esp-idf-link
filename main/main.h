@@ -74,6 +74,10 @@ constexpr int MIDI_VALUE_MAX = 127;
 #define LENGTH_8BEAT           10
 #define LENGTH_4BEAT           5
 
+#define METRONOME_ACCENT_CYCLE_BEATS 16
+static_assert(LINK_QUANTUM == METRONOME_ACCENT_CYCLE_BEATS,
+              "FREQ_16BEAT/FREQ_8BEAT/FREQ_4BEAT is a 16/8/4-beat division of one LINK_QUANTUM accent cycle");
+
 #define MIDI_TIMING_CLOCK 0xF8
 #define MIDI_START 0xFA
 #define MIDI_STOP 0xFC

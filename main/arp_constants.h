@@ -132,8 +132,6 @@ const std::vector<std::vector<int>> ARP_BASSLINE_PATTERNS = {
 };
 const int NUM_ARP_BASSLINE_PATTERNS = ARP_BASSLINE_PATTERNS.size();
 
-const int MAX_ARP_INDEX_WRAP = 128;
-
 enum ArpPattern { UP, DOWN, UP_DOWN, DOWN_UP, RANDOM, ARP_PATTERN_COUNT };
 const int NUM_ARP_PATTERNS = ARP_PATTERN_COUNT;
 
