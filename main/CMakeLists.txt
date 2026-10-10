@@ -18,6 +18,7 @@ idf_component_register(SRCS
         esp_wifi
         esp_http_server
         esp_eth
+        spiffs
         driver
         log
         freertos

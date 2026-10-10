@@ -1,7 +1,9 @@
 #include "network_midi.h"
+#include "esp_err.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_spiffs.h"
 #include "nvs_flash.h"
 #include <cstring>
 #include <algorithm>
@@ -16,6 +18,10 @@ static char g_device_ip[16] = {0};
 
 static const char* kLoopsDir = "/spiffs/loops";
 static const char* kUploadPrefix = "/upload/";
+
+static const char* kStoragePartition = "storage";
+static const char* kStorageBasePath = "/spiffs";
+static constexpr size_t kStorageMaxFiles = 5;
 
 static bool is_single_clip_name(const char* name) {
     if (name[0] == '\0') {
@@ -56,6 +62,25 @@ static esp_err_t upload_handler(httpd_req_t* req) {
 
     if (req->content_len == 0) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_FAIL;
+    }
+
+    size_t storage_total = 0;
+    size_t storage_used = 0;
+    if (esp_spiffs_info(kStoragePartition, &storage_total, &storage_used) != ESP_OK) {
+        ESP_LOGE(TAG, "Clip storage is not mounted; rejecting upload of %s", filename);
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        httpd_resp_send(req, "Clip storage not mounted", HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+    }
+
+    size_t storage_free = storage_total > storage_used ? storage_total - storage_used : 0;
+    if (req->content_len > storage_free) {
+        ESP_LOGE(TAG, "Rejecting %u byte upload of %s: only %u of %u bytes free",
+                 (unsigned)req->content_len, filename,
+                 (unsigned)storage_free, (unsigned)storage_total);
+        httpd_resp_set_status(req, "413 Payload Too Large");
+        httpd_resp_send(req, "Upload exceeds free clip storage", HTTPD_RESP_USE_STRLEN);
         return ESP_FAIL;
     }
 
@@ -169,7 +194,39 @@ static void get_device_ip() {
     }
 }
 
+static void mount_clip_storage() {
+    if (esp_spiffs_mounted(kStoragePartition)) {
+        return;
+    }
+
+    esp_vfs_spiffs_conf_t conf = {
+        .base_path = kStorageBasePath,
+        .partition_label = kStoragePartition,
+        .max_files = kStorageMaxFiles,
+        .format_if_mount_failed = false,
+    };
+
+    esp_err_t err = esp_vfs_spiffs_register(&conf);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG,
+                 "SPIFFS mount of partition \"%s\" at \"%s\" failed: %s. Upload and clear stay "
+                 "inert until the partition holds a SPIFFS image: run flash_midi_data.sh to write "
+                 "the 0x317000 storage image, or the partition was never formatted.",
+                 kStoragePartition, kStorageBasePath, esp_err_to_name(err));
+        return;
+    }
+
+    size_t total_bytes = 0;
+    size_t used_bytes = 0;
+    if (esp_spiffs_info(kStoragePartition, &total_bytes, &used_bytes) == ESP_OK) {
+        ESP_LOGI(TAG, "Clip storage mounted at %s: %u of %u bytes used",
+                 kStorageBasePath, (unsigned)used_bytes, (unsigned)total_bytes);
+    }
+}
+
 void network_midi_init() {
+    mount_clip_storage();
+
     if (g_server) {
         return;
     }
