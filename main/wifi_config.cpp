@@ -17,14 +17,17 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-static const ip4_addr_t LINK_DISCOVERY_MULTICAST_GROUP = { .addr = PP_HTONL(LWIP_MAKEU32(224, 76, 78, 75)) };
+static const ip4_addr_t LINK_DISCOVERY_MULTICAST_GROUP = {
+    .addr = PP_HTONL(LWIP_MAKEU32(LINK_MCAST_OCTET_A, LINK_MCAST_OCTET_B,
+                                  LINK_MCAST_OCTET_C, LINK_MCAST_OCTET_D))
+};
 
 static void igmp_join_link(esp_netif_t* netif) {
     if (!netif) return;
     struct netif* lwip_netif = (struct netif*)esp_netif_get_netif_impl(netif);
     if (!lwip_netif) return;
     err_t err = igmp_joingroup_netif(lwip_netif, &LINK_DISCOVERY_MULTICAST_GROUP);
-    ESP_LOGI("WIFI", "IGMP join 224.76.78.75: %s", err == ERR_OK ? "ok" : "failed");
+    ESP_LOGI("WIFI", "IGMP join " LINK_DISCOVERY_MULTICAST_ADDR ": %s", err == ERR_OK ? "ok" : "failed");
 }
 
 static const char* TAG = "WIFI";
@@ -299,9 +302,7 @@ extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, u
 
 static void link_multicast_relay_task(void*) {
     static const char* RELAY_TAG = "LINK_RELAY";
-    static const char* MCAST_ADDR = "224.76.78.75";
-    static const char* AP_ADDR    = "192.168.4.1";
-    static const uint16_t LINK_PORT = 20808;
+    static const char* AP_ADDR   = "192.168.4.1";
 
     int rs = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (rs < 0) { ESP_LOGE(RELAY_TAG, "recv socket failed"); vTaskDelete(NULL); return; }
@@ -309,13 +310,13 @@ static void link_multicast_relay_task(void*) {
     setsockopt(rs, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
     struct sockaddr_in bind_addr = {};
     bind_addr.sin_family      = AF_INET;
-    bind_addr.sin_port        = htons(LINK_PORT);
+    bind_addr.sin_port        = htons(LINK_DISCOVERY_MULTICAST_PORT);
     bind_addr.sin_addr.s_addr = INADDR_ANY;
     if (bind(rs, (struct sockaddr*)&bind_addr, sizeof(bind_addr)) < 0) {
         ESP_LOGE(RELAY_TAG, "bind failed"); close(rs); vTaskDelete(NULL); return;
     }
     struct ip_mreq mreq = {};
-    inet_aton(MCAST_ADDR, &mreq.imr_multiaddr);
+    inet_aton(LINK_DISCOVERY_MULTICAST_ADDR, &mreq.imr_multiaddr);
     inet_aton(AP_ADDR,    &mreq.imr_interface);
     setsockopt(rs, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
 
@@ -328,14 +329,14 @@ static void link_multicast_relay_task(void*) {
     }
 
     uint32_t ap_ip    = inet_addr(AP_ADDR);
-    uint32_t mcast_ip = inet_addr(MCAST_ADDR);
+    uint32_t mcast_ip = inet_addr(LINK_DISCOVERY_MULTICAST_ADDR);
 
     static const uint16_t MAX_UDP_PAYLOAD_BYTES = 1500 - 20 - 8;
     static uint8_t payload[MAX_UDP_PAYLOAD_BYTES];
 
     int rx_log = 0;
 
-    ESP_LOGI(RELAY_TAG, "Ableton Link relay running on %s:%u", MCAST_ADDR, LINK_PORT);
+    ESP_LOGI(RELAY_TAG, "Ableton Link relay running on %s:%u", LINK_DISCOVERY_MULTICAST_ADDR, LINK_DISCOVERY_MULTICAST_PORT);
 
     for (;;) {
         struct sockaddr_in src = {};
@@ -361,7 +362,7 @@ static void link_multicast_relay_task(void*) {
 
         uint8_t* buf = (uint8_t*)p->payload;
         uint16_t sport = src.sin_port;
-        uint16_t dport = PP_HTONS(LINK_PORT);
+        uint16_t dport = PP_HTONS(LINK_DISCOVERY_MULTICAST_PORT);
         uint16_t ulen  = lwip_htons((uint16_t)(8 + n));
         const uint16_t udp_checksum_omitted = 0;
         memcpy(buf + 0, &sport, 2);

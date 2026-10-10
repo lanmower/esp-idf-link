@@ -30,7 +30,6 @@ static constexpr int     WATCHDOG_MISSED_PULSES       = 3;
 static constexpr int64_t WATCHDOG_GRACE_US            = 5000;
 
 #define LINK_PHASE_PORT 20810
-static const char* LINK_MCAST_ADDR = "224.76.78.75";
 static int s_clk_sock = -1;
 
 static void broadcast_link_clock(int64_t linkMicros) {
@@ -50,7 +49,7 @@ static void broadcast_link_clock(int64_t linkMicros) {
     struct sockaddr_in dst = {};
     dst.sin_family = AF_INET;
     dst.sin_port = htons(LINK_PHASE_PORT);
-    dst.sin_addr.s_addr = inet_addr(LINK_MCAST_ADDR);
+    dst.sin_addr.s_addr = inet_addr(LINK_DISCOVERY_MULTICAST_ADDR);
 
     esp_netif_t* nif = esp_netif_next_unsafe(NULL);
     for (; nif; nif = esp_netif_next_unsafe(nif)) {
@@ -89,7 +88,7 @@ static void broadcast_ticker_timeline(const ableton::Link::SessionState& state,
     struct sockaddr_in dst = {};
     dst.sin_family = AF_INET;
     dst.sin_port = htons(LINK_TTMP_PORT);
-    dst.sin_addr.s_addr = inet_addr(LINK_MCAST_ADDR);
+    dst.sin_addr.s_addr = inet_addr(LINK_DISCOVERY_MULTICAST_ADDR);
     esp_netif_t* nif = esp_netif_next_unsafe(NULL);
     for (; nif; nif = esp_netif_next_unsafe(nif)) {
         esp_netif_ip_info_t ipinfo;
@@ -167,7 +166,7 @@ static void tempo_listener_task(void*) {
     ba.sin_addr.s_addr = htonl(INADDR_ANY);
     if (bind(rs, (struct sockaddr*)&ba, sizeof ba) < 0) { close(rs); vTaskDelete(NULL); return; }
     struct ip_mreq mreq = {};
-    inet_aton(LINK_MCAST_ADDR, &mreq.imr_multiaddr);
+    inet_aton(LINK_DISCOVERY_MULTICAST_ADDR, &mreq.imr_multiaddr);
     mreq.imr_interface.s_addr = htonl(INADDR_ANY);
     setsockopt(rs, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof mreq);
     uint8_t buf[64];
@@ -249,7 +248,7 @@ static void buzzer_off_cb(void*) {
 
 static bool IRAM_ATTR link_gptimer_callback(gptimer_handle_t timer, const gptimer_alarm_event_data_t *event_data, void *user_data) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    xTaskNotifyFromISR(static_cast<TaskHandle_t>(user_data), 1, eSetBits, &xHigherPriorityTaskWoken);
+    xTaskNotifyFromISR(static_cast<TaskHandle_t>(user_data), LINK_TICK_NOTIFY_BIT, eSetBits, &xHigherPriorityTaskWoken);
     return xHigherPriorityTaskWoken == pdTRUE;
 }
 
