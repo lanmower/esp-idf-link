@@ -6,9 +6,11 @@ static const char* TAG = "SM";
 
 static const uint64_t NUDGE_HOLD_US = 500000;
 
-static uint64_t s_press_start_us[4] = {0, 0, 0, 0};
-static bool s_nudge_fired[4] = {false, false, false, false};
-static bool s_was_held[4] = {false, false, false, false};
+static_assert(NUM_TOUCH_PADS <= bli::BANK_COUNT);
+
+static uint64_t s_press_start_us[NUM_TOUCH_PADS] = {0, 0, 0, 0};
+static bool s_nudge_fired[NUM_TOUCH_PADS] = {false, false, false, false};
+static bool s_was_held[NUM_TOUCH_PADS] = {false, false, false, false};
 
 void process_state_event(const InputEvent& event,
                          const ableton::Link::SessionState& link_state,
@@ -28,7 +30,7 @@ void process_state_event(const InputEvent& event,
             ESP_LOGI(TAG, "All 4 pads held -> stop playback");
             g_bassEngine.stop();
         }
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < NUM_TOUCH_PADS; i++) {
             s_was_held[i]       = event.pad_held[i];
             s_press_start_us[i] = 0;
             s_nudge_fired[i]    = false;
@@ -38,7 +40,7 @@ void process_state_event(const InputEvent& event,
     }
     s_all4_latched = false;
 
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < NUM_TOUCH_PADS; i++) {
         bool held     = event.pad_held[i];
         bool pressed  = held && !s_was_held[i];
         bool released = !held && s_was_held[i];
