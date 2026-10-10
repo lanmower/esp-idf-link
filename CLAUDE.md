@@ -13,8 +13,9 @@ the open SSID `ticker` so Ableton Link peers can discover each other:
 
 ## Self-healing supervisor (`wifi_config.cpp` wifi_supervisor_task)
 Started by `wifi_start_supervisor("ticker")`, runs forever, 2s cadence:
-- STA role: a dropped STA reconnects up to 6 times (~12s); if the host stays gone it
-  re-hosts the AP so the mesh survives the host powering off.
+- STA role: a dropped STA reconnects up to 30 times (~60s) before re-hosting -- long
+  enough to ride out a host AP that flaps (a Pi reboot drops `ticker` for well past
+  the old 12s), short enough that a genuinely vanished host still gets replaced.
 - AP role: re-scans; if another `ticker` AP with a strictly-lower BSSID appears (both
   ended up hosting), it drops its AP and joins the lower one -- exactly one host wins.
 - `ensure_sta_started()` prevents leaking a default-STA netif across rescans.

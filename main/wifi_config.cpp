@@ -449,7 +449,7 @@ void wifi_start_link_relay() {
 
 static void wifi_supervisor_task(void* arg) {
     const char* ssid = (const char*)arg;
-    const int RECONNECT_TRIES = 6;
+    const int RECONNECT_TRIES = 30;
     const int IGMP_REASSERT_TICKS = 5;
     uint8_t my_mac[6];
     wifi_get_sta_mac(my_mac);
