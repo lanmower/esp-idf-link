@@ -20,6 +20,8 @@ static constexpr int   kFirstSection           = 0;
 static constexpr int   kBridgeSection          = 1;
 static constexpr int   kLastSection            = kSectionsPerPhrase - 1;
 static constexpr int   kHalfPhraseSteps        = kStepsPerPhrase / 2;
+static constexpr double kMaxAdvanceBeatsPerProcess = 1.0;
+static constexpr double kMaxAdvanceStepsPerProcess = kMaxAdvanceBeatsPerProcess * kStepsPerBeat;
 static constexpr int   kTurnaroundTailSteps    = 8;
 static constexpr float kTurnaroundStartStep    = kStepsPerPhrase - kTurnaroundTailSteps;
 
@@ -424,6 +426,14 @@ void BassEngine::process(const ableton::Link::SessionState& state,
     }
 
     processNoteOffs(phrasePosInSteps, bpm);
+
+    double advanceSteps = phrasePosInSteps - m_lastPhrasePosSteps;
+    if (advanceSteps < 0.0) advanceSteps += kStepsPerPhrase;
+    if (advanceSteps > kMaxAdvanceStepsPerProcess) {
+        ESP_LOGW(TAG, "phrase position jumped %.1f steps -- reseating, not replaying", advanceSteps);
+        m_lastPhrasePosSteps = phrasePosInSteps;
+        return;
+    }
 
     bool wrapped = (phrasePosInSteps < m_lastPhrasePosSteps);
     for (const auto& n : m_phrase) {
