@@ -113,28 +113,6 @@ docker run --rm \
 5. **Easy Cleanup**: Just delete the image, no leftover files
 6. **Cross-platform**: Works identically on Windows, Mac, and Linux
 
-## Known Issues & Fixes Applied
-
-### 1. esp_netif_next API Compatibility (FIXED)
-**Issue**: ESP-IDF 6.1 renamed `esp_netif_next()` to `esp_netif_next_unsafe()`
-**File**: `components/link-esp/link/include/ableton/platforms/esp32/ScanIpIfAddrs.hpp`
-**Fix**: Updated API calls to use `esp_netif_next_unsafe()`
-
-### 2. Legacy ADC Driver Removal (FIXED)
-**Issue**: Old `driver/adc.h` was removed in ESP-IDF 6.1
-**File**: `main/io_helpers.cpp`
-**Fix**: Removed legacy include, added `hall_sensor_read()` stub function
-
-### 3. Control Flow Goto Issue (FIXED)
-**Issue**: goto statement crossed variable initialization boundary
-**File**: `main/main.cpp`
-**Fix**: Wrapped provisioning_mode block in braces to create new scope
-
-### 4. Buffer Overflow Warning (FIXED)
-**Issue**: snprintf buffer size could be exceeded with long filenames
-**File**: `main/network_midi.cpp`
-**Fix**: Increased filepath buffer size from 256 to 512 bytes
-
 ## Building Manually
 
 If you prefer not to use the provided scripts:
@@ -241,7 +219,6 @@ C++ Standard: C++17
 - `esp_adc` - ADC conversion
 
 ### Third-party
-- `link-esp` - Ableton Link (from git submodule)
 - `protocol_examples_common` - Common protocol examples
 
 ## Testing After Build

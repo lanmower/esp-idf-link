@@ -1,6 +1,6 @@
 # ESP-IDF Link
 
-A MIDI synthesizer controller firmware for ESP32 with Ableton Link synchronization, touch-sensitive pads, potentiometer control, and WiFi provisioning.
+A MIDI synthesizer controller firmware for ESP32 with Ableton Link synchronization, touch-sensitive pads and potentiometer control.
 
 ## Quick Build & Flash
 

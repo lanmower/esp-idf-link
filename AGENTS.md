@@ -434,6 +434,30 @@ Consequence: the MIDI-file-player behaviour described in `CLAUDE.md` is not
 running on the device, and edits to those five files cannot break the build.
 Adding them to SRCS is a real behaviour change, not a cleanup.
 
+## CI commits binaries with `reset --soft`, never a rebase
+
+`.github/workflows/build.yml` commits the three `.bin` files and pushes them.
+`idf.py build` leaves many other unstaged files under `build/`, so a plain
+rebase refuses ("unstaged changes"), and a concurrent workflow advancing the
+branch is the expected cause of a rejected push. The retry loop therefore
+fetches, `git reset --soft FETCH_HEAD`, re-stages only the three `.bin`s and
+re-commits a single commit, up to 5 attempts. A rebase would try to MERGE the
+previous build's `.bin` files and die on "Cannot merge binary files".
+
+## ESP-IDF 6.x API breaks this tree has already absorbed
+
+Historical -- none of it is visible in the current source, and each item
+silently re-breaks on an IDF bump:
+
+- `esp_netif_next()` was renamed `esp_netif_next_unsafe()` in 6.1
+  (`components/link-esp/link/include/ableton/platforms/esp32/ScanIpIfAddrs.hpp`).
+- Legacy `driver/adc.h` was removed in 6.1; `main/io_helpers.cpp` carries a
+  `hall_sensor_read()` stub where that include used to be.
+- `main/main.cpp` wraps the provisioning_mode block in braces because a `goto`
+  crossed a variable initialization boundary.
+- `main/network_midi.cpp` uses a 512-byte filepath buffer, not 256: long
+  filenames overflowed the `snprintf`.
+
 ## The SoftAP multicast gap is this project's, and may not be aloop's
 
 The ESP32 SoftAP does not carry Link's multicast between host and stations,
