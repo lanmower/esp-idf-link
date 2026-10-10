@@ -34,9 +34,9 @@ tap/double-tap lookup-table scheme; there is no discrete genre selection
 any more, only continuous interpreted generation. The control surface is
 intentionally small -- 4 touch pads + 2 potentiometers, all the hardware
 has -- reshaped as 4 dial "banks" of 2 dials each (see
-`main/bassline_interpreter.h` for exactly what each dial controls, and
-`../DawDreamer/experiments/bassline/` in the sibling repo for the audio
-experiments that validated the design before it was ported here).
+`main/bassline_interpreter.h` for exactly what each dial controls; the design
+was validated by audio experiments in the sibling `DawDreamer` repo before it
+was ported here).
 
 General Operation
 - Pads (0-3): tap a pad to select which bank the 2 pots address. Switches

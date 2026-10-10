@@ -93,10 +93,10 @@ docker run --rm \
 ### Main Application Files
 - `main/main.cpp` - Main entry point
 - `main/io_helpers.cpp` - Hardware I/O utilities (ADC, touch, buzzer)
-- `main/midi_file.cpp` - MIDI file loading
+- `main/midi_file.cpp` - MIDI file loading -- not listed in `main/CMakeLists.txt` SRCS, so not compiled today
 - `main/network_midi.cpp` - HTTP server for MIDI uploads
 - `main/wifi_config.cpp` - WiFi mesh AP/STA host election and Link multicast relay
-- `main/effect_*.cpp` - Audio effects (arp, filter, sidechain) -- not listed in `main/CMakeLists.txt` SRCS, so not compiled today
+- `main/effect_*.cpp` - Audio effects (arp, filter, sidechain, handler) -- not listed in `main/CMakeLists.txt` SRCS, so not compiled today
 - `main/synth_*.cpp` - Synthesizer implementations
 
 ### Docker Configuration
@@ -213,11 +213,13 @@ Declared in `main/CMakeLists.txt` as `REQUIRES`:
 - `esp_event` - Event loop
 - `esp_wifi` - WiFi support
 - `esp_http_server` - HTTP server
-- `esp_eth` - Ethernet (pulled in by `protocol_examples_common`)
+- `esp_eth` - Ethernet (listed in `REQUIRES`; no Ethernet code in `main/` today)
 - `driver` - Legacy umbrella driver component, kept alongside the split `esp_driver_*` below
 - `log` - Logging
 - `esp_adc` - ADC conversion
 - `esp_driver_gptimer` - General purpose timers
+- `link-esp` - Ableton Link integration
+- `protocol_examples_common` - Common protocol examples
 - `freertos` - Real-time OS
 
 Declared as `PRIV_REQUIRES` (private to `main`, not propagated to anything that depends on it):
