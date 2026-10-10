@@ -17,10 +17,25 @@ struct NoteSlot {
 
 class BassEngine {
 public:
+    enum Approach {
+        APP_ROLL   = 0,
+        APP_ACID   = 1,
+        APP_FUNK   = 2,
+        APP_GLITCH = 3,
+        APP_STAB   = 4,
+        APP_DRIFT  = 5,
+        APP_PEDAL  = 6,
+        APP_BREAK  = 7,
+        APP_COUNT  = 8
+    };
+
     BassEngine();
 
     void setActiveBank(int bank);
     int  activeBank() const { return m_activeBank; }
+
+    void setApproach(int approach);
+    int  approach() const { return m_approach; }
 
     void setDial(int dialIdx, float v01);
 
@@ -62,6 +77,24 @@ private:
     void anchorMotif(MS m[bli::kStepsPerBar], int root, int scIdx);
     static void clampRange(MS m[bli::kStepsPerBar], int root);
 
+    struct ApproachShape {
+        float density;
+        float gate;
+        float octaveJumpProb;
+        float syncTarget;
+        float mutatePerBar;
+        float velDrift;
+        float filtSweepDepth;
+        float timingSteps;
+        bool  rolling;
+        bool  questionAnswer;
+        bool  pickups;
+    };
+    static const ApproachShape& shapeFor(int approach);
+    void shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPerBar],
+                  int bar, int root, int scIdx);
+    static float syncopationFraction(const MS m[bli::kStepsPerBar]);
+
     void turnInterpreted(int base, int scIdx);
 
     void addNote(float posInSteps, int note, float len, int vel, int fcc,
@@ -76,6 +109,7 @@ private:
     std::vector<ActiveNote> m_activeNotes;
 
     int        m_activeBank    = bli::BANK_HARMONY;
+    int        m_approach      = APP_ROLL;
     bli::Dials m_dials;
     bool   m_active         = false;
     int    m_phraseCount    = 0;

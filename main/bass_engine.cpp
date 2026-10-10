@@ -204,6 +204,166 @@ void BassEngine::turnInterpreted(int base, int scIdx) {
     }
 }
 
+const BassEngine::ApproachShape& BassEngine::shapeFor(int approach) {
+    static const ApproachShape kShapes[APP_COUNT] = {
+        {1.00f, 0.50f, 0.10f, 0.00f, 0.35f,  6.f, 18.f, 0.02f, true,  false, false},
+        {0.85f, 0.45f, 0.08f, 0.15f, 0.50f, 22.f, 55.f, 0.00f, false, false, false},
+        {0.50f, 0.55f, 0.12f, 0.38f, 0.60f, 30.f, 25.f, 0.05f, false, true,  true },
+        {0.32f, 0.70f, 0.18f, 0.45f, 0.75f, 34.f, 30.f, 0.09f, false, true,  true },
+        {0.25f, 0.22f, 0.35f, 0.50f, 0.25f, 12.f, 15.f, 0.00f, false, false, false},
+        {0.40f, 1.60f, 0.06f, 0.10f, 0.20f, 10.f, 45.f, 0.03f, false, false, false},
+        {0.20f, 2.50f, 0.15f, 0.20f, 0.15f,  8.f, 35.f, 0.00f, false, false, false},
+        {0.55f, 0.35f, 0.22f, 0.50f, 0.85f, 36.f, 40.f, 0.06f, false, true,  true },
+    };
+    if (approach < APP_ROLL || approach >= APP_COUNT) approach = APP_ROLL;
+    return kShapes[approach];
+}
+
+float BassEngine::syncopationFraction(const MS m[bli::kStepsPerBar]) {
+    int occupied = 0;
+    int offGrid  = 0;
+    for (int i = 0; i < bli::kStepsPerBar; i++) {
+        if (m[i].note < 0) continue;
+        occupied++;
+        if (i % 2 != 0) offGrid++;
+    }
+    return occupied > 0 ? (float)offGrid / (float)occupied : 0.f;
+}
+
+void BassEngine::shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPerBar],
+                          int bar, int root, int scIdx) {
+    static constexpr float kMetricalWeightUnit = 0.3333333f;
+    static constexpr float kRollingCarryProb   = 0.55f;
+    static constexpr int   kQuestionBar        = 6;
+    static constexpr int   kAnswerBar          = 7;
+    static constexpr int   kQuestionGapStart   = 8;
+    static constexpr int   kQuestionGapEnd     = 12;
+    static constexpr float kAnswerFillProb     = 0.6f;
+    static constexpr int   kSyncAdjustPasses   = 4;
+    static constexpr float kSyncTolerance      = 0.02f;
+    static constexpr float kOctaveJumpStepProb = 0.35f;
+    static constexpr float kPickupProb         = 0.35f;
+    static constexpr float kPickupLengthSteps  = 0.25f;
+    static constexpr int   kPickupVelDrop      = 20;
+    static constexpr float kMinGateSteps       = 0.35f;
+    static constexpr int   kVelocityWobble     = 3;
+    static constexpr float kTwoPi              = 6.28318530717958647692f;
+    static constexpr float kQuarterTurn        = 1.57079632679489661923f;
+
+    const ApproachShape& sh = shapeFor(m_approach);
+
+    for (int i = 0; i < bli::kStepsPerBar; i++) out[i] = src[i];
+
+    if (sh.rolling) {
+        MS carried = mn(kEmptyNote, 0.f, 0, 0);
+        for (int i = 0; i < bli::kStepsPerBar; i++) {
+            if (out[i].note >= 0) carried = out[i];
+            else if (carried.note >= 0 && randChance(kRollingCarryProb)) out[i] = carried;
+        }
+    }
+
+    if (sh.density < 1.0f) {
+        for (int i = 0; i < bli::kStepsPerBar; i++) {
+            if (out[i].note < 0) continue;
+            const int metricalWeight = (i % 8 == 0) ? 3 : (i % 4 == 0) ? 2 : (i % 2 == 0) ? 1 : 0;
+            const float keepProb =
+                sh.density + (float)(metricalWeight * (1.0f - sh.density)) * kMetricalWeightUnit;
+            if (!randChance(std::min(1.0f, keepProb))) out[i].note = kEmptyNote;
+        }
+    }
+
+    if (sh.questionAnswer) {
+        if (bar % 8 == kQuestionBar) {
+            for (int i = kQuestionGapStart; i < kQuestionGapEnd; i++) out[i].note = kEmptyNote;
+        } else if (bar % 8 == kAnswerBar) {
+            MS fill = mn(kEmptyNote, 0.f, 0, 0);
+            for (int i = 0; i < bli::kStepsPerBar && fill.note < 0; i++)
+                if (out[i].note >= 0) fill = out[i];
+            if (fill.note >= 0) {
+                for (int i = kQuestionGapStart; i < kQuestionGapEnd; i++)
+                    if (out[i].note < 0 && randChance(kAnswerFillProb)) out[i] = fill;
+            }
+        }
+    }
+
+    if (sh.syncTarget > 0.f) {
+        for (int pass = 0; pass < kSyncAdjustPasses; pass++) {
+            const float frac = syncopationFraction(out);
+            if (frac >= sh.syncTarget - kSyncTolerance && frac <= sh.syncTarget + kSyncTolerance) break;
+            const bool needMore = frac < sh.syncTarget;
+            for (int i = 0; i < bli::kStepsPerBar; i++) {
+                const bool offGrid = (i % 2 != 0);
+                if (needMore == offGrid) continue;
+                if (out[i].note < 0) continue;
+                const int target = needMore ? i + 1 : i - 1;
+                if (target < 0 || target >= bli::kStepsPerBar) continue;
+                if (out[target].note >= 0) continue;
+                out[target] = out[i];
+                out[i].note = kEmptyNote;
+                break;
+            }
+        }
+    }
+
+    const int editCount = (int)(sh.mutatePerBar * 2.0f + rand01());
+    for (int e = 0; e < editCount; e++) {
+        const int i = randBelow(bli::kStepsPerBar);
+        if (out[i].note < 0) continue;
+        switch (randBelow(3)) {
+            case 0: {
+                const int diatonicThird = std::max(1, bli::scaleDegree(scIdx, 2));
+                const int shift = randChance(0.5f) ? kFifthSemitones : diatonicThird;
+                out[i].note += randChance(0.5f) ? shift : -shift;
+                break;
+            }
+            case 1:
+                out[i].note = kEmptyNote;
+                break;
+            default: {
+                const int j = (i + 1) % bli::kStepsPerBar;
+                const MS tmp = out[i];
+                out[i] = out[j];
+                out[j] = tmp;
+                break;
+            }
+        }
+    }
+
+    if (randChance(sh.octaveJumpProb)) {
+        for (int i = 0; i < bli::kStepsPerBar; i++)
+            if (out[i].note >= 0 && randChance(kOctaveJumpStepProb)) out[i].note += kOctaveSemitones;
+    }
+
+    if (sh.pickups && bar % kBarsPerChordCell == kBarsPerChordCell - 1 && randChance(kPickupProb)) {
+        const int last = bli::kStepsPerBar - 1;
+        if (out[last].note < 0) {
+            MS lead = mn(kEmptyNote, 0.f, 0, 0);
+            for (int i = last; i >= 0; i--)
+                if (out[i].note >= 0) { lead = out[i]; break; }
+            if (lead.note >= 0) {
+                out[last] = lead;
+                out[last].len = kPickupLengthSteps;
+                out[last].vel = std::max(1, out[last].vel - kPickupVelDrop);
+            }
+        }
+    }
+
+    const float barPhase = (float)(bar % kBarsPerSection) / (float)kBarsPerSection;
+    const float velLfo   = std::sin(kTwoPi * barPhase);
+    const float filtLfo  = std::sin(kTwoPi * barPhase + kQuarterTurn);
+
+    for (int i = 0; i < bli::kStepsPerBar; i++) {
+        if (out[i].note < 0) continue;
+        out[i].len = std::max(kMinGateSteps, out[i].len * sh.gate);
+        out[i].vel = std::max(1, std::min(127,
+            out[i].vel + (int)(velLfo * sh.velDrift) + (randBelow(kVelocityWobble * 2 + 1) - kVelocityWobble)));
+        out[i].fcc = std::max(0, std::min(127, out[i].fcc + (int)(filtLfo * sh.filtSweepDepth)));
+        out[i].tsBeats += (rand01() * 2.0f - 1.0f) * sh.timingSteps / (float)kStepsPerBeat;
+    }
+
+    clampRange(out, root);
+}
+
 void BassEngine::regeneratePhrase(bool advanceArc) {
     if (advanceArc) m_phraseCount++;
     m_phrase.clear();
@@ -283,19 +443,23 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
         const MS* motif = (part=='A') ? motA : (part=='B') ? motB :
                           (part=='C') ? motC : motD;
 
+        MS barMotif[bli::kStepsPerBar];
+        shapeBar(barMotif, motif, bar, kRootNoteE2, m_scaleIdx);
+
         for (int i = 0; i < bli::kStepsPerBar; i++) {
-            if (motif[i].note < 0) continue;
-            int note = motif[i].note + rootSemitoneOffset;
+            if (barMotif[i].note < 0) continue;
+            int note = barMotif[i].note + rootSemitoneOffset;
             note = std::max(0, std::min(127, note));
 
-            float tsSteps = motif[i].tsBeats * kStepsPerBeat;
+            float tsSteps = barMotif[i].tsBeats * kStepsPerBeat;
             float basePos = (float)(bar * bli::kStepsPerBar + i);
             float posInSteps = basePos + tsSteps;
 
             if (i % 2 != 0) posInSteps += swingSteps;
+            if (posInSteps < 0.f) posInSteps = 0.f;
 
-            m_phrase.push_back({posInSteps, note, motif[i].len, motif[i].vel,
-                                 motif[i].fcc, motif[i].pbSemitones});
+            m_phrase.push_back({posInSteps, note, barMotif[i].len, barMotif[i].vel,
+                                 barMotif[i].fcc, barMotif[i].pbSemitones});
         }
     }
 
@@ -316,8 +480,8 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
                   return a.posInSteps < b.posInSteps;
               });
 
-    ESP_LOGI(TAG, "Phrase[%d] bank=%d scale=%s prog=%d notes=%d bars=64",
-             m_phraseCount, m_activeBank, bli::scaleName(m_scaleIdx), m_progIdx,
+    ESP_LOGI(TAG, "Phrase[%d] approach=%d bank=%d scale=%s prog=%d notes=%d bars=64",
+             m_phraseCount, m_approach, m_activeBank, bli::scaleName(m_scaleIdx), m_progIdx,
              (int)m_phrase.size());
 }
 
@@ -377,6 +541,26 @@ void BassEngine::setActiveBank(int bank) {
         regeneratePhrase();
     }
     ESP_LOGI(TAG, "Bank set to %d", m_activeBank);
+}
+
+void BassEngine::setApproach(int approach) {
+    if (approach < APP_ROLL || approach >= APP_COUNT) return;
+    m_approach = approach;
+    m_activeBank = std::min(bli::BANK_COUNT - 1, approach / 2);
+
+    if (!m_active) {
+        m_active = true;
+        m_lastPhrasePosSteps       = kNoPhrasePositionYet;
+        m_lastBarInPhrase          = kNoBarYet;
+        m_regenPending             = false;
+        m_phraseCount              = 0;
+        m_hasPrevPhraseMotif       = false;
+        m_scaleHoldPhrasesRemaining = 0;
+        regeneratePhrase();
+    } else {
+        m_regenPending = true;
+    }
+    ESP_LOGI(TAG, "Approach set to %d (bank %d)", m_approach, m_activeBank);
 }
 
 void BassEngine::setDial(int dialIdx, float v01) {
