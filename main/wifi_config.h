@@ -25,9 +25,13 @@ constexpr std::size_t kMacLen = 6;
 
 #define LINK_DISCOVERY_MULTICAST_PORT 20808
 
+constexpr uint8_t kScanAllChannels = 0;
+constexpr uint8_t kTickerChannel   = 6;
+
 esp_err_t wifi_config_init();
 bool      wifi_scan_for_ssid(const char* ssid);
-int       wifi_scan_best_bssid(const char* ssid, uint8_t out_best_bssid[kMacLen]);
+int       wifi_scan_best_bssid(const char* ssid, uint8_t out_best_bssid[kMacLen],
+                               uint8_t channel = kScanAllChannels);
 esp_err_t wifi_connect_sta(const char* ssid, const char* password);
 esp_err_t wifi_start_link_ap(const char* ssid);
 void      wifi_join_link_multicast();

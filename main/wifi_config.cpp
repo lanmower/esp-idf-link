@@ -148,7 +148,7 @@ static bool wifi_get_own_ap_mac(uint8_t out_mac[6]) {
     return esp_wifi_get_mac(WIFI_IF_AP, out_mac) == ESP_OK;
 }
 
-int wifi_scan_best_bssid(const char* ssid, uint8_t out_best_bssid[6]) {
+int wifi_scan_best_bssid(const char* ssid, uint8_t out_best_bssid[6], uint8_t channel) {
     ensure_sta_started();
 
     uint8_t own_ap_mac[6];
@@ -156,6 +156,7 @@ int wifi_scan_best_bssid(const char* ssid, uint8_t out_best_bssid[6]) {
 
     wifi_scan_config_t scan_cfg = {};
     scan_cfg.ssid = (uint8_t*)ssid;
+    scan_cfg.channel = channel;
     scan_cfg.scan_type = WIFI_SCAN_TYPE_ACTIVE;
     scan_cfg.scan_time.active.min = 100;
     scan_cfg.scan_time.active.max = 300;
@@ -501,7 +502,7 @@ static void wifi_supervisor_task(void* arg) {
             }
             ap_scan_countdown = AP_SCAN_EVERY_TICKS;
             uint8_t best[6] = {0};
-            int matches = wifi_scan_best_bssid(ssid, best);
+            int matches = wifi_scan_best_bssid(ssid, best, kTickerChannel);
             uint8_t own_ap_mac[6];
             const bool bssid_is_self = wifi_get_own_ap_mac(own_ap_mac) && memcmp(best, own_ap_mac, 6) == 0;
             if (matches > 0 && !bssid_is_self && memcmp(best, my_mac, 6) < 0) {
