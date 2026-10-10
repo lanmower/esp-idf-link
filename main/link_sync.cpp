@@ -472,10 +472,14 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     if (nowH - s_hookLogAt > 5000000) {
         s_hookLogAt = nowH;
         uint32_t sip = g_link_scan_last_ip;
-        ESP_LOGI(TAG_LINK, "Link diag: scanIP=%u.%u.%u.%u gw(try=%u ok=%u fail=%u) send-hook=%u peers=%d bpm=%.2f beat=%.2f",
+        ESP_LOGI(TAG_LINK, "Link diag: scanIP=%u.%u.%u.%u gw(try=%u ok=%u fail=%u) send-hook=%u dst=%u.%u.%u.%u:%u peers=%d bpm=%.2f beat=%.2f",
                  sip & 0xff, (sip >> 8) & 0xff, (sip >> 16) & 0xff, (sip >> 24) & 0xff,
                  g_link_gw_init_attempts, g_link_gw_init_ok, g_link_gw_init_fail,
-                 g_link_send_hook_calls, g_link->numPeers(), state.tempo(), state.beatAtTime(time, LINK_QUANTUM));
+                 g_link_send_hook_calls,
+                 (g_link_send_last_dstip >> 24) & 0xff, (g_link_send_last_dstip >> 16) & 0xff,
+                 (g_link_send_last_dstip >> 8) & 0xff, g_link_send_last_dstip & 0xff,
+                 g_link_send_last_dport,
+                 g_link->numPeers(), state.tempo(), state.beatAtTime(time, LINK_QUANTUM));
         const MetroStats ms = metro_stats();
         ESP_LOGI(TAG_LINK, "Metro: fired=%u late last=%lldus worst=%lldus mean=%.0fus rms=%.0fus",
                  (unsigned)ms.fired, (long long)ms.last, (long long)ms.worst, ms.mean, ms.rms);

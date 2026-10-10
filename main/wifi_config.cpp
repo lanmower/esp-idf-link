@@ -282,7 +282,7 @@ volatile uint32_t g_link_gw_init_ok = 0;
 volatile uint32_t g_link_gw_init_fail = 0;
 
 static bool is_ipv4_multicast_dst(unsigned dstip) {
-    const uint8_t first_octet = dstip & 0xff;
+    const uint8_t first_octet = (dstip >> 24) & 0xff;
     return first_octet >= 224 && first_octet <= 239;
 }
 
@@ -291,6 +291,7 @@ extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, u
     g_link_send_last_dstip = dstip;
     g_link_send_last_dport = dport;
     if (!is_ipv4_multicast_dst(dstip)) return;
+    if (!g_ap_active) return;
 
     static int s_fwd_sock = -1;
     if (s_fwd_sock < 0) {
@@ -302,24 +303,15 @@ extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, u
     dst.sin_port   = htons((uint16_t)dport);
 
     static int s_fwd_log = 0;
-    if (g_ap_active) {
-        int sent = 0;
-        for (int i = 0; i < MAX_AP_STA_IPS; i++) {
-            uint32_t ip = g_ap_sta_ips[i];
-            if (ip == AP_STA_IP_SLOT_EMPTY) continue;
-            dst.sin_addr.s_addr = ip;
-            sendto(s_fwd_sock, data, len, 0, (struct sockaddr*)&dst, sizeof(dst));
-            sent++;
-        }
-        if (s_fwd_log < 8) { ESP_LOGI(TAG, "LINK fwd(AP) %u bytes -> %d station(s)", len, sent); s_fwd_log++; }
-    } else if (g_sta_netif) {
-        esp_netif_ip_info_t staip = {};
-        if (esp_netif_get_ip_info(g_sta_netif, &staip) == ESP_OK && staip.gw.addr != 0) {
-            dst.sin_addr.s_addr = staip.gw.addr;
-            sendto(s_fwd_sock, data, len, 0, (struct sockaddr*)&dst, sizeof(dst));
-            if (s_fwd_log < 8) { ESP_LOGI(TAG, "LINK fwd(STA) %u bytes -> gateway", len); s_fwd_log++; }
-        }
+    int sent = 0;
+    for (int i = 0; i < MAX_AP_STA_IPS; i++) {
+        uint32_t ip = g_ap_sta_ips[i];
+        if (ip == AP_STA_IP_SLOT_EMPTY) continue;
+        dst.sin_addr.s_addr = ip;
+        sendto(s_fwd_sock, data, len, 0, (struct sockaddr*)&dst, sizeof(dst));
+        sent++;
     }
+    if (s_fwd_log < 8) { ESP_LOGI(TAG, "LINK fwd(AP) %u bytes -> %d station(s)", len, sent); s_fwd_log++; }
 }
 
 static const uint32_t RELAY_RECV_TIMEOUT_MS = 20;
@@ -461,12 +453,12 @@ static const int AP_SCAN_EVERY_TICKS = 4;
 static void wifi_supervisor_task(void* arg) {
     const char* ssid = (const char*)arg;
     const int RECONNECT_TRIES = 30;
-    const int IGMP_REASSERT_TICKS = 5;
+    const int IGMP_REASSERT_PERIOD_TICKS = 15;
     uint8_t my_mac[6];
     wifi_get_sta_mac(my_mac);
 
     int sta_down_count = 0;
-    int igmp_reassert_ticks_left = IGMP_REASSERT_TICKS;
+    int igmp_reassert_countdown = 0;
     int ap_scan_countdown = 0;
 
     for (;;) {
@@ -475,13 +467,14 @@ static void wifi_supervisor_task(void* arg) {
         if (!g_ap_active) {
             if (g_wifi_connected) {
                 sta_down_count = 0;
-                if (igmp_reassert_ticks_left > 0) {
+                if (igmp_reassert_countdown <= 0) {
                     igmp_join_link(g_sta_netif);
-                    igmp_reassert_ticks_left--;
+                    igmp_reassert_countdown = IGMP_REASSERT_PERIOD_TICKS;
                 }
+                igmp_reassert_countdown--;
                 continue;
             }
-            igmp_reassert_ticks_left = IGMP_REASSERT_TICKS;
+            igmp_reassert_countdown = 0;
             sta_down_count++;
             if (sta_down_count <= RECONNECT_TRIES) {
                 ESP_LOGW(TAG, "STA down (%d/%d) -- reconnecting", sta_down_count, RECONNECT_TRIES);
