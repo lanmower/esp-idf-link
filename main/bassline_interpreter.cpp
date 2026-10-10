@@ -6,8 +6,8 @@
 
 namespace bli {
 
-const int kScaleLens[kNumScales] = {7, 7, 7, 5, 7, 7, 7, 7, 7};
-const int kScales[kNumScales][7] = {
+constexpr int kScaleLens[kNumScales] = {7, 7, 7, 5, 7, 7, 7, 7, 7};
+constexpr int kScales[kNumScales][kScaleRowWidth] = {
     {0, 2, 3, 5, 7, 9, 10},
     {0, 2, 3, 5, 7, 8, 10},
     {0, 1, 3, 5, 7, 8, 10},
@@ -18,6 +18,14 @@ const int kScales[kNumScales][7] = {
     {0, 2, 3, 5, 7, 8, 11},
     {0, 2, 3, 6, 7, 8, 11},
 };
+constexpr bool everyScaleLengthFitsInItsRow() {
+    for (int i = 0; i < kNumScales; i++) {
+        if (kScaleLens[i] > kScaleRowWidth) return false;
+    }
+    return true;
+}
+static_assert(everyScaleLengthFitsInItsRow());
+
 static const char* kScaleNames[kNumScales] = {
     "dorian", "aeolian", "phrygian", "minorPentatonic", "melodicMinor",
     "mixolydian", "phrygianDom", "harmonicMinor", "hungarianMinor",
@@ -122,8 +130,8 @@ static int buildOnsets(const Dials& dials, RngSource& rng, int outSteps[kStepsPe
     return n;
 }
 
-static constexpr int kRegisterSpan = 15;
 static constexpr int kMaxCandidates = 16;
+static_assert(kMaxCandidates > kRegisterSpan);
 
 static float harmonicCost(int m, int root, const int chordTones[4], float tension) {
     int pc = ((m - root) % 12 + 12) % 12;
