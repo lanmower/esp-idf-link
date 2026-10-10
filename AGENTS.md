@@ -54,6 +54,17 @@ can sit with no RX and never finish DHCP. So the supervisor passes `kTickerChann
 boot/hold scans stay `kScanAllChannels` (before the AP exists). Cost: a host that left
 channel 6 would never be seen — the same ch6 pairing the table rests on.
 
+### Audited 2026-10-11: all eight rows MATCH aloopprime (its local tree — a fetch-only
+checkout). Deliberate asymmetries, not drift: IGMP one-sided (pi has none, leans on
+`ap_isolate=0`); scan stagger one-sided; takeover esp ~60 s vs pi ~90-160 s. Pi also
+spells `ticker` in `config/aloop.conf:62` and `autoap.sh:7`.
+
+**Reading `peers=0`:** `gw(ok=1)` = multicast gateway up. If `dst=` shows the gateway
+IP on a high port (`192.168.4.1:54146`), the peer's announcement arrived and Link is
+unicast-pinging it — the failure is the unicast ping/pong, NOT multicast. Seen live
+2026-10-11. `wifi_link_multicast_forward` records `dst` before its role gate, so it
+shows even in STA role.
+
 ### By-the-book Link checklist (both trees)
 
 - `captureAppSessionState()`/`commitAppSessionState()` off the audio thread; the
@@ -156,48 +167,45 @@ No OTA, no serial console on this machine.
 
 ### Hands-free flash: `python tools/flash-usbip.py`
 
-`flash-ticker.js` needs BOOT/IO0 held — a WCH/CH340 Windows driver limitation, not
-the board. `flash-usbip.py` talks CH341 over USB/IP (usbipd-win) behind a
-pyserial-shaped shim, so the WCH driver never loads. `--dry` = enter download mode,
-prove sync, reboot; bare = flash and boot. Measured: exit 0, ~49 s, app in ~19.8 s at
-460800 (~510 kbit/s), "Hash of data verified", boots `boot:0x13`. No BOOT hold, no
-WSL. Four facts make it work:
+`flash-ticker.js` needs BOOT/IO0 held — a WCH/CH340 driver limitation, not the board.
+`flash-usbip.py` talks CH341 over USB/IP (usbipd-win) behind a pyserial-shaped shim, so
+the WCH driver never loads. `--dry` = enter download mode, prove sync, reboot; bare =
+flash and boot. Measured: exit 0, ~49 s, app in ~19.8 s at 460800 (~510 kbit/s),
+"Hash of data verified", boots `boot:0x13`. No BOOT hold, no WSL. Four facts:
 
 1. **The D1 R32's auto-reset is DIFFERENTIAL.** EN low only at (DTR# high, RTS# low)
-   `0x40`; IO0 only at (DTR# low, RTS# high) `0x20`; `0x60`/`0x00` conducts NEITHER —
-   the opposite of esptool's convention, hence every esptool reset gave `boot:0x13`.
+   `0x40`; IO0 only at (DTR# low, RTS# high) `0x20`; `0x60`/`0x00` conduct NEITHER —
+   the opposite of esptool's convention (hence `boot:0x13` on every esptool reset).
    Entry is the flip **0x40 -> 0x20** (`boot:0x3`); leave `0x40` then `0x00`.
 2. **The CH341 withholds the first replies** — a sync frame goes unanswered for
-   seconds, then surfaces behind a later FULL-SIZE OUT. esptool sends one frame on a
+   seconds, then surfaces behind a later FULL-SIZE OUT. esptool allows one frame on a
    0.1 s deadline, so prime with repeated framed syncs (`SYNC_TIMEOUT` 2 s); 2-8.
-3. **The first attach back often fails** — usbipd keeps the device claimed after a
-   disconnect, so the first `OP_REP_IMPORT` returns `status=4`; `open_port()` retries
-   (10 x 6 s).
+3. **The first attach back often fails** — usbipd keeps the device claimed, so the
+   first `OP_REP_IMPORT` returns `status=4`; `open_port()` retries (10 x 6 s).
 4. **`USBIPD_BUSID` in `tools/ch341.py` is THIS MACHINE's busid (`2-2`)**, not a board
    property. Re-read per host and after any replug; `usbipd bind --busid <busid>` once
    per boot or nothing attaches.
 
 It passes **`--after no-reset-stub`, never `--after no-reset`**, and guards
-`esptool.main()` with `except BaseException` (`09da1052`): `no-reset` calls
-`soft_reset(True)` at the flash baud while the ROM speaks only 115200 -> intermittent
-`FatalError: No more data to read` AFTER all three images verified, and `FatalError`
-is not `SystemExit`, so `except SystemExit` lets EN go unpulsed.
+`esptool.main()` with `except BaseException` (`09da1052`): `no-reset` soft-resets at
+the flash baud while the ROM speaks 115200 -> `FatalError: No more data to read` AFTER
+all three images verified, and `FatalError` is not `SystemExit`, so `except SystemExit`
+leaves EN unpulsed.
 
-**Hands-free serial read:** `UsbipPort()` from `tools/usbip-port.py` MUST have
-`.init()` called after construction (else 4096 zero bytes per bulk IN floods the
-output). Then `hs(HOLD_EN)` -> short drain -> `hs(RELEASE_BOTH)` resets the board;
-`drain(seconds)` returns the boot log. Hyphen in the filename: import with
+**Hands-free serial read:** `UsbipPort()` from `tools/usbip-port.py` MUST have `.init()`
+called after construction (else 4096 zero bytes per bulk IN floods the output). Then
+`hs(HOLD_EN)` -> short drain -> `hs(RELEASE_BOTH)` resets the board; `drain(seconds)`
+returns the boot log. Import the hyphenated filename via
 `importlib.util.spec_from_file_location`.
 
-Baud: the ROM only speaks 115200, so `enter_and_sync` pins it (`ROM_BAUD`); `--baud`
-applies only after the RAM stub re-times the port. USB/IP: 115200 -> 72.2 s vs 460800
--> 19.4 s; the one 460800 `FatalError` was a transient attach flake, not baud-specific.
-921600 dies after "Changed." (`FatalError` from `flash_begin`, nothing written, chip
-left in the stub); `--dry` recovers it, and it is UNMEASURED on `flash-ticker.js`'s
-COM port (PRD `flash-ticker-js-921600-unmeasured`). esptool leaves the port at the
-flash baud, so `boot_app()` resets to `ROM_BAUD` before pulsing EN. Benign: `flash_id()`
-reads `0xFFFFFF` in download mode -> "Failed to communicate with the flash chip";
-erase/program still go through the ROM.
+Baud: the ROM only speaks 115200 (`ROM_BAUD`); `--baud` applies only after the RAM stub
+re-times the port. USB/IP: 115200 -> 72.2 s vs 460800 -> 19.4 s (the one 460800
+`FatalError` was an attach flake, not baud). 921600 dies after "Changed." (`FatalError`
+from `flash_begin`, chip left in the stub); `--dry` recovers it, and it is UNMEASURED
+on `flash-ticker.js` (PRD `flash-ticker-js-921600-unmeasured`). esptool
+leaves the port at the flash baud, so `boot_app()` resets to `ROM_BAUD` before pulsing
+EN. Benign: `flash_id()` reads `0xFFFFFF` in download mode -> "Failed to communicate with
+the flash chip"; erase/program still go through the ROM.
 
 ## Mesh UDP protocol and MIDI emission
 
@@ -274,7 +282,7 @@ settles a press in ~500 us; `DOUBLE_TAP_TIME_MS`/`HOLD_TIME_MS` in `main.h` are 
 Anti-ringtone axes, per approach: Reich phase (`rotateMotif`, `bar/phaseShiftBars`);
 asymmetric chord cells (`cellBars` 2-8 vs `kBarsPerChordCell` 4); **systematic**
 microtiming (`bli::microOffsetForStep` × `timingSteps/kMicroTimingFullDepth` +
-`voiceOffsetSteps` — never random per note (random reads sloppy); ghosts
+`voiceOffsetSteps`, never random per note; ghosts
 (`insertGhosts`, post-thinning); drop bars (`bar % 16 == 15` or `restBarProb`);
 `accentMask` (bit i = accent); `swingSteps` (odd 16ths delayed). **Swing and
 syncopation are separate knobs**: `grooveSwing` feeds only `buildOnsets`
@@ -284,8 +292,8 @@ sync at boundaries beats uniform high sync. Microtiming caps are asserted:
 max-abs ≤ 0.17 step (20 ms), SD ≤ 0.15 (18 ms), table SD 0.0955. Do NOT raise
 `kMicroTimingFullDepth`.
 
-Measured — g++ host sim, 2x64 bars/approach, bpm 128, seed 0x9E3779B9 (the only way
-to compile `bass_engine.cpp` off-device):
+Measured — g++ host sim, 2x64 bars/approach, bpm 128, seed 0x9E3779B9 (the only way to
+compile `bass_engine.cpp` off-device):
 
 | appr | n/bar | uniq/64 | adj/126 | sync |
 |---|---|---|---|---|
@@ -298,9 +306,9 @@ to compile `bass_engine.cpp` off-device):
 | PEDAL | 1.78 | 13,13 | 67 | .026 |
 | BREAK | 3.73 | 44,49 | 10 | .434 |
 
-`adj/126` = adjacent identical bars; cross-approach bar-fingerprint sharing 0.8-1.3%
-for the six rhythmic voices. DRIFT/PEDAL share heavily because a 1.7-note bar has only
-a handful of (step,pitch) fingerprints — the metric saturates, not evidence of sameness.
+`adj/126` = adjacent identical bars; cross-approach fingerprint sharing 0.8-1.3% for
+the six rhythmic voices. DRIFT/PEDAL share heavily because a 1.7-note bar has few
+fingerprints — the metric saturates, not evidence of sameness.
 
 **An approach is a VOICE, not just a shaping preset** (`0f1271f`). `dialsForApproach()`
 biases the base dials; a switch clears `m_hasPrevPhraseMotif` (was blending 40% of the
@@ -321,8 +329,8 @@ so a small bias can jump a groove; bands index `kGrooves[9]`/`ContourShape[8]`/
 
 PEDAL/DRIFT `minGate` > 1 step is deliberate: sustained voices, not sequencer runs.
 Not ported: tempo-responsive swing (`clamp(1.9 − (bpm−130)*0.005, 1.0, 2.0)`, scale
-`swingSteps` by `target/1.7`) — needs `bpm` in `regeneratePhrase`; per-approach
-`kTurnaroundTailSteps` {4,8,12} (16 today); register drift (no code path).
+`swingSteps` by `target/1.7`); per-approach `kTurnaroundTailSteps` {4,8,12}; register
+drift.
 
 ## HTTP clip server (8080) and SPIFFS
 
@@ -345,21 +353,18 @@ recreated on every AP<->STA role change.
 Open, not code: no auth on an open SSID; `network_midi_start()`/`_stop()` dead. Open in
 code: **`filepath` truncation is unchecked in `clear_handler`** (checked only in
 upload) — 512 bytes vs `CONFIG_HTTPD_MAX_URI_LEN=8192`; `/clear` filters
-`d_type == DT_REG`, which SPIFFS VFS may leave `DT_UNKNOWN`, and `strstr(d_name,
-".mid")` matches anywhere, so `notes.midi` dies too.
+`d_type == DT_REG`, which SPIFFS VFS may leave `DT_UNKNOWN`, and `strstr(d_name, ".mid")` matches anywhere.
 
 ## MIDI file player (`main/midi_file.cpp`) — NOT in the build
 
-Parser relies on **MIDI running status**; note-on with **velocity 0 IS a note-off**.
+Parser relies on **MIDI running status**; note-on with velocity 0 IS a note-off.
 `process()` walks notes in `startBeat` order and early-breaks — the sort order is
-load-bearing. **SPIFFS has no real directories**, so `setFolder()` matches a name
-prefix. `syncToBpm` is `false`: enabling it double-scaled `playbackRate` and left notes
-stuck.
+load-bearing. **SPIFFS has no real directories**, so `setFolder()` matches a prefix.
+`syncToBpm` is `false`: enabling it double-scaled `playbackRate` and left notes stuck.
 
 ## Wiring
 
-GPIO numbers from `main/main.h` — a pin number cannot be expressed in code reading the
-macro.
+GPIO numbers from `main/main.h` — a pin cannot be expressed by reading the macro.
 
 | Function | Pad / channel | GPIO |
 |---|---|---|
@@ -372,11 +377,11 @@ macro.
 | Buzzer (LEDC) | `BUZZER` | 13 |
 | MIDI UART2 TX / RX | `MIDI_TX_PIN` / `MIDI_RX_PIN` | 17 / 16 |
 
-Touch pads use the **legacy `driver/touch_pad.h` API** (IDF also ships `touch_sensor`).
-A pad reads LOW when touched; ARP is read first so its press latency stays lowest.
-Pots are raw ADC 0-4095 -> MIDI 0-127, with a slow EMA tracking the stable center
-beside the fast one. In the MIDI file player **pot1 = note length (0..2), pot2 =
-velocity (0..1)**; the accessors are still `getPot1Value`/`getPot2Value`.
+Touch pads use the **legacy `driver/touch_pad.h` API** (IDF also ships `touch_sensor`);
+a pad reads LOW when touched, and ARP is read first so its press latency stays lowest.
+Pots are raw ADC 0-4095 -> MIDI 0-127 with a slow EMA beside the fast one; in the MIDI
+file player **pot1 = note length (0..2), pot2 = velocity (0..1)**, and the accessors are
+still `getPot1Value`/`getPot2Value`.
 
 ## Constants whose constraint is invisible in the code
 
@@ -441,33 +446,28 @@ CI container.
 
 ## CI autobump: how it commits, and its hazard
 
-`.github/workflows/build.yml` commits the three `.bin`s and pushes them: it **records
-the sha it built**, then `git reset --hard FETCH_HEAD`, restores the three `.bin`s from
-that sha and commits with a 3-path pathspec, up to 5 attempts. **`reset --soft` is NOT
-usable**: it moves HEAD to the fetched tip but leaves the index on the tree this
-checkout built, so the commit diffs `built_tree` minus `remote_tip` and silently
-reverts every source commit in between. A rebase would MERGE the previous `.bin`s and
-die on "Cannot merge binary files". Since `8454302` it also defines
-`refuse_unless_bins_only()`, walking `git diff-tree --name-only -r` and returning 1 on
-any path outside the three.
+`.github/workflows/build.yml` commits the three `.bin`s: it records the sha it built,
+then `git reset --hard FETCH_HEAD`, restores the `.bin`s from that sha and commits with
+a 3-path pathspec, up to 5 attempts. **`reset --soft` is NOT usable**: it moves HEAD to
+the fetched tip but leaves the index on the tree this checkout built, so the commit
+silently reverts every source commit in between. A rebase would MERGE the previous
+`.bin`s and die on "Cannot merge binary files". Since `8454302` `refuse_unless_bins_only()`
+walks `git diff-tree --name-only -r` and returns 1 on any path outside the three.
 
-**Residual rule: any commit touching a non-`.bin` path must be re-verified against
-HEAD after a pull** — a green build never proves a change survived. Whole commits
-vanished: one autobump removed 264 lines of `AGENTS.md` and 60 of `network_midi.cpp`
-while shipping two `.bin`s, and two later pairs are exact inverse mirrors. Because CI
-rewrites the `.bin`s on `main` on nearly every push, `remote_moved` is normal, not an
-error. Push with `git_push {recover_remote_moved: true}` (alias `pull_first`; opt-in,
+**Residual rule: any commit touching a non-`.bin` path must be re-verified against HEAD
+after a pull** — a green build never proves a change survived; whole commits have
+vanished (one autobump dropped 264 lines of `AGENTS.md` while shipping two `.bin`s).
+CI rewrites the `.bin`s on `main` on nearly every push, so `remote_moved` is normal, not
+an error. Push with `git_push {recover_remote_moved: true}` (alias `pull_first`; opt-in,
 clean-worktree gate, ff-only then merge, abort on conflict); `git_finalize`
 auto-recovers and reports `auto_recovered:true`.
 
 `../aloopprime` is the opposite: a **fetch-only checkout** (`origin.pushurl = no-push`,
 no local git identity), so `git_finalize` there commits and gm refuses the push with
-`push_disabled_by_config`. No identity either, so a merging `git_pull` dies with
-`git_identity_required`, and local `main` sits months behind `origin/main` — never
-merge to publish. Local-only commits are the intended end state; do not "fix" it by
-editing its `.git/config` or adding a remote.
-- aloop's shutdown SIGSEGV is fixed (`worker()` published stack locals into globals ->
-  process-lifetime `unique_ptr`s; 17 stops, 0 `signal=11`).
+`push_disabled_by_config`, and a merging `git_pull` dies with `git_identity_required`.
+Local-only commits are the intended end state; do not "fix" it by editing its
+`.git/config` or adding a remote. Its shutdown SIGSEGV is fixed (`worker()` published
+stack locals into globals -> process-lifetime `unique_ptr`s; 17 stops, 0 `signal=11`).
 
 ## ESP-IDF 6.x breaks already absorbed
 
@@ -477,9 +477,8 @@ Historical — none visible in current source, each silently re-breaks on a bump
 
 ## Comment sweep (INVARIANT 3)
 
-`main/` is **comment-free**: 42 files, 7911 lines, 0 matches for `^\s*(//|/\*)`. Any
-new comment must become self-explanatory code; what cannot goes here, after checking
-it is still relevant and factual. Re-count before quoting.
+`main/` is **comment-free**: 42 files, 7911 lines, 0 matches for `^\s*(//|/\*)`. What
+cannot become self-explanatory code goes here. Re-count before quoting.
 
 ## gm usage gotchas
 
