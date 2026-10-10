@@ -51,13 +51,15 @@ default pool starts at .2, so .2-.20 fits); STA netif comes from
 tree. Proof of a lease on the ESP side is the `WIFI: IP: 192.168.4.x` line
 (`IP_EVENT_STA_GOT_IP`).
 
-**Open suspect (unfixed):** while hosting with zero stations the supervisor calls
-`wifi_scan_best_bssid` -> `ensure_sta_started()`, which flips to `WIFI_MODE_APSTA`
-(boot log shows `mode : sta (...:14) + softAP (...:15)` 2 s after AP up), and an
-active scan interrupts SoftAP beaconing. A station associating in a scan window
-can sit with no RX and never finish DHCP. Matches a Pi report of "associated,
-rx packets 0, no lease". Fix = stay `WIFI_MODE_AP` while hosting and re-arm the
-election scan on a longer stationless interval. Not changed yet.
+**The hosting scan is pinned to the mesh channel.** The election scan needs
+`ensure_sta_started()` -> `WIFI_MODE_APSTA`, and an all-channel scan dwells
+off-channel, interrupting SoftAP beaconing: a station associating inside a scan
+window can sit with no RX and never finish DHCP (Pi report: "associated, rx
+packets 0, no lease"). So the supervisor passes `kTickerChannel` — the STA stays
+on the channel the AP already beacons on, so there is no dwell. Boot and hold
+scans stay all-channel (`kScanAllChannels`): they run before the AP exists.
+Cost: a host that left channel 6 would never be seen, so we would never yield to
+it. That is the same ch6 pairing the table already rests on.
 
 ### By-the-book Link checklist (both trees)
 
