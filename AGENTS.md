@@ -75,9 +75,10 @@ election scan on a longer stationless interval. Not changed yet.
 - `setTempo` rewrites tempo for EVERY peer. This tree sets it only on an explicit
   LTMP command; aloopprime refuses to propose when peers own it. Neither is an
   unconditional writer.
-- **Interface readiness is a real race.** 500 ms settle before constructing Link
-  and ~10 s IGMP re-assert: a single IGMP join at GOT_IP can race netif readiness
-  and silently not stick.
+- **Interface readiness is a real race.** 500 ms settle before constructing Link,
+  then IGMP re-asserted every 30 s (15 x 2 s ticks) for the life of the
+  association, never a one-shot join: one join at GOT_IP can race netif readiness
+  and not stick, and a snooping AP ages out a join that is never repeated.
 
 ### The vendored Link is a checked-in FORK, not a submodule
 
@@ -90,7 +91,12 @@ The divergence is the relay hook: `link/include/ableton/platforms/asio/Socket.hp
 declares `extern "C" wifi_link_multicast_forward(...)` and calls it on every send,
 so `wifi_config.cpp` can unicast-copy Link discovery datagrams across the SoftAP
 boundary. **Any Link bump must re-apply that hook** — losing it compiles fine and
-fails only as silent non-discovery.
+fails only as silent non-discovery. It already died once that way: the hook's
+multicast test read `dstip & 0xff` while asio's `to_uint()` is HOST order (see
+asio's own `is_loopback()` masking `0xFF000000`), so 224.76.78.75 read as 75 and
+the relay forwarded nothing from the day it was written. The hook is now gated
+`if (!g_ap_active) return;` — in STA role it used to unicast-duplicate to the
+gateway, which that fix would otherwise have switched on.
 
 No root `.gitmodules`, so `Dockerfile`, `setup.sh`, `.github/workflows/build.yml`
 deliberately do NOT init submodules. Do not re-add. Two nested ones survive,
@@ -200,8 +206,9 @@ output). Then `hs(HOLD_EN)` -> short drain -> `hs(RELEASE_BOTH)` resets the boar
 
 Baud: the ROM only speaks 115200, so `enter_and_sync` pins it (`ROM_BAUD`);
 `--baud` applies only after esptool's RAM stub re-times the port. **USB/IP path
-only:** 115200 -> 72.2 s (139.9 kbit/s) vs 460800 -> 19.4 s (519.9 kbit/s).
-921600 dies right after "Changed." with `FatalError` from `flash_begin`: nothing
+only:** 115200 -> 72.2 s (139.9 kbit/s) vs 460800 -> 19.4 s (519.9 kbit/s);
+460800 flaked once the same way and a plain re-run succeeded, so that `FatalError`
+is a transient attach flake, not baud-specific. 921600 dies right after "Changed." with `FatalError` from `flash_begin`: nothing
 written, chip left in the stub; `--dry` recovers it. **921600 is UNMEASURED on
 `flash-ticker.js`'s real COM port** (PRD `flash-ticker-js-921600-unmeasured`).
 esptool leaves the port at the flash baud, so `boot_app()` resets to `ROM_BAUD`
