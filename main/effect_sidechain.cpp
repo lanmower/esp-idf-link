@@ -19,15 +19,58 @@ constexpr double SIDECHAIN_BEATS_PER_PATTERN_PASS = SIDECHAIN_BEATS_PER_STEP * S
 static_assert(SIDECHAIN_BEATS_PER_PATTERN_PASS == static_cast<double>(SIDECHAIN_BEATS_PER_PATTERN),
               "one SIDECHAIN_RHYTHM_STEPS pass no longer spans SIDECHAIN_BEATS_PER_PATTERN beats");
 
-constexpr int SIDECHAIN_PATTERN_FOR_SECONDARY_PAD[NUM_TOUCH_PADS] = {
-    SC_PATTERN_INDEX_QUARTER,
-    SC_PATTERN_INDEX_OFFBEAT_EIGHTH,
-    SC_PATTERN_INDEX_SYNCOPATED,
-    SC_PATTERN_INDEX_FOUR_FLOOR
+struct SidechainPadPatternBinding {
+    int padIndex;
+    int patternIndex;
 };
 
-static_assert(SIDECHAIN_PATTERN_FOR_SECONDARY_PAD[SIDECHAIN_PAD_INDEX] == SIDECHAIN_DEFAULT_PATTERN_INDEX,
-              "find_secondary_tapped_pad skips SIDECHAIN_PAD_INDEX, so its pattern is reachable only as the boot default");
+constexpr std::array<SidechainPadPatternBinding, NUM_SIDECHAIN_PATTERNS> SIDECHAIN_PAD_PATTERN_BINDINGS = {{
+    {SIDECHAIN_PAD_INDEX, SC_PATTERN_INDEX_QUARTER},
+    {ARP_PAD_INDEX, SC_PATTERN_INDEX_OFFBEAT_EIGHTH},
+    {DELAY_REVERB_PAD_INDEX, SC_PATTERN_INDEX_SYNCOPATED},
+    {FILTER_PAD_INDEX, SC_PATTERN_INDEX_FOUR_FLOOR}
+}};
+
+constexpr bool sidechainPadPatternBindingsSelectEveryPattern() {
+    for (int i = 0; i < static_cast<int>(SIDECHAIN_PAD_PATTERN_BINDINGS.size()); i++) {
+        const SidechainPadPatternBinding binding = SIDECHAIN_PAD_PATTERN_BINDINGS[i];
+
+        if (binding.padIndex < 0 || binding.padIndex >= NUM_TOUCH_PADS) return false;
+
+        if (binding.patternIndex < 0 || binding.patternIndex >= NUM_SIDECHAIN_PATTERNS) return false;
+
+        for (int j = 0; j < i; j++) {
+            if (SIDECHAIN_PAD_PATTERN_BINDINGS[j].padIndex == binding.padIndex) return false;
+            if (SIDECHAIN_PAD_PATTERN_BINDINGS[j].patternIndex == binding.patternIndex) return false;
+        }
+    }
+
+    return true;
+}
+
+static_assert(sidechainPadPatternBindingsSelectEveryPattern(),
+              "every sidechain pattern must bind a distinct pad in range, and no pad may bind two patterns");
+
+constexpr int sidechainPatternIndexForPad(int padIndex) {
+    for (int i = 0; i < static_cast<int>(SIDECHAIN_PAD_PATTERN_BINDINGS.size()); i++) {
+        if (SIDECHAIN_PAD_PATTERN_BINDINGS[i].padIndex == padIndex) {
+            return SIDECHAIN_PAD_PATTERN_BINDINGS[i].patternIndex;
+        }
+    }
+
+    return -1;
+}
+
+static int find_tapped_pattern_pad(const bool pad_pressed_this_tick[], std::array<bool, NUM_TOUCH_PADS>& pads_used) {
+    for (int pad = 0; pad < NUM_TOUCH_PADS; pad++) {
+        if (pad_pressed_this_tick[pad]) {
+            pads_used[pad] = true;
+            return pad;
+        }
+    }
+
+    return -1;
+}
 
 extern SynthType g_synth_type;
 
@@ -62,25 +105,31 @@ bool handle_sidechain_adjusting_pads(const bool pad_pressed_this_tick[], std::ar
 {
     if (!g_current_synth) return false;
 
-    int tapped_pad = find_secondary_tapped_pad(SIDECHAIN_PAD_INDEX, pad_pressed_this_tick, pads_used);
+    int tapped_pad = find_tapped_pattern_pad(pad_pressed_this_tick, pads_used);
 
-    if (tapped_pad >= 0 && tapped_pad < NUM_TOUCH_PADS) {
-        int new_pattern_index = SIDECHAIN_PATTERN_FOR_SECONDARY_PAD[tapped_pad];
+    if (tapped_pad < 0) return false;
 
-        if (new_pattern_index >= 0 && new_pattern_index < NUM_SIDECHAIN_PATTERNS && new_pattern_index != s_current_sidechain_pattern_index) {
-            s_current_sidechain_pattern_index = new_pattern_index;
-            ESP_LOGD(TAG_SC, "SC Adjust TAP: Select Pattern -> %d (via Pad %d)", s_current_sidechain_pattern_index, tapped_pad);
-            g_current_synth->setSidechainPattern(s_current_sidechain_pattern_index);
-            s_last_sc_step_index = -1;
-            return true;
-        } else if (new_pattern_index == s_current_sidechain_pattern_index) {
-             ESP_LOGD(TAG_SC, "SC Adjust: Pad %d tapped, pattern %d already selected.", tapped_pad, new_pattern_index);
-        } else if (new_pattern_index != -1) {
-             ESP_LOGW(TAG_SC, "SC Adjust: Invalid pattern index %d attempted via Pad %d tap.", new_pattern_index, tapped_pad);
-        }
+    int new_pattern_index = sidechainPatternIndexForPad(tapped_pad);
+
+    if (new_pattern_index < 0) {
+        ESP_LOGW(TAG_SC, "SC Adjust: Pad %d binds no sidechain pattern.", tapped_pad);
+        return false;
     }
 
-    return false;
+    if (new_pattern_index == s_current_sidechain_pattern_index) {
+        ESP_LOGD(TAG_SC, "SC Adjust: Pad %d tapped, pattern %d already selected.", tapped_pad, new_pattern_index);
+        return false;
+    }
+
+    s_current_sidechain_pattern_index = new_pattern_index;
+
+    ESP_LOGD(TAG_SC, "SC Adjust TAP: Select Pattern -> %d (via Pad %d)", s_current_sidechain_pattern_index, tapped_pad);
+
+    g_current_synth->setSidechainPattern(s_current_sidechain_pattern_index);
+
+    s_last_sc_step_index = -1;
+
+    return true;
 }
 
 void handle_sidechain_active(const ableton::Link::SessionState& state, const std::chrono::microseconds& time,
