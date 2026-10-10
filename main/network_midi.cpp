@@ -103,6 +103,8 @@ static esp_err_t upload_handler(httpd_req_t* req) {
     return ESP_OK;
 }
 
+static void get_device_ip();
+
 static esp_err_t info_handler(httpd_req_t* req) {
     get_device_ip();
 
