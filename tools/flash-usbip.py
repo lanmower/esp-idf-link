@@ -35,6 +35,7 @@ SYNC_BODY = (struct.pack("<BBHI", 0x00, 0x08, 36, 0)
              + b"\x07\x07\x12\x20" + b"\x55" * 32)   # esptool framing: hdr + payload
 HOLD_EN, HOLD_IO0 = 0x40, 0x20          # EN low / IO0 low, as 0xA4 control bits
 OFF_BOOTLOADER, OFF_PARTITIONS = "0x1000", "0x8000"
+ROM_BAUD = 115200                       # the ESP32 ROM only ever speaks this
 
 
 def ch341_divisor(baud):
@@ -122,6 +123,7 @@ def enter_download(port, banner=True):
 
 def boot_app(port):
     """From download mode: pulse EN with IO0 high -> boot:0x13."""
+    port.baudrate = ROM_BAUD        # esptool left the port at the flash baud
     port.hs(HOLD_EN)
     port.drain(0.3)
     port.hs(0x00)
@@ -180,19 +182,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true",
                     help="prove download-mode entry and sync, then boot the app")
-    ap.add_argument("--baud", default="115200")
-    ap.add_argument("--verify", action="store_true")
+    ap.add_argument("--baud", default="460800",
+                    help="flash baud (measured: 115200=72s, 460800=20s, 921600 fails); "
+                         "the ROM sync below always runs at 115200")
     ap.add_argument("--no-stub", action="store_true", help="skip the RAM stub upload")
     args = ap.parse_args()
 
     port = open_port()
     port.init()
     port._ready = True
-    port.baudrate = int(args.baud)
-    print("devid=0x%08x  baud=%d" % (port.devid, port.baudrate), flush=True)
+    print("devid=0x%08x  rom baud=%d" % (port.devid, port.baudrate), flush=True)
 
     print("=== enter download mode: 0x40 -> 0x20 ===", flush=True)
-    esp = enter_and_sync(port, int(args.baud))
+    esp = enter_and_sync(port, ROM_BAUD)
     print("  sync ok  chip=esp32  mac=%s" %
           ":".join("%02X" % b for b in esp.read_mac()), flush=True)
     print("  flash id=0x%06x" % esp.flash_id(), flush=True)
@@ -218,8 +220,6 @@ def main():
 
     argv = ["--before", "no-reset", "--after", "no-reset", "--baud", args.baud,
             "write-flash"]                       # esptool 5.x spells it hyphenated
-    if args.verify:
-        argv.append("--verify")
     if args.no_stub:
         argv.append("--no-stub")                 # ROM only: slow, but no stub upload
     for off, path in images:

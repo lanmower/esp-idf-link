@@ -162,7 +162,9 @@ the device only over USB.
   `0x50AA`, then type(1) subtype(1) offset(4) size(4) label(16); app entries
   have type == 0. `--list` lists ports, and it refuses to guess when more than
   one serial port exists -- this machine has two Bluetooth COM ports that are
-  not the ESP32.
+  not the ESP32. esptool 5.x dropped `--verify` because it always verifies
+  ("Hash of data verified" per image), so a `--verify` flag is not ignored --
+  it aborts `write-flash` with "No such option" and flashes nothing.
 
 ### No BOOT hold: `python tools/flash-usbip.py` flashes it hands-free
 
@@ -201,6 +203,23 @@ Two measured facts make it work, and both are counter-intuitive:
 
 Three consecutive `--dry` cycles each produced `boot:0x3`, sync, then
 `boot:0x13` with the app's log, so entry is not a one-off.
+
+### Flash baud: 460800 is the default, 921600 does not work
+
+The ROM only ever speaks 115200, so `enter_and_sync` pins that (`ROM_BAUD`)
+and `--baud` takes effect only after esptool uploads its RAM stub and re-times
+the port -- passing `--baud` into the sync is what made the first 921600
+attempt fail. Measured on the 1262560-byte app image: **115200 -> 72.2 s**
+(139.9 kbit/s) versus **460800 -> 19.4 s** (519.9 kbit/s, `Hash of data
+verified`, boots `boot:0x13`). 921600 dies right after `Changing baud rate to 921600...
+Changed.` with `FatalError: No more data to read from the serial port` from
+`reset_chip -> soft_reset -> flash_begin`: no `Writing` line at all, nothing
+written, chip left in the stub. `--dry` recovers it and the old firmware is
+intact.
+
+esptool leaves the port at the flash baud, so `boot_app()` resets it to
+`ROM_BAUD` before pulsing EN -- without that the app's 115200 log is read at
+460800 and the run silently shows no `boot:` line at all.
 
 `tools/ch341.py` (raw USB/IP + the `ch341.c` init order: `SET_CONFIGURATION`
 before anything, or bulk IN is dead), `tools/usbip-port.py` (bulk OUT + the
