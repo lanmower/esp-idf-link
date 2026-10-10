@@ -189,6 +189,11 @@ WSL2 Docker performance accessing Windows filesystem is slower. To improve:
 1. Keep project source in Linux filesystem (`/home/user/...` not `/mnt/c/...`)
 2. Or use Docker Desktop's native WSL2 integration
 
+### `docker-compose run --rm build` hangs
+On this project's WSL2 + Docker Desktop setup, Compose builds have been observed to hang
+indefinitely (>30 min) when only source files changed. Prefer `bash build.sh`, which runs
+`docker run` directly; use the Compose `build` service only if you are debugging Compose itself.
+
 ## Compilation Configuration
 
 The project uses the following optimization flags:
@@ -202,15 +207,27 @@ C++ Standard: C++17
 ## Component Dependencies
 
 ### Main Dependencies
+Declared in `main/CMakeLists.txt` as `REQUIRES`:
 - `nvs_flash` - Non-volatile storage
 - `esp_netif` - Network interface
 - `esp_event` - Event loop
 - `esp_wifi` - WiFi support
-- `driver` - GPIO, ADC, UART, LEDC drivers
-- `freertos` - Real-time OS
 - `esp_http_server` - HTTP server
-- `esp_driver_gptimer` - General purpose timers
+- `esp_eth` - Ethernet (pulled in by `protocol_examples_common`)
+- `driver` - Legacy umbrella driver component, kept alongside the split `esp_driver_*` below
+- `log` - Logging
 - `esp_adc` - ADC conversion
+- `esp_driver_gptimer` - General purpose timers
+- `freertos` - Real-time OS
+
+Declared as `PRIV_REQUIRES` (private to `main`, not propagated to anything that depends on it):
+- `esp_driver_touch_sens` - Touch pads
+- `esp_driver_gpio` - GPIO
+- `esp_driver_uart` - MIDI UART
+- `esp_driver_ledc` - Buzzer PWM
+
+### Local components
+- `link-esp` - Ableton Link integration (`components/link-esp`)
 
 ### Third-party
 - `protocol_examples_common` - Common protocol examples
