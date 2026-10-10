@@ -101,8 +101,7 @@ UNVERIFIED (`ap_isolate=0` may suffice) — do not port the relay by assumption.
 the old blocked in `recvfrom` forever, leaking sockets toward the 16-socket ceiling.
 It now signals the running task (20 ms `SO_RCVTIMEO` so the stop flag is seen) and
 waits for exit; `link_relay_release()` frees socket and raw pcb on every path.
-`ap_netif_lock()` covers `g_ap_netif` writes and the relay's read-and-send section,
-read-and-send section, `LOCK_TCPIP_CORE` inside it on both sides so lock order cannot
+`ap_netif_lock()` covers `g_ap_netif` writes and the relay's read-and-send section, `LOCK_TCPIP_CORE` inside it on both sides so lock order cannot
 invert.
 
 ## Clock is hardware-scheduled, never tick-emitted
@@ -227,7 +226,7 @@ All payloads little-endian `int64`.
 - LTMP/phase requests are applied on the Link task, not the listener task:
   `captureAppSessionState`/`commitAppSessionState` need a single owner.
 - Status is request/response, not broadcast: free when idle, cannot pollute the Link
-  group. `MetroStats` (`fired`/`last`/`worst`/`mean`/`rms`) rides in it as
+  group. The dev PC is not on 192.168.4.0/24, so probe it from a mesh station. `MetroStats` (`fired`/`last`/`worst`/`mean`/`rms`) rides in it as
   `metro` — the only evidence of click lateness.
 
 MIDI emission — one path, no per-device clock code. Byte values are named constants
@@ -402,8 +401,7 @@ velocity (0..1)**; the accessors are still `getPot1Value`/`getPot2Value`.
   `{0,6,5,6}` i-VII-VI-VII, `{0,3,6,2}` i-iv-VII-III, `{0,5,6,4}` i-VI-VII-V ("dark
   cadence"), `{0,2,6,3}` i-III-VII-iv, `{0,0,5,6}` pedal.
 - `main.h` asserts `LINK_QUANTUM == METRONOME_ACCENT_CYCLE_BEATS`: the click's accent
-  cycle IS the quantum, so changing one alone breaks the build. (The old
-  `MAX_ARP_INDEX_WRAP = 128` warning went with the constant, removed in `76e8bcb`.)
+  cycle IS the quantum, so changing one alone breaks the build.
 
 ## Synth CC/NRPN facts not derivable from the code
 
