@@ -8,3 +8,15 @@ build/
 *.swo
 *~
 .env
+
+# Local tool state and object stores. None of it takes part in the firmware
+# build, and `COPY . .` ships every unlisted path into the image on every
+# `docker build` -- .git/ and .gm/ alone are the bulk of the context.
+.git/
+.gm/
+.gm/pw-sock-*/
+.codeinsight
+.code-search/
+.agentplug/
+.agentplug-kv/
+node_modules/

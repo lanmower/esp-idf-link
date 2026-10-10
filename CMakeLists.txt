@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.5)
-set(EXTRA_COMPONENT_DIRS $ENV{IDF_PATH}/examples/common_components/protocol_examples_common)
+if("$ENV{IDF_PATH}" STREQUAL "")
+    message(FATAL_ERROR "IDF_PATH is not set; source your ESP-IDF export.sh before configuring.")
+endif()
+set(EXTRA_COMPONENT_DIRS "$ENV{IDF_PATH}/examples/common_components/protocol_examples_common")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(link-idf-example)

@@ -34,20 +34,28 @@ bash setup.sh   # One time
 bash build.sh   # Every build
 ```
 
-### Build with docker-compose
+### Build with docker-compose (do not use on WSL2)
+
+`docker-compose.yml` still defines `build`, `shell`, `flash` and `monitor`, and they do work
+on a plain Linux host. On this project's WSL2 + Docker Desktop setup they have been observed
+to hang indefinitely (>30 min) when only source files changed, so use the equivalent
+`docker run` forms below instead. Reach for Compose only when you are debugging Compose
+itself.
 
 ```bash
 # Build the project
-docker-compose run --rm build
+bash build.sh
 
 # Interactive shell
-docker-compose run --rm shell
+docker run --rm -it -v $(pwd):/project -w /project esp-idf-link bash
 
 # Flash to device (requires USB at /dev/ttyUSB0)
-docker-compose run --rm flash
+docker run --rm --device=/dev/ttyUSB0 -v $(pwd):/project -w /project esp-idf-link \
+  bash -c "source /opt/esp/idf/export.sh && idf.py -p /dev/ttyUSB0 flash"
 
 # Monitor serial output
-docker-compose run --rm monitor
+docker run --rm -it --device=/dev/ttyUSB0 -v $(pwd):/project -w /project esp-idf-link \
+  bash -c "source /opt/esp/idf/export.sh && idf.py -p /dev/ttyUSB0 monitor"
 ```
 
 ### Build with raw docker command
@@ -81,7 +89,7 @@ docker run --rm \
 │   ├── link-esp/           # Ableton Link integration
 │   └── ...
 ├── Dockerfile              # Docker build configuration
-├── docker-compose.yml      # Docker Compose configuration
+├── docker-compose.yml      # Docker Compose configuration (hangs on WSL2 -- see Troubleshooting)
 ├── CMakeLists.txt          # Main project CMake config
 ├── setup.sh                # Docker image build script
 ├── build.sh                # Build script
@@ -101,7 +109,7 @@ docker run --rm \
 
 ### Docker Configuration
 - `Dockerfile` - Builds image using Espressif official ESP-IDF image
-- `docker-compose.yml` - Defines build, flash, and monitor services
+- `docker-compose.yml` - Defines build, shell, flash and monitor services -- present, but unusable on this project's WSL2 setup (see Troubleshooting)
 
 ## Advantages of Docker Approach
 
@@ -151,7 +159,10 @@ Always `build/` -- `build.sh` hardcodes it and takes no directory argument; `cle
 ### Docker Image Name
 Default: `esp-idf-link:latest`
 
-To change, edit the `IMAGE_NAME` and `IMAGE_TAG` variables in `setup.sh` and `build.sh`.
+`setup.sh` hardcodes `IMAGE_NAME`/`IMAGE_TAG`. `build.sh` reads them as
+`${IMAGE_NAME:-esp-idf-link}` / `${IMAGE_TAG:-latest}`, so
+`IMAGE_NAME=... IMAGE_TAG=... bash build.sh` overrides the tag for one build without
+editing either script.
 
 ## Troubleshooting
 
@@ -196,13 +207,28 @@ indefinitely (>30 min) when only source files changed. Prefer `bash build.sh`, w
 
 ## Compilation Configuration
 
-The project uses the following optimization flags:
-- `-Os` - Size optimization
-- `-ffunction-sections` - Function-level sectioning
-- `-fdata-sections` - Data-level sectioning
-- `-Wl,--gc-sections` - Garbage collect unused sections
+Optimization is deliberately not uniform, and the two files that set it disagree:
 
-C++ Standard: C++17
+- `sdkconfig.defaults` sets `CONFIG_COMPILER_OPTIMIZATION_PERF=y` and
+  `CONFIG_COMPILER_OPTIMIZATION_SIZE=n`, so the framework-wide default is `-O2`
+  (performance) -- **not** `-Os`.
+- `main/CMakeLists.txt` then appends `-Os -ffunction-sections -fdata-sections` to
+  `__idf_main` and `-Wl,--gc-sections` to its link step. Those land *after* the
+  framework flag on the command line, and with GCC the last `-O` wins, so the
+  application's own sources compile `-Os` while every other component builds `-O2`.
+
+| Flag | Meaning | Set by |
+|---|---|---|
+| `-O2` | Performance -- framework-wide default | `sdkconfig.defaults` -> `CONFIG_COMPILER_OPTIMIZATION_PERF=y` |
+| `-Os` | Size -- app sources only, overrides the above | `main/CMakeLists.txt` `target_compile_options(__idf_main PRIVATE -Os ...)` |
+| `-ffunction-sections` | Function-level sectioning | `main/CMakeLists.txt` (also an ESP-IDF default) |
+| `-fdata-sections` | Data-level sectioning | `main/CMakeLists.txt` (also an ESP-IDF default) |
+| `-Wl,--gc-sections` | Garbage collect unused sections | `main/CMakeLists.txt` `target_link_options` |
+
+C++ standard: `main/CMakeLists.txt` sets `CXX_STANDARD 17` on `__idf_main`, but the compile
+line recorded in `build/compile_commands.json` carries `-std=gnu++26` and no `-std=gnu++17`,
+so ESP-IDF's own default is what actually reaches the compiler. Treat 17 as the declared
+intent, not as the built standard.
 
 ## Component Dependencies
 
@@ -214,6 +240,7 @@ Declared in `main/CMakeLists.txt` as `REQUIRES`:
 - `esp_wifi` - WiFi support
 - `esp_http_server` - HTTP server
 - `esp_eth` - Ethernet (listed in `REQUIRES`; no Ethernet code in `main/` today)
+- `spiffs` - SPIFFS filesystem mounted at `/spiffs` (uploaded clips, MIDI files)
 - `driver` - Legacy umbrella driver component, kept alongside the split `esp_driver_*` below
 - `log` - Logging
 - `esp_adc` - ADC conversion
@@ -242,10 +269,7 @@ The binary can be flashed to an ESP32 using:
 # Using bash script
 bash build.sh  # Builds in build/ directory
 
-# Using docker-compose
-docker-compose run --rm flash
-
-# Using raw docker
+# Using raw docker (not docker-compose -- see Troubleshooting)
 docker run --rm --device=/dev/ttyUSB0 -v $(pwd):/project -w /project esp-idf-link bash -c \
   "source /opt/esp/idf/export.sh && idf.py -p /dev/ttyUSB0 flash"
 ```
@@ -261,6 +285,16 @@ Expected output on serial monitor:
 - **Application Binary**: `build/link-idf-example.bin`
 - **Bootloader**: `build/bootloader/bootloader.bin`
 - **Partition Table**: `build/partition_table/partition-table.bin`
+
+You do not have to build to get these three. CI builds on every push and, on a green
+`main`, commits them back to the branch (and uploads them as the
+`ticker-firmware-<sha>` artifact). A clean clone therefore already carries flashable
+images and needs no Docker at all -- `node flash-ticker.js COM3` reads the app offset
+out of the committed partition-table binary rather than hardcoding it.
+
+The SPIFFS image that holds the MIDI files is a separate image, not one of the three:
+`flash_midi_data.sh` builds it from `./data` and writes it at `0x317000`, the `storage`
+partition offset.
 
 ## Clean Build
 
