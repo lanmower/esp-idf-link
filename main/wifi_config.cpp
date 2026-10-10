@@ -8,6 +8,7 @@
 #include <lwip/igmp.h>
 #include <lwip/netif.h>
 #include <esp_mac.h>
+#include <esp_timer.h>
 #include <lwip/sockets.h>
 #include <lwip/inet.h>
 #include <lwip/raw.h>
@@ -61,13 +62,25 @@ static SemaphoreHandle_t ap_netif_lock() {
     return g_ap_netif_lock;
 }
 
+static const int64_t STA_RECONNECT_MIN_INTERVAL_US = 1000000;
+static int64_t s_last_sta_reconnect_us = 0;
+
+static void request_sta_reconnect(const char* why) {
+    if (!g_sta_wanted) return;
+    const int64_t now_us = esp_timer_get_time();
+    if (now_us - s_last_sta_reconnect_us < STA_RECONNECT_MIN_INTERVAL_US) return;
+    s_last_sta_reconnect_us = now_us;
+    ESP_LOGI(TAG, "STA reconnect (%s)", why);
+    esp_wifi_connect();
+}
+
 static void wifi_event_handler(void* arg, esp_event_base_t base,
                                int32_t id, void* data) {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         g_wifi_connected = false;
         wifi_event_sta_disconnected_t* ev = (wifi_event_sta_disconnected_t*)data;
         ESP_LOGW(TAG, "STA disconnected (reason=%d)", ev ? ev->reason : -1);
-        if (g_sta_wanted && !g_ap_active) esp_wifi_connect();
+        request_sta_reconnect("disconnect event");
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* ev = (ip_event_got_ip_t*)data;
         ESP_LOGI(TAG, "IP: " IPSTR, IP2STR(&ev->ip_info.ip));
@@ -443,6 +456,8 @@ void wifi_start_link_relay() {
     xTaskCreate(link_multicast_relay_task, "link_relay", 4096, NULL, 5, &g_relay_task);
 }
 
+static const int AP_SCAN_EVERY_TICKS = 4;
+
 static void wifi_supervisor_task(void* arg) {
     const char* ssid = (const char*)arg;
     const int RECONNECT_TRIES = 30;
@@ -452,6 +467,7 @@ static void wifi_supervisor_task(void* arg) {
 
     int sta_down_count = 0;
     int igmp_reassert_ticks_left = IGMP_REASSERT_TICKS;
+    int ap_scan_countdown = 0;
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(2000));
@@ -483,8 +499,14 @@ static void wifi_supervisor_task(void* arg) {
             }
         } else {
             if (ap_has_associated_stations()) {
+                ap_scan_countdown = 0;
                 continue;
             }
+            if (ap_scan_countdown > 0) {
+                ap_scan_countdown--;
+                continue;
+            }
+            ap_scan_countdown = AP_SCAN_EVERY_TICKS;
             uint8_t best[6] = {0};
             int matches = wifi_scan_best_bssid(ssid, best);
             uint8_t own_ap_mac[6];
@@ -500,6 +522,7 @@ static void wifi_supervisor_task(void* arg) {
                 g_ap_active = false;
                 ensure_sta_started();
                 wifi_connect_sta(ssid, "");
+                wifi_join_link_multicast();
             }
         }
     }
