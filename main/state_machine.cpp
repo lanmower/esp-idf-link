@@ -6,6 +6,8 @@ static const char* TAG = "SM";
 
 static const uint64_t NUDGE_HOLD_US = 500000;
 
+static constexpr float POT_MIDI_VALUE_MAX = 127.0f;
+
 static_assert(NUM_TOUCH_PADS <= bli::BANK_COUNT);
 
 static uint64_t s_press_start_us[NUM_TOUCH_PADS] = {0, 0, 0, 0};
@@ -17,9 +19,9 @@ void process_state_event(const InputEvent& event,
                          const std::chrono::microseconds& link_time)
 {
     if (event.pot_moved[0])
-        g_bassEngine.setDial(0, event.pot_value[0] / 127.0f);
+        g_bassEngine.setDial(0, event.pot_value[0] / POT_MIDI_VALUE_MAX);
     if (event.pot_moved[1])
-        g_bassEngine.setDial(1, event.pot_value[1] / 127.0f);
+        g_bassEngine.setDial(1, event.pot_value[1] / POT_MIDI_VALUE_MAX);
 
     static bool s_all4_latched = false;
     bool all4 = event.pad_held[0] && event.pad_held[1]

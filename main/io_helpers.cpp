@@ -9,10 +9,30 @@
 #include <esp_adc/adc_oneshot.h>
 #include <esp_adc/adc_cali.h>
 
+static constexpr int MIDI_DIN_BAUD_RATE = 31250;
+static constexpr int MIDI_UART_RX_BUFFER_BYTES = 512;
+static constexpr int MIDI_UART_TX_BUFFER_BYTES = 256;
+static constexpr int MIDI_CONTROL_CHANGE_CMD = 0xB0;
+static constexpr int MIDI_CHANNEL_MIN = 1;
+static constexpr int MIDI_CHANNEL_MAX = 16;
+static constexpr int MIDI_DATA_BYTE_MASK = 0x7F;
+static constexpr int MIDI_VALUE_MAX = 127;
+static constexpr int MIDI_VALUE_MID = 64;
+static constexpr int MIDI_CC_NRPN_PARAM_MSB = 99;
+static constexpr int MIDI_CC_NRPN_PARAM_LSB = 98;
+static constexpr int MIDI_CC_DATA_ENTRY_MSB = 6;
+static constexpr int MIDI_CC_DATA_ENTRY_LSB = 38;
+static constexpr int MIDI_CC_RPN_PARAM_MSB = 101;
+static constexpr int MIDI_CC_RPN_PARAM_LSB = 100;
+static constexpr int MIDI_CC_PARAM_DESELECT = 127;
+static constexpr int ADC_RAW_MAX = 4095;
+static constexpr int HALL_SENSOR_STUB_READING = 2048;
+static constexpr float TOUCH_CALIBRATION_THRESHOLD_RATIO = 0.7f;
+
 static const char *TAG = "IO_HELPERS";
 
 static int hall_sensor_read() {
-    return 2048;
+    return HALL_SENSOR_STUB_READING;
 }
 
 static adc_oneshot_unit_handle_t s_adc_handle = nullptr;
@@ -40,7 +60,7 @@ esp_err_t read_adc(int pot_index, int* adc_value) {
 void init_uart_midi()
 {
     uart_config_t uart_config = {};
-    uart_config.baud_rate = 31250;
+    uart_config.baud_rate = MIDI_DIN_BAUD_RATE;
     uart_config.data_bits = UART_DATA_8_BITS;
     uart_config.parity = UART_PARITY_DISABLE;
     uart_config.stop_bits = UART_STOP_BITS_1;
@@ -50,7 +70,7 @@ void init_uart_midi()
 
     ESP_ERROR_CHECK(uart_param_config(MIDI_UART, &uart_config));
     uart_set_pin(MIDI_UART, MIDI_TX_PIN, MIDI_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-    uart_driver_install(MIDI_UART, 512, 256, 0, NULL, 0);
+    uart_driver_install(MIDI_UART, MIDI_UART_RX_BUFFER_BYTES, MIDI_UART_TX_BUFFER_BYTES, 0, NULL, 0);
     ESP_LOGI(TAG, "MIDI UART Initialized (TX:%d, RX:%d)", MIDI_TX_PIN, MIDI_RX_PIN);
 }
 
@@ -88,7 +108,6 @@ void init_touch_pads()
         (touch_pad_t)TOUCH_PAD_FILT
     };
     static uint16_t pad_base_values[NUM_TOUCH_PADS] = {0};
-    const float threshold_percentage = 0.7f;
     for (int i = 0; i < NUM_TOUCH_PADS; i++) {
         ESP_ERROR_CHECK(touch_pad_config(touch_pads[i], TOUCH_THRESHOLD));
         ESP_ERROR_CHECK(touch_pad_set_cnt_mode(touch_pads[i], TOUCH_PAD_SLOPE_7, TOUCH_PAD_TIE_OPT_HIGH));
@@ -106,7 +125,7 @@ void init_touch_pads()
             vTaskDelay(pdMS_TO_TICKS(10));
         }
         pad_base_values[i] = sum / num_samples;
-        uint16_t custom_threshold = (uint16_t)(pad_base_values[i] * threshold_percentage);
+        uint16_t custom_threshold = (uint16_t)(pad_base_values[i] * TOUCH_CALIBRATION_THRESHOLD_RATIO);
         uint16_t final_threshold = (custom_threshold < TOUCH_THRESHOLD) ? custom_threshold : TOUCH_THRESHOLD;
         ESP_ERROR_CHECK(touch_pad_config(touch_pads[i], final_threshold));
         ESP_LOGI(TAG, "TouchPad[%d] calibrated: baseline=%u, threshold=%u",
@@ -199,7 +218,7 @@ int scale_pot_value(int value, int min_observed, int max_observed, double expone
 {
     if (min_observed >= max_observed)
     {
-        return 64;
+        return MIDI_VALUE_MID;
     }
 
     double input_range = static_cast<double>(max_observed - min_observed);
@@ -211,9 +230,9 @@ int scale_pot_value(int value, int min_observed, int max_observed, double expone
 
     double scaled_value_normalized = pow(normalized_input, exponent);
 
-    int final_value = static_cast<int>(round(scaled_value_normalized * 127.0));
+    int final_value = static_cast<int>(round(scaled_value_normalized * MIDI_VALUE_MAX));
 
-    return std::max(0, std::min(127, final_value));
+    return std::max(0, std::min(MIDI_VALUE_MAX, final_value));
 }
 
 bool read_controls(
@@ -263,15 +282,15 @@ bool read_controls(
     int pot1_stable_center_int = (int)(stable_center_pot1_raw + 0.5f);
     int pot2_stable_center_int = (int)(stable_center_pot2_raw + 0.5f);
 
-    int pot1_output = static_cast<int>(round(((double)pot1_smoothed_int / 4095.0) * 127.0));
-    int pot2_output = static_cast<int>(round(((double)pot2_smoothed_int / 4095.0) * 127.0));
-    int pot1_stable_center_scaled = static_cast<int>(round(((double)pot1_stable_center_int / 4095.0) * 127.0));
-    int pot2_stable_center_scaled = static_cast<int>(round(((double)pot2_stable_center_int / 4095.0) * 127.0));
+    int pot1_output = static_cast<int>(round(((double)pot1_smoothed_int / ADC_RAW_MAX) * MIDI_VALUE_MAX));
+    int pot2_output = static_cast<int>(round(((double)pot2_smoothed_int / ADC_RAW_MAX) * MIDI_VALUE_MAX));
+    int pot1_stable_center_scaled = static_cast<int>(round(((double)pot1_stable_center_int / ADC_RAW_MAX) * MIDI_VALUE_MAX));
+    int pot2_stable_center_scaled = static_cast<int>(round(((double)pot2_stable_center_int / ADC_RAW_MAX) * MIDI_VALUE_MAX));
 
-    pot1_output = std::max(0, std::min(127, pot1_output));
-    pot2_output = std::max(0, std::min(127, pot2_output));
-    pot1_stable_center_scaled = std::max(0, std::min(127, pot1_stable_center_scaled));
-    pot2_stable_center_scaled = std::max(0, std::min(127, pot2_stable_center_scaled));
+    pot1_output = std::max(0, std::min(MIDI_VALUE_MAX, pot1_output));
+    pot2_output = std::max(0, std::min(MIDI_VALUE_MAX, pot2_output));
+    pot1_stable_center_scaled = std::max(0, std::min(MIDI_VALUE_MAX, pot1_stable_center_scaled));
+    pot2_stable_center_scaled = std::max(0, std::min(MIDI_VALUE_MAX, pot2_stable_center_scaled));
 
     pot_vals[0] = pot1_output;
     pot_vals[1] = pot2_output;
@@ -353,76 +372,74 @@ void send_midi_message(const uint8_t *message, size_t size)
 
 void send_midi_cc(uint8_t channel, uint8_t cc_num, uint8_t value)
 {
-    if (channel < 1 || channel > 16)
+    if (channel < MIDI_CHANNEL_MIN || channel > MIDI_CHANNEL_MAX)
     {
         ESP_LOGE("MIDI", "Invalid MIDI channel: %d", channel);
         return;
     }
     uint8_t midi_msg[3];
-    midi_msg[0] = 0xB0 | (channel - 1);
-    midi_msg[1] = cc_num & 0x7F;
-    midi_msg[2] = value & 0x7F;
+    midi_msg[0] = MIDI_CONTROL_CHANGE_CMD | (channel - 1);
+    midi_msg[1] = cc_num & MIDI_DATA_BYTE_MASK;
+    midi_msg[2] = value & MIDI_DATA_BYTE_MASK;
     send_midi_message(midi_msg, sizeof(midi_msg));
 }
 
 void send_midi_nrpn(uint8_t channel, uint8_t nrpn_msb, uint8_t nrpn_lsb, uint8_t value_msb)
 {
-    send_midi_cc(channel, 99, nrpn_msb);
-    send_midi_cc(channel, 98, nrpn_lsb);
-    send_midi_cc(channel, 6, value_msb);
-    send_midi_cc(channel, 38, 0);
-    send_midi_cc(channel, 101, 127);
-    send_midi_cc(channel, 100, 127);
+    send_midi_cc(channel, MIDI_CC_NRPN_PARAM_MSB, nrpn_msb);
+    send_midi_cc(channel, MIDI_CC_NRPN_PARAM_LSB, nrpn_lsb);
+    send_midi_cc(channel, MIDI_CC_DATA_ENTRY_MSB, value_msb);
+    send_midi_cc(channel, MIDI_CC_DATA_ENTRY_LSB, 0);
+    send_midi_cc(channel, MIDI_CC_RPN_PARAM_MSB, MIDI_CC_PARAM_DESELECT);
+    send_midi_cc(channel, MIDI_CC_RPN_PARAM_LSB, MIDI_CC_PARAM_DESELECT);
 }
 
 void update_input_state(InputEvent& event)
 {
     const uint64_t current_time_us = esp_timer_get_time();
     event.timestamp_us = current_time_us;
-    const bool process_touch_this_frame = true;
 
-    if (process_touch_this_frame) {
-        static int debug_log_counter = 0;
-        uint16_t all_touch_values[NUM_TOUCH_PADS] = {0};
-        static uint16_t consecutive_touched[NUM_TOUCH_PADS] = {0};
-        static uint16_t consecutive_released[NUM_TOUCH_PADS] = {0};
-        const uint16_t DEBOUNCE_COUNT = 2;
-        for (int i = 0; i < NUM_TOUCH_PADS; i++) {
-            uint16_t touch_value;
-            if (read_touch_pad(i, &touch_value) == ESP_OK) {
-                all_touch_values[i] = touch_value;
-                bool raw_touch_state = (touch_value < TOUCH_THRESHOLD);
-                if (raw_touch_state) {
-                    consecutive_touched[i]++;
-                    consecutive_released[i] = 0;
-                } else {
-                    consecutive_released[i]++;
-                    consecutive_touched[i] = 0;
-                }
-                bool current_pad_state = last_touch_state[i];
-                if (consecutive_touched[i] >= DEBOUNCE_COUNT) {
-                    current_pad_state = true;
-                } else if (consecutive_released[i] >= DEBOUNCE_COUNT) {
-                    current_pad_state = false;
-                }
-                event.pad_pressed_this_tick[i] = current_pad_state && !last_touch_state[i];
-                if (current_pad_state != last_touch_state[i]) {
-                    ESP_LOGI(TAG, "TouchPad[%d]: State change to %s (value=%d, raw_state=%s)",
-                            i, current_pad_state ? "PRESSED" : "RELEASED", touch_value,
-                            raw_touch_state ? "TOUCHED" : "RELEASED");
-                    last_touch_state[i] = current_pad_state;
-                }
-                event.pad_held[i] = current_pad_state;
+    static int debug_log_counter = 0;
+    uint16_t all_touch_values[NUM_TOUCH_PADS] = {0};
+    static uint16_t consecutive_touched[NUM_TOUCH_PADS] = {0};
+    static uint16_t consecutive_released[NUM_TOUCH_PADS] = {0};
+    const uint16_t DEBOUNCE_COUNT = 2;
+    for (int i = 0; i < NUM_TOUCH_PADS; i++) {
+        uint16_t touch_value;
+        if (read_touch_pad(i, &touch_value) == ESP_OK) {
+            all_touch_values[i] = touch_value;
+            bool raw_touch_state = (touch_value < TOUCH_THRESHOLD);
+            if (raw_touch_state) {
+                consecutive_touched[i]++;
+                consecutive_released[i] = 0;
+            } else {
+                consecutive_released[i]++;
+                consecutive_touched[i] = 0;
             }
-        }
-        if (++debug_log_counter >= 500) {
-            ESP_LOGI(TAG, "Touch pad values: [%u, %u, %u, %u] (threshold: %d)",
-                    all_touch_values[0], all_touch_values[1],
-                    all_touch_values[2], all_touch_values[3],
-                    TOUCH_THRESHOLD);
-            debug_log_counter = 0;
+            bool current_pad_state = last_touch_state[i];
+            if (consecutive_touched[i] >= DEBOUNCE_COUNT) {
+                current_pad_state = true;
+            } else if (consecutive_released[i] >= DEBOUNCE_COUNT) {
+                current_pad_state = false;
+            }
+            event.pad_pressed_this_tick[i] = current_pad_state && !last_touch_state[i];
+            if (current_pad_state != last_touch_state[i]) {
+                ESP_LOGI(TAG, "TouchPad[%d]: State change to %s (value=%d, raw_state=%s)",
+                        i, current_pad_state ? "PRESSED" : "RELEASED", touch_value,
+                        raw_touch_state ? "TOUCHED" : "RELEASED");
+                last_touch_state[i] = current_pad_state;
+            }
+            event.pad_held[i] = current_pad_state;
         }
     }
+    if (++debug_log_counter >= 500) {
+        ESP_LOGI(TAG, "Touch pad values: [%u, %u, %u, %u] (threshold: %d)",
+                all_touch_values[0], all_touch_values[1],
+                all_touch_values[2], all_touch_values[3],
+                TOUCH_THRESHOLD);
+        debug_log_counter = 0;
+    }
+
     static int adc_log_counter = 0;
     static uint32_t last_pot_values[NUM_POTS] = {0};
     static uint32_t last_smoothed_pot_values[NUM_POTS] = {0};
@@ -432,7 +449,7 @@ void update_input_state(InputEvent& event)
             const float SMOOTH_FACTOR = 0.5f;
             uint32_t pot_value = last_pot_values[i] * (1.0f - SMOOTH_FACTOR) + adc_reading * SMOOTH_FACTOR;
             last_pot_values[i] = pot_value;
-            int scaled_value = (int)((pot_value * 127) / 4095);
+            int scaled_value = (int)((pot_value * MIDI_VALUE_MAX) / ADC_RAW_MAX);
             int delta = scaled_value - static_cast<int>(last_smoothed_pot_values[i]);
             if (abs(delta) > MIDI_CC_THRESHOLD) {
                 event.pot_delta[i] = delta;
@@ -448,10 +465,6 @@ void update_input_state(InputEvent& event)
             event.pot_moved[i] = (abs(delta) > MIDI_CC_THRESHOLD);
         }
     }
-}
-
-void update_input_state_old(InputEvent& event)
-{
 }
 
 void debug_potentiometer_ranges(int duration_ms)
@@ -486,8 +499,8 @@ void debug_potentiometer_ranges(int duration_ms)
     ESP_LOGI(TAG, "Potentiometer range calibration complete");
     ESP_LOGI(TAG, "Final ranges - Pot1: [%lu-%lu], Pot2: [%lu-%lu]",
             min_values[0], max_values[0], min_values[1], max_values[1]);
-    float pot1_pct = (float)(max_values[0] - min_values[0]) / 4095.0f * 100.0f;
-    float pot2_pct = (float)(max_values[1] - min_values[1]) / 4095.0f * 100.0f;
+    float pot1_pct = (float)(max_values[0] - min_values[0]) / ADC_RAW_MAX * 100.0f;
+    float pot2_pct = (float)(max_values[1] - min_values[1]) / ADC_RAW_MAX * 100.0f;
     ESP_LOGI(TAG, "Percentage of full range used - Pot1: %.1f%%, Pot2: %.1f%%",
             pot1_pct, pot2_pct);
 }
@@ -523,14 +536,14 @@ int read_hall_sensor() {
 
 int get_hall_sensor_offset(int min_val, int max_val) {
     if (!s_hall_sensor_calibrated) {
-        return 64;
+        return MIDI_VALUE_MID;
     }
 
     int current = hall_sensor_read();
     int range = s_hall_sensor_max - s_hall_sensor_min;
 
     if (range <= 0) {
-        return 64;
+        return MIDI_VALUE_MID;
     }
 
     int normalized = ((current - s_hall_sensor_min) * (max_val - min_val)) / range + min_val;

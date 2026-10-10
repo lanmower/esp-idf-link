@@ -10,6 +10,25 @@
 #include "esp_netif.h"
 #include "wifi_config.h"
 
+static constexpr int     MIDI_PULSES_PER_QUARTER_NOTE = 24;
+static constexpr int     MIDI_SPP_UNITS_PER_BEAT      = 4;
+static constexpr int     MIDI_SPP_UNITS_MASK          = 0x3FFF;
+static constexpr int     MIDI_DATA_BYTE_MASK          = 0x7F;
+static constexpr int     MIDI_DATA_BYTE_SHIFT         = 7;
+static constexpr int     MIDI_WIRE_CHANNEL_COUNT      = 16;
+static constexpr double  LINK_TEMPO_MIN_BPM           = 20.0;
+static constexpr double  LINK_TEMPO_MAX_BPM           = 999.0;
+static constexpr double  FALLBACK_TEMPO_BPM           = 120.0;
+static constexpr double  MICROS_PER_MINUTE            = 60000000.0;
+static constexpr double  MICROBEATS_PER_BEAT          = 1e6;
+static constexpr int     MULTICAST_TTL                = 2;
+static constexpr int64_t CLOCK_BROADCAST_MIN_INTERVAL_US    = 20000;
+static constexpr int64_t TIMELINE_BROADCAST_MIN_INTERVAL_US = 100000;
+static constexpr int64_t FORCE_START_AFTER_NO_PEERS_US      = 8000000;
+static constexpr int     MAX_CATCHUP_PULSES_PER_SCHEDULE    = 1024;
+static constexpr int     WATCHDOG_MISSED_PULSES       = 3;
+static constexpr int64_t WATCHDOG_GRACE_US            = 5000;
+
 #define LINK_PHASE_PORT 20810
 static const char* LINK_MCAST_ADDR = "224.76.78.75";
 static int s_clk_sock = -1;
@@ -17,12 +36,12 @@ static int s_clk_sock = -1;
 static void broadcast_link_clock(int64_t linkMicros) {
     static int64_t s_lastSend = 0;
     int64_t nowUs = esp_timer_get_time();
-    if (nowUs - s_lastSend < 20000) return;
+    if (nowUs - s_lastSend < CLOCK_BROADCAST_MIN_INTERVAL_US) return;
     s_lastSend = nowUs;
     if (s_clk_sock < 0) {
         s_clk_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (s_clk_sock < 0) return;
-        uint8_t ttl = 2;
+        uint8_t ttl = MULTICAST_TTL;
         setsockopt(s_clk_sock, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof ttl);
     }
     uint8_t pkt[12];
@@ -48,19 +67,19 @@ static int s_ttmp_sock = -1;
 static void broadcast_ticker_timeline(const ableton::Link::SessionState& state,
                                       int64_t linkMicros) {
     static int64_t s_lastSend = 0;
-    if (linkMicros - s_lastSend < 100000) return;
+    if (linkMicros - s_lastSend < TIMELINE_BROADCAST_MIN_INTERVAL_US) return;
     s_lastSend = linkMicros;
     if (s_ttmp_sock < 0) {
         s_ttmp_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (s_ttmp_sock < 0) return;
-        uint8_t ttl = 2;
+        uint8_t ttl = MULTICAST_TTL;
         setsockopt(s_ttmp_sock, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof ttl);
     }
     double bpm = state.tempo();
-    if (!(bpm >= 20.0 && bpm <= 999.0)) return;
-    int64_t mpb = (int64_t)(60000000.0 / bpm + 0.5);
+    if (!(bpm >= LINK_TEMPO_MIN_BPM && bpm <= LINK_TEMPO_MAX_BPM)) return;
+    int64_t mpb = (int64_t)(MICROS_PER_MINUTE / bpm + 0.5);
     double beats = state.beatAtTime(std::chrono::microseconds(linkMicros), LINK_QUANTUM);
-    int64_t beatOriginUb = (int64_t)(beats * 1e6);
+    int64_t beatOriginUb = (int64_t)(beats * MICROBEATS_PER_BEAT);
     int64_t timeOrigin   = linkMicros;
     uint8_t pkt[28];
     memcpy(pkt,      "TTMP", 4);
@@ -157,8 +176,8 @@ static void tempo_listener_task(void*) {
             int64_t mpb;
             memcpy(&mpb, buf + 4, 8);
             if (mpb > 0) {
-                double bpm = 60000000.0 / (double)mpb;
-                if (bpm >= 20.0 && bpm <= 999.0) { s_tempoReqBpm = bpm; s_tempoReqPending = true; }
+                double bpm = MICROS_PER_MINUTE / (double)mpb;
+                if (bpm >= LINK_TEMPO_MIN_BPM && bpm <= LINK_TEMPO_MAX_BPM) { s_tempoReqBpm = bpm; s_tempoReqPending = true; }
             }
             if (n >= 28) {
                 int64_t beat0us, quantumUb;
@@ -166,7 +185,7 @@ static void tempo_listener_task(void*) {
                 memcpy(&quantumUb, buf + 20, 8);
                 if (quantumUb > 0) {
                     s_phaseReqBeat0us = beat0us;
-                    s_phaseReqQuantum = (double)quantumUb / 1e6;
+                    s_phaseReqQuantum = (double)quantumUb / MICROBEATS_PER_BEAT;
                     s_phaseReqPending = true;
                 }
             }
@@ -181,8 +200,10 @@ void link_start_tempo_listener() {
 
 static const char *TAG_LINK = "LINK_SYNC";
 
-static int s_last_quantum_number = -1;
-static int s_last_phrase_number = -1;
+static int s_last_quantum_number = 0;
+static int s_last_phrase_number = 0;
+static bool s_quantum_baseline_captured = false;
+static bool s_phrase_baseline_captured = false;
 static gptimer_handle_t s_link_gptimer = nullptr;
 static esp_timer_handle_t s_buzzer_off_timer = nullptr;
 
@@ -244,7 +265,8 @@ QuantumInfo detectQuantumBoundary(const ableton::Link::SessionState& state,
     info.phaseWithinPhrase = state.phaseAtTime(time, PHRASE_BEATS);
     info.currentPhraseNumber = static_cast<int>(std::floor(info.sessionBeat / PHRASE_BEATS));
 
-    if (s_last_quantum_number == -1) {
+    if (!s_quantum_baseline_captured) {
+        s_quantum_baseline_captured = true;
         s_last_quantum_number = info.currentQuantumNumber;
         info.crossedQuantumBoundary = false;
     } else if (info.currentQuantumNumber != s_last_quantum_number) {
@@ -255,7 +277,8 @@ QuantumInfo detectQuantumBoundary(const ableton::Link::SessionState& state,
         info.crossedQuantumBoundary = false;
     }
 
-    if (s_last_phrase_number == -1) {
+    if (!s_phrase_baseline_captured) {
+        s_phrase_baseline_captured = true;
         s_last_phrase_number = info.currentPhraseNumber;
         info.crossedPhraseBoundary = false;
     } else if (info.currentPhraseNumber != s_last_phrase_number) {
@@ -313,17 +336,17 @@ static void send_midi_bytes(const uint8_t* buf, size_t len) {
 }
 
 static void send_all_notes_off_all_channels() {
-    for (uint8_t ch = 0; ch < 16; ++ch) {
+    for (uint8_t ch = 0; ch < MIDI_WIRE_CHANNEL_COUNT; ++ch) {
         const uint8_t cc[] = { (uint8_t)(MIDI_CC_CMD | ch), MIDI_CC_ALL_NOTES_OFF, 0 };
         send_midi_bytes(cc, sizeof(cc));
     }
 }
 
 static void send_song_position(double sessionBeat) {
-    uint16_t spp_units = static_cast<uint16_t>(sessionBeat * 4.0) & 0x3FFF;
+    uint16_t spp_units = static_cast<uint16_t>(sessionBeat * MIDI_SPP_UNITS_PER_BEAT) & MIDI_SPP_UNITS_MASK;
     const uint8_t spp[] = { MIDI_SONG_POSITION_POINTER,
-                            (uint8_t)(spp_units & 0x7F),
-                            (uint8_t)((spp_units >> 7) & 0x7F) };
+                            (uint8_t)(spp_units & MIDI_DATA_BYTE_MASK),
+                            (uint8_t)((spp_units >> MIDI_DATA_BYTE_SHIFT) & MIDI_DATA_BYTE_MASK) };
     send_midi_bytes(spp, sizeof(spp));
 }
 
@@ -349,7 +372,7 @@ static void arm_event_timer(int64_t dueEspUs) {
 static void schedule_next_event(const ableton::Link::SessionState& state) {
     const int64_t nowLink = g_link->clock().micros().count();
     const double beatNow = state.beatAtTime(std::chrono::microseconds(nowLink), LINK_QUANTUM);
-    const int64_t dueNow = static_cast<int64_t>(std::floor(beatNow * 24.0)) + 1;
+    const int64_t dueNow = static_cast<int64_t>(std::floor(beatNow * MIDI_PULSES_PER_QUARTER_NOTE)) + 1;
     if (!s_next_pulse_valid || s_next_pulse < dueNow) {
         if (s_next_pulse_valid && dueNow - s_next_pulse > MIDI_CLOCK_RESYNC_THRESHOLD)
             ESP_LOGW(TAG_LINK, "clock %lld pulse(s) behind -- resyncing to beat %.2f (no burst)",
@@ -357,10 +380,10 @@ static void schedule_next_event(const ableton::Link::SessionState& state) {
         s_next_pulse = dueNow;
         s_next_pulse_valid = true;
     }
-    int64_t due = state.timeAtBeat((double)s_next_pulse / 24.0, LINK_QUANTUM).count();
-    for (int guard = 0; due < nowLink && guard < 1024; guard++) {
+    int64_t due = state.timeAtBeat((double)s_next_pulse / MIDI_PULSES_PER_QUARTER_NOTE, LINK_QUANTUM).count();
+    for (int guard = 0; due < nowLink && guard < MAX_CATCHUP_PULSES_PER_SCHEDULE; guard++) {
         s_next_pulse++;
-        due = state.timeAtBeat((double)s_next_pulse / 24.0, LINK_QUANTUM).count();
+        due = state.timeAtBeat((double)s_next_pulse / MIDI_PULSES_PER_QUARTER_NOTE, LINK_QUANTUM).count();
     }
     arm_event_timer(due);
 }
@@ -377,8 +400,8 @@ static void link_event_cb(void*) {
     s_fire_late_sum_us += (double)late;
     s_fire_late_sq_us  += (double)late * (double)late;
 
-    if ((s_next_pulse % 24) == 0) {
-        const double beat = (double)s_next_pulse / 24.0;
+    if ((s_next_pulse % MIDI_PULSES_PER_QUARTER_NOTE) == 0) {
+        const double beat = (double)s_next_pulse / MIDI_PULSES_PER_QUARTER_NOTE;
         if (beat >= 0.0) {
             set_buzzer_state(true, s_next_click_freq);
             esp_timer_stop(s_buzzer_off_timer);
@@ -423,7 +446,7 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     }
 
     bool is_connected = g_link->numPeers() > 0;
-    if (!is_connected && !force_start && (esp_timer_get_time() - start_wait_time >= 8000000)) {
+    if (!is_connected && !force_start && (esp_timer_get_time() - start_wait_time >= FORCE_START_AFTER_NO_PEERS_US)) {
         force_start = true;
         ESP_LOGW(TAG_LINK, "No Link peers found for 8s, forcing start.");
     }
@@ -494,8 +517,8 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
 
     if (s_evt_enabled && !s_evt_armed) {
         const double bpm = state.tempo();
-        const int64_t pulseUs = (int64_t)(2.5e6 / (bpm > 1.0 ? bpm : 120.0));
-        if (esp_timer_get_time() - s_last_fire_us > pulseUs * 3 + 5000)
+        const int64_t pulseUs = (int64_t)(MICROS_PER_MINUTE / MIDI_PULSES_PER_QUARTER_NOTE / (bpm > 1.0 ? bpm : FALLBACK_TEMPO_BPM));
+        if (esp_timer_get_time() - s_last_fire_us > pulseUs * WATCHDOG_MISSED_PULSES + WATCHDOG_GRACE_US)
             schedule_next_event(state);
     }
 

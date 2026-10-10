@@ -6,7 +6,8 @@
 #include "main.h"
 #include "esp_timer.h"
 
-const int POT_JITTER_THRESHOLD = 3;
+static constexpr int POT_JITTER_THRESHOLD = 3;
+static constexpr int POT_REPORT_MIN_DELTA = 1;
 
 static int s_last_reported_pot_val[NUM_POTS] = {-1, -1};
 static bool s_previous_touch_state[NUM_TOUCH_PADS] = {false, false, false, false};
@@ -53,7 +54,7 @@ bool read_inputs(InputEvent& current_event)
         if (cumulative_delta != 0) {
             bool is_near_center = std::abs(current_pot_val[i] - current_stable_center[i]) <= POT_JITTER_THRESHOLD;
 
-            if (!is_near_center || std::abs(cumulative_delta) > 1) {
+            if (!is_near_center || std::abs(cumulative_delta) > POT_REPORT_MIN_DELTA) {
                 current_event.pot_moved[i] = true;
                 current_event.pot_delta[i] = cumulative_delta;
                 current_event.pot_value[i] = current_pot_val[i];
