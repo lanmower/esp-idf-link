@@ -15,6 +15,7 @@
 #include "effect_filter.h"
 #include "effect_sidechain.h"
 #include "lfo_constants.h"
+#include "touch_handler.h"
 
 #define SIDECHAIN_PAD_INDEX 0
 #define ARP_PAD_INDEX 1
@@ -65,16 +66,16 @@ void handle_delay_pots(int pot1_delta, int pot2_delta, bool& pot1_used, bool& po
 void handle_reverb_pots(int pot1_delta, int pot2_delta, bool& pot1_used, bool& pot2_used);
 void handle_arp_adjust_pots(int pot1_delta, int pot2_delta, bool& pot1_used, bool& pot2_used);
 
-bool handle_arp_adjusting_pads(const ableton::Link::SessionState& state, const std::chrono::microseconds& time, const bool pad_pressed_this_tick[], std::array<bool, 4>& pads_used);
-bool handle_sidechain_adjusting_pads(const bool pad_pressed_this_tick[], std::array<bool, 4>& pads_used);
-bool handle_filter_adjusting_pads(const bool pad_pressed_this_tick[], std::array<bool, 4>& pads_used);
-bool handle_delay_reverb_adjusting_pads(const bool pad_pressed_this_tick[], std::array<bool, 4>& pads_used);
+bool handle_arp_adjusting_pads(const ableton::Link::SessionState& state, const std::chrono::microseconds& time, const bool pad_pressed_this_tick[], std::array<bool, NUM_TOUCH_PADS>& pads_used);
+bool handle_sidechain_adjusting_pads(const bool pad_pressed_this_tick[], std::array<bool, NUM_TOUCH_PADS>& pads_used);
+bool handle_filter_adjusting_pads(const bool pad_pressed_this_tick[], std::array<bool, NUM_TOUCH_PADS>& pads_used);
+bool handle_delay_reverb_adjusting_pads(const bool pad_pressed_this_tick[], std::array<bool, NUM_TOUCH_PADS>& pads_used);
 
 bool handle_arp_active(const ableton::Link::SessionState& state, const std::chrono::microseconds& time, int note_index);
 void handle_sidechain_active(const ableton::Link::SessionState& state, const std::chrono::microseconds& time, int depth, int sheer);
 void handle_filter_active(const ableton::Link::SessionState& state, const std::chrono::microseconds& time);
 
-int find_secondary_tapped_pad(int primary_index, const bool pad_pressed_this_tick[], std::array<bool, 4>& pads_used);
+int find_secondary_tapped_pad(int primary_index, const bool pad_pressed_this_tick[], std::array<bool, NUM_TOUCH_PADS>& pads_used);
 
 template<typename T>
 bool _update_pot_param(T& param, int delta, T min_val, T max_val, const char* param_name, bool& used_flag) {

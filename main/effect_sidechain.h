@@ -5,10 +5,11 @@
 #include <chrono>
 #include <array>
 #include <stdint.h>
+#include "touch_handler.h"
 
 extern int s_current_sidechain_pattern_index;
 
-bool handle_sidechain_adjusting_pads(const bool pad_pressed_this_tick[], std::array<bool, 4>& pads_used);
+bool handle_sidechain_adjusting_pads(const bool pad_pressed_this_tick[], std::array<bool, NUM_TOUCH_PADS>& pads_used);
 
 void handle_sidechain_active(const ableton::Link::SessionState& state, const std::chrono::microseconds& time, int depth, int sheer);
 
