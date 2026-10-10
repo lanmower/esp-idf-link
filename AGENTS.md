@@ -1,8 +1,8 @@
 # esp-idf-link — agent notes
 
 `CLAUDE.md` `@`-includes this file. Durable cross-session facts live here, not in
-code. Do not extend this by editing `CLAUDE.md`. Compacted 2026-10-10 from 29,927
-bytes; the memories it supersedes are folded in.
+code. Do not extend this by editing `CLAUDE.md`. Compacted 2026-10-10; the memories
+it supersedes are folded in.
 
 ## Mesh with `../aloopprime`: paired invariants (change BOTH or the mesh splits)
 
@@ -22,7 +22,7 @@ below exists in BOTH trees; changing one alone splits the mesh silently.
 | Host election | lowest MAC/BSSID wins | lowest MAC/BSSID wins |
 
 `PHRASE_BEATS 64.0` (`main.h`) is NOT the quantum — it is the SPP /
-transport-correction boundary (16 bars). Deliberately different; do not "align".
+transport-correction boundary (16 bars). Do not "align" it.
 
 ### Host election
 
@@ -253,10 +253,9 @@ CC123 all-notes-off). Rates `MIDI_PULSES_PER_QUARTER_NOTE = 24` and
 - Realtime bytes are single-byte and may legally interleave a running-status message,
   so the buzzer path and the clock path never corrupt each other.
 - Note-offs as velocity 0; CC123 on stop is what keeps RC-505 MK2 loops from sticking.
-- Target behaviour constrains the design: KO2 needs Start and is SPP-sensitive (hence
-  one SPP per phrase); Volca Drum ignores SPP; MicroKorg/MiniNova arp, delay and LFO
-  need it non-bursting; Micron stays in phrase when Start is phrase-aligned; RC-505
-  MK2 repositions on SPP.
+- Target behaviour constrains it: KO2 needs Start and is SPP-sensitive (hence one SPP
+  per phrase); Volca Drum ignores SPP; MicroKorg/MiniNova need it non-bursting; Micron
+  stays in phrase when Start is phrase-aligned; RC-505 MK2 repositions on SPP.
 - Start is deferred to the next phrase boundary. `s_transport_running` records what
   gear was last TOLD (Start vs Continue) — it is not `isPlaying()`.
 - Force-start waits 8 s, not 5 s, so two co-booting devices discover each other before
@@ -459,17 +458,17 @@ re-dispatch); `git_finalize` auto-recovers and reports `auto_recovered:true`.
 
 `../aloopprime` is the opposite: a **fetch-only checkout** (`origin.pushurl =
 no-push`, no local git identity), so `git_finalize` there commits and the push is
-refused — and gm now refuses it outright with `push_disabled_by_config`. Local-only
+refused — gm refuses it outright with `push_disabled_by_config` (`remote_moved: false`).
+No local git identity either, so a merging `git_pull` dies with `git_identity_required`,
+and local `main` sits months behind `origin/main` — never merge to publish. Local-only
 commits are the intended end state; do not "fix" it by editing its `.git/config` or
 adding a remote.
 
 ## ESP-IDF 6.x breaks already absorbed
 
 Historical — none visible in current source, each silently re-breaks on a bump:
-`esp_netif_next()` -> `esp_netif_next_unsafe()` in 6.1
-(`components/link-esp/link/.../esp32/ScanIpIfAddrs.hpp`); legacy `driver/adc.h`
-removed in 6.1, with a `hall_sensor_read()` stub in `main/io_helpers.cpp` where that
-include used to be.
+`esp_netif_next()` -> `esp_netif_next_unsafe()` (6.1, link's `ScanIpIfAddrs.hpp`); legacy
+`driver/adc.h` removed (6.1) -> `hall_sensor_read()` stub in `main/io_helpers.cpp`.
 
 ## Comment sweep (INVARIANT 3)
 
