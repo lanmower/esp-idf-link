@@ -51,7 +51,6 @@ namespace {
     const uint8_t GATE_LVL8_NRPN_LSB = 17;
 
     constexpr uint8_t kGateHoldDefault = 73;
-    constexpr uint8_t kGateESlewDefault = 104;
     constexpr uint8_t kGateKeySyncOn = 1;
     constexpr uint8_t kGateDelayValueForMinus15 = 49;
     constexpr uint8_t kGateRSyncSecond = 2;

@@ -3,6 +3,15 @@
 
 #include "synth_interface.h"
 
+constexpr uint8_t kGateESlewDefault = 104;
+
+inline uint8_t gateESlewForSheer(int sheer) {
+    constexpr int kSheerMax = 127;
+    constexpr int kHeadroomAboveDefault = 127 - kGateESlewDefault;
+    const int value = kGateESlewDefault + (sheer * kHeadroomAboveDefault) / kSheerMax;
+    return static_cast<uint8_t>(value < 0 ? 0 : (value > 127 ? 127 : value));
+}
+
 class SynthMininova : public SynthInterface {
 public:
     SynthMininova(uint8_t channel = 1);

@@ -84,7 +84,7 @@ void handle_sidechain_adjust_pots(int pot1_delta, int pot2_delta, bool& pot1_use
         uint8_t wetdry = 127 - s_current_sidechain_depth;
         mininova->setGateWetDry(wetdry);
 
-        uint8_t eslew = 64 + (s_current_sidechain_sheer / 2);
+        uint8_t eslew = gateESlewForSheer(s_current_sidechain_sheer);
         mininova->setGateESlew(eslew);
     }
 }

@@ -396,14 +396,16 @@ be expressed in code.
   wrap a raw note index; if it is ever wired up it must stay **larger than the
   longest reasonably expected progression sequence** -- that bound, not 128, is
   the requirement.
-- **E-Slew: the two writers disagree and nobody has decided which is right.**
-  `effect_handler.cpp:87` computes `64 + (s_current_sidechain_sheer / 2)`, and
-  `reset_sidechain_to_default()` (`effect_sidechain.cpp:36`) writes a bare
-  `setGateESlew(104)`. The sheer default is **0** (both
-  `effect_handler.cpp:31` and `effect_sidechain.cpp:29`), so the formula
-  yields 64 at reset, not 104: 104 is no longer "the sheer default halved and
-  offset", and the two paths silently disagree. Open question filed as a PRD
-  row -- do not reconcile them by picking a value without that decision.
+- **E-Slew default is 104, and it now has one writer.** `kGateESlewDefault`
+  (`main/synth_mininova.h`) is the value the device actually sends — that file
+  IS in the build, and 104 goes out on every `setSidechainPattern()`. The other
+  two writers, `effect_handler.cpp:87` and `effect_sidechain.cpp:36`, sit in
+  the five unbuilt `main/*.cpp` files; both now call
+  `gateESlewForSheer(sheer)`, which returns 104 at the sheer default (0) and
+  spreads the rest of the pot over 104..127, so all three agree at reset. The
+  old `64 + (sheer / 2)` yielded 64 there, contradicting the 104 just sent;
+  this entry used to justify 104 as "the sheer default (80) halved and offset",
+  and no sheer default of 80 exists anywhere in the tree.
 - `kScales[3]` in `main/bassline_interpreter.cpp` is `{0, 3, 5, 7, 10, 3, 5}`
   while `kScaleLens[3] == 5`. The trailing `{3, 5}` is deliberate padding, not
   a typo: the row is sized to match its neighbours and only its first five

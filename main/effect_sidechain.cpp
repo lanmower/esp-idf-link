@@ -33,7 +33,7 @@ void reset_sidechain_to_default() {
 
         if (g_synth_type == SYNTH_MININOVA) {
             SynthMininova* mininova = static_cast<SynthMininova*>(g_current_synth);
-            mininova->setGateESlew(104);
+            mininova->setGateESlew(gateESlewForSheer(s_current_sidechain_sheer));
             mininova->setGateWetDry(127);
         }
     }
