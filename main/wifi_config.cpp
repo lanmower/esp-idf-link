@@ -131,10 +131,6 @@ void wifi_get_sta_mac(uint8_t out_mac[6]) {
     esp_read_mac(out_mac, ESP_MAC_WIFI_STA);
 }
 
-// The BSSID a scan record reports for our own AP is the Soft-AP interface MAC, which is
-// derived from the base MAC by an offset this code must not assume. esp_read_mac() reads
-// eFuse and IDF documents it as possibly differing from esp_wifi_get_mac(), so the
-// interface read is the only value that is guaranteed to match a scan record's bssid.
 static bool wifi_get_own_ap_mac(uint8_t out_mac[6]) {
     return esp_wifi_get_mac(WIFI_IF_AP, out_mac) == ESP_OK;
 }
