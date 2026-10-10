@@ -139,7 +139,7 @@ void SynthMininova::setSidechainLevel(uint8_t level) {
 }
 
 void SynthMininova::setSidechainPattern(uint8_t pattern_index) {
-    ESP_LOGI(TAG_MININOVA, "Setting Sidechain Pattern (Placeholder NRPN 1:80): %d", pattern_index);
+    ESP_LOGI(TAG_MININOVA, "Setting Sidechain Pattern (Gator via NRPN 0:97=1): %d", pattern_index);
 
     send_midi_nrpn(midi_channel, FX_ROUTING_NRPN_MSB, FX_ROUTING_NRPN_LSB, FX_ROUTING_TYPE_SECOND_SLOT);
     vTaskDelay(pdMS_TO_TICKS(1));

@@ -1,3 +1,4 @@
+#include "main.h"
 #include "bass_engine.h"
 #include "io_helpers.h"
 #include "esp_log.h"
@@ -378,7 +379,7 @@ void BassEngine::process(const ableton::Link::SessionState& state,
     if (!m_active) return;
 
     double bpm = state.tempo();
-    double beat = state.beatAtTime(time, 16.0);
+    double beat = state.beatAtTime(time, LINK_QUANTUM);
     if (beat < 0.0) return;
 
     double phrasePosInSteps = std::fmod(beat * kStepsPerBeat, kStepsPerPhrase);
