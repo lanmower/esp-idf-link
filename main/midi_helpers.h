@@ -21,4 +21,4 @@ T clamp_value(T value, T min_val, T max_val) {
     return std::max(min_val, std::min(max_val, value));
 }
 
-#endif // MIDI_HELPERS_H
+#endif

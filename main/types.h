@@ -6,4 +6,4 @@ enum EffectType {
     EFFECT_REVERB
 };
 
-#endif // TYPES_H
+#endif

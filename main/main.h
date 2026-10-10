@@ -92,4 +92,4 @@ extern const uint64_t HOLD_TIME_MS;
 
 extern SynthInterface* g_current_synth;
 
-#endif // MAIN_H
+#endif

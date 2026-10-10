@@ -9,4 +9,4 @@ void initialize_inputs();
 
 bool read_inputs(InputEvent& current_event);
 
-#endif // INPUT_HANDLER_H
+#endif

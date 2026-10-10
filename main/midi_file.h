@@ -148,4 +148,4 @@ private:
     size_t pendingFileIndex = 0;
 };
 
-#endif // MIDI_FILE_H
+#endif

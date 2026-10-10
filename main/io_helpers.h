@@ -36,4 +36,4 @@ void init_hall_sensor();
 int read_hall_sensor();
 int get_hall_sensor_offset(int min_val, int max_val);
 
-#endif // IO_HELPERS_H
+#endif

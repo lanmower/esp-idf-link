@@ -5,7 +5,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <algorithm>
-#include <errno>
+#include <errno.h>
 #include <inttypes.h>
 #include "synth_interface.h"
 #include "state_machine.h"
@@ -78,7 +78,10 @@ static bool isNoteOffVelocity(uint8_t velocity) { return velocity == 0; }
 static bool isNoteHeld(int32_t startTick) { return startTick != kNoActiveNoteTick; }
 
 static bool hasMidiFileExtension(const std::string& name) {
-    return name.find(kMidiFileExtension) != std::string::npos;
+    const size_t extensionLength = std::strlen(kMidiFileExtension);
+    return name.size() > extensionLength &&
+           name.compare(name.size() - extensionLength, extensionLength,
+                        kMidiFileExtension) == 0;
 }
 
 static std::string baseNameOf(const std::string& path) {

@@ -112,7 +112,6 @@ const std::vector<std::vector<bool>> ARP_CHORD_RHYTHMS = {
 };
 const int NUM_ARP_CHORD_RHYTHMS = ARP_CHORD_RHYTHMS.size();
 
-// Values are MIDI velocity bytes (0-127)
 const std::vector<std::vector<int>> ARP_VELOCITY_PATTERNS = {
     {100, 100, 100, 100, 100, 100, 100, 100},
     {120, 90, 90, 90, 100, 90, 90, 90},
@@ -138,4 +137,4 @@ const int MAX_ARP_INDEX_WRAP = 128;
 enum ArpPattern { UP, DOWN, UP_DOWN, DOWN_UP, RANDOM };
 const int NUM_ARP_PATTERNS = 5;
 
-#endif // ARP_CONSTANTS_H
+#endif

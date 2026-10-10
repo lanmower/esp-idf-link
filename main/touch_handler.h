@@ -9,4 +9,4 @@
 
 extern uint64_t pad_press_time[NUM_TOUCH_PADS];
 
-#endif // TOUCH_HANDLER_H
+#endif

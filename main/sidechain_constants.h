@@ -4,30 +4,31 @@
 #include <vector>
 #include <array>
 
-// Define number of steps per pattern (e.g., 16 for 16th notes over 1 bar)
 const int SIDECHAIN_RHYTHM_STEPS = 16;
 
-// true = Gate ON (sound allowed), false = Gate OFF (sound ducked)
+constexpr bool SC_GATE_ON = true;
+constexpr bool SC_GATE_OFF = false;
+
 const std::array<bool, SIDECHAIN_RHYTHM_STEPS> SC_PATTERN_QUARTER = {
-    false, false, true,  true,
-    false, false, true,  true,
-    false, false, true,  true,
-    false, false, true,  true
+    SC_GATE_OFF, SC_GATE_OFF, SC_GATE_ON,  SC_GATE_ON,
+    SC_GATE_OFF, SC_GATE_OFF, SC_GATE_ON,  SC_GATE_ON,
+    SC_GATE_OFF, SC_GATE_OFF, SC_GATE_ON,  SC_GATE_ON,
+    SC_GATE_OFF, SC_GATE_OFF, SC_GATE_ON,  SC_GATE_ON
 };
 
 const std::array<bool, SIDECHAIN_RHYTHM_STEPS> SC_PATTERN_OFFBEAT_EIGHTH = {
-    false, false, true,  false, true,  false, true,  false,
-    true,  false, true,  false, true,  false, true,  false
+    SC_GATE_OFF, SC_GATE_OFF, SC_GATE_ON,  SC_GATE_OFF, SC_GATE_ON,  SC_GATE_OFF, SC_GATE_ON,  SC_GATE_OFF,
+    SC_GATE_ON,  SC_GATE_OFF, SC_GATE_ON,  SC_GATE_OFF, SC_GATE_ON,  SC_GATE_OFF, SC_GATE_ON,  SC_GATE_OFF
 };
 
 const std::array<bool, SIDECHAIN_RHYTHM_STEPS> SC_PATTERN_SYNCOPATED = {
-    false, false, true,  false, true,  false, false, true,
-    false, false, true,  false, true,  false, false, true
+    SC_GATE_OFF, SC_GATE_OFF, SC_GATE_ON,  SC_GATE_OFF, SC_GATE_ON,  SC_GATE_OFF, SC_GATE_OFF, SC_GATE_ON,
+    SC_GATE_OFF, SC_GATE_OFF, SC_GATE_ON,  SC_GATE_OFF, SC_GATE_ON,  SC_GATE_OFF, SC_GATE_OFF, SC_GATE_ON
 };
 
 const std::array<bool, SIDECHAIN_RHYTHM_STEPS> SC_PATTERN_FOUR_FLOOR = {
-    false, false, true,  true,  false, false, true,  true,
-    false, false, true,  true,  false, false, true,  true
+    SC_GATE_OFF, SC_GATE_OFF, SC_GATE_ON,  SC_GATE_ON,  SC_GATE_OFF, SC_GATE_OFF, SC_GATE_ON,  SC_GATE_ON,
+    SC_GATE_OFF, SC_GATE_OFF, SC_GATE_ON,  SC_GATE_ON,  SC_GATE_OFF, SC_GATE_OFF, SC_GATE_ON,  SC_GATE_ON
 };
 
 const std::vector<std::array<bool, SIDECHAIN_RHYTHM_STEPS>> SIDECHAIN_PATTERNS = {
@@ -41,4 +42,4 @@ const int NUM_SIDECHAIN_PATTERNS = SIDECHAIN_PATTERNS.size();
 
 const int SIDECHAIN_DEFAULT_PATTERN_INDEX = 0;
 
-#endif // SIDECHAIN_CONSTANTS_H
+#endif

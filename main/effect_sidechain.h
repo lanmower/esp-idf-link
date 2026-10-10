@@ -14,4 +14,4 @@ void handle_sidechain_active(const ableton::Link::SessionState& state, const std
 
 void reset_sidechain_to_default();
 
-#endif // EFFECT_SIDECHAIN_H
+#endif

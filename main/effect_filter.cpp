@@ -22,7 +22,7 @@ static constexpr int kLfoRateIndexHalfNote = 4;
 static constexpr int kLfoRateIndexEighthNote = 10;
 static constexpr int kLfoRateIndexSixteenthTriplet = 14;
 
-static int s_lfo_shape_index = 0;
+static int s_lfo_shape_index = LFO_SHAPE_SIN;
 static int s_lfo_rate_index = kLfoRateIndexHalfNote;
 int8_t s_lfo_depth_bipolar = 63;
 
@@ -130,7 +130,7 @@ bool handle_filter_adjusting_pads(const bool pad_pressed_this_tick[], std::array
 
         switch (tapped_pad) {
             case 0:
-                s_lfo_shape_index = 3;
+                s_lfo_shape_index = LFO_SHAPE_SQR;
                 s_lfo_rate_index = kLfoRateIndexEighthNote;
                 s_lfo_depth_bipolar = 40;
                 s_global_filter_resonance = 80;
@@ -145,7 +145,7 @@ bool handle_filter_adjusting_pads(const bool pad_pressed_this_tick[], std::array
                 break;
 
             case ARP_PAD_INDEX:
-                s_lfo_shape_index = 0;
+                s_lfo_shape_index = LFO_SHAPE_SIN;
                 s_lfo_rate_index = kLfoRateIndexOneBar;
                 s_lfo_depth_bipolar = 50;
                 s_global_filter_resonance = 30;
@@ -160,7 +160,7 @@ bool handle_filter_adjusting_pads(const bool pad_pressed_this_tick[], std::array
                 break;
 
             case 3:
-                s_lfo_shape_index = 1;
+                s_lfo_shape_index = LFO_SHAPE_TRI;
                 s_lfo_rate_index = kLfoRateIndexSixteenthTriplet;
                 s_lfo_depth_bipolar = 30;
                 s_global_filter_resonance = 50;
@@ -185,7 +185,7 @@ bool handle_filter_adjusting_pads(const bool pad_pressed_this_tick[], std::array
 
 void initialize_filter() {
     g_filter_lfo_patched = false;
-    s_lfo_shape_index = 0;
+    s_lfo_shape_index = LFO_SHAPE_SIN;
     s_lfo_rate_index = kLfoRateIndexHalfNote;
     s_lfo_depth_bipolar = 63;
     ESP_LOGI(TAG_FILTER, "Filter Initialized");

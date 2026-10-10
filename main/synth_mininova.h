@@ -8,7 +8,7 @@ public:
     SynthMininova(uint8_t channel = 1);
     virtual ~SynthMininova() override = default;
 
-    void sendNoteOff(uint8_t note, uint8_t velocity = 64) override;
+    void sendNoteOff(uint8_t note, uint8_t velocity = 0) override;
     void sendAllNotesOff() override;
     void sendControlChange(uint8_t controller, uint8_t value) override;
     void sendModWheel(uint8_t value) override;
@@ -44,4 +44,4 @@ private:
     uint8_t midi_channel;
 };
 
-#endif // SYNTH_MININOVA_H
+#endif

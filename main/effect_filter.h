@@ -18,4 +18,4 @@ void initialize_filter();
 
 void reset_filter_to_lowpass();
 
-#endif // EFFECT_FILTER_H
+#endif

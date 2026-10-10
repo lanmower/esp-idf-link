@@ -312,6 +312,26 @@ MIDI emission -- one path, no per-device clock code:
 - Force-start waits 8 s, not 5 s, so two co-booting devices can discover each
   other before either free-runs at an independent phase.
 
+## MIDI file player (`main/midi_file.cpp`, files on SPIFFS)
+
+- Parser relies on **MIDI running status**: a data byte with no status byte in
+  front repeats the previous status. Note-on with **velocity 0 IS a note-off**;
+  a note still held at end-of-track is released implicitly.
+- `process()` walks notes in `startBeat` order and early-breaks, so **the sort
+  order is load-bearing**, not cosmetic.
+- Trigger window is 0.03 beat, with `playedNotes`/`sentCCs` dedup so a note or
+  CC fires once per pass.
+- Loop length rounds to the nearest quantum when within 0.1 of one, else
+  rounds up (ceil).
+- **SPIFFS has no real directories**, so `setFolder()` cannot `opendir` a
+  subfolder: it falls back to scanning `/spiffs` and matching a name prefix.
+- `updateTempo`'s 120 bpm reference and 0.5 bpm change threshold are currently
+  dormant (`syncToBpm` is false). See CLAUDE.md for why that stays off.
+- Known warts, deliberately left alone: `parseFile()` closes the file twice
+  (explicit `fclose` plus a `FileGuard`); the built-in default MIDI file's
+  `MTrk` declares 19 bytes but only 12 are written, and its header encodes
+  format 1.
+
 ## Input and buzzer wiring facts
 
 Touch pad / pot / MIDI wiring, from `main/main.h` (the GPIO numbers used to be
@@ -335,6 +355,12 @@ code that reads the macro):
   press latency stays lowest.
 - Pots are raw ADC 0-4095 mapped to MIDI 0-127; a slow EMA tracks the
   "stable center" alongside the fast one used for control.
+- In the MIDI file player the two pots are **pot1 = note-length scale (0..2),
+  pot2 = velocity scale (0..1)** (`effect_arp.cpp` `handle_arp_adjust_pots`,
+  `midi_file.h` `noteLengthScalePotValue`/`velocityScalePotValue`). The old
+  field comments said "speed" and "transpose" -- those were stale and are gone.
+  The accessors are still `getPot1Value`/`getPot2Value`, called from
+  `effect_arp.cpp`.
 - Pad gesture timings are in `main/main.cpp`: `DOUBLE_TAP_TIME_MS = 300`,
   `HOLD_TIME_MS = 200` (both milliseconds).
 - Synth target is one of `SynthType { SYNTH_MININOVA, SYNTH_MICROKORG }` in
@@ -371,10 +397,42 @@ that makes the value correct. All were comments; none can be expressed in code.
   **assumption never confirmed on hardware** -- the one NRPN in the tree with no
   verified source. Filter bypass exists as NRPN 0/60 value 0 and is deliberately
   NOT sent by `deactivateFilter()`, which unpatches only the LFO.
-- **Contradiction, pre-existing:** `main/synth_mininova.h` declares
-  `sendNoteOff(uint8_t note, uint8_t velocity = 64)`, defaulting to 64 -- the
-  opposite of the velocity-0 rule above. Callers must pass 0 explicitly until
-  that default is changed.
+- **MiniNova "Table 3"** is the source of both `setDelaySyncRate` and
+  `setLfoRateSync` values; `main/lfo_constants.h` carries only a **subset** of
+  the LFO rate-sync row (NRPN 0/86). Do not treat that list as exhaustive.
+- `SynthInterface` contracts that exist only in the implementations:
+  `activateDelay()` selects Delay 1 and `activateReverb()` selects Reverb 1,
+  both in **FX Slot 1**; `setFxSlot1Level()` is **CC 91**; `activateFilter()`
+  implicitly selects the **LP24** type and applies its defaults; the LFO
+  methods assume **LFO2 -> Filter1 Freq via Mod Matrix Slot 1**.
+- **LFO depth is bipolar**: `-64..+63` maps to MIDI `0..127` with **64 = zero**,
+  so `unpatchLfoFromFilter()` writes 64, not 0.
+- Note-off velocity 0 is now the **default**, not merely a call-site convention:
+  `sendNoteOff(uint8_t note, uint8_t velocity = 0)` is declared identically in
+  `main/synth_interface.h`, `main/synth_microkorg.h` and `main/synth_mininova.h`.
+  The two surviving `= 64` defaults in `synth_interface.h` (`activateFilter`'s
+  cutoff, `patchLfoToFilter`'s depth) are legitimately 64 and must stay.
+
+## `bassline_interpreter` must stay host-compilable
+
+`main/bassline_interpreter.cpp` is deliberately kept free of ESP-IDF headers so
+it compiles on the host with plain `g++ -std=c++17`. Do not add ESP-IDF includes
+to it: that property is the only way to exercise the interpreter's DP and scale
+logic off-device. On MinGW a host build of it additionally needs
+`-D_USE_MATH_DEFINES`, or `M_PI` is not declared.
+
+## Five `main/*.cpp` files are not in the build
+
+`main/CMakeLists.txt` SRCS names 11 translation units. `effect_arp.cpp`,
+`effect_filter.cpp`, `effect_handler.cpp`, `effect_sidechain.cpp` and
+`midi_file.cpp` are NOT among them, and nothing in the tree `#include`s a
+`.cpp`, so that cluster is never compiled or linked -- it is reachable only
+from itself (`effect_handler.h` is included solely by those four effect
+`.cpp`s; `midi_file.h` solely by `effect_arp.h` and `midi_file.cpp`). This is
+long-standing, not a regression: HEAD's SRCS list carries the same 11 entries.
+Consequence: the MIDI-file-player behaviour described in `CLAUDE.md` is not
+running on the device, and edits to those five files cannot break the build.
+Adding them to SRCS is a real behaviour change, not a cleanup.
 
 ## The SoftAP multicast gap is this project's, and may not be aloop's
 

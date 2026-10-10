@@ -106,4 +106,4 @@ bool _update_pot_param(T& param, int delta, T min_val, T max_val, const char* pa
     return false;
 }
 
-#endif // EFFECT_HANDLER_H
+#endif

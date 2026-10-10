@@ -19,4 +19,4 @@ void process_state_event(const InputEvent& event,
                          const ableton::Link::SessionState& link_state,
                          const std::chrono::microseconds& link_time);
 
-#endif // STATE_MACHINE_H
+#endif

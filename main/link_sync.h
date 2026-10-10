@@ -30,4 +30,4 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
                        bool& was_playing,
                        const ableton::Link::SessionState& state, const std::chrono::microseconds& time);
 
-#endif // LINK_SYNC_H 
+#endif

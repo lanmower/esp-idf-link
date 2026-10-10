@@ -46,4 +46,4 @@ extern const char* FILTER_MIDI_FOLDER;
 extern const char* REVERSE_MIDI_FOLDER;
 extern const char* SIDECHAIN_MIDI_FOLDER;
 
-#endif // EFFECT_ARP_H
+#endif

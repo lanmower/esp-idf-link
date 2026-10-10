@@ -4,12 +4,12 @@
 #include <vector>
 #include <cstdint>
 
-// LFO Shapes (Indices corresponding to setLfoShape values)
-// 0=Sin, 1=Tri, 2=Saw, 3=Sqr, 4=S&H
+constexpr int LFO_SHAPE_SIN = 0;
+constexpr int LFO_SHAPE_TRI = 1;
+constexpr int LFO_SHAPE_SAW = 2;
+constexpr int LFO_SHAPE_SQR = 3;
+constexpr int LFO_SHAPE_SAMPLE_AND_HOLD = 4;
 const int NUM_LFO_SHAPES = 5;
-
-// LFO Sync Rates (Indices corresponding to setLfoRateSync values from Table 3)
-// Example subset of Mininova Table 3 NRPN values for LFO Rate Sync (0/86)
 constexpr uint8_t LFO_SYNC_RATE_4_BARS = 3;
 constexpr uint8_t LFO_SYNC_RATE_2_BARS = 7;
 constexpr uint8_t LFO_SYNC_RATE_1_BAR = 11;
@@ -47,4 +47,4 @@ const std::vector<uint8_t> LFO_SYNC_RATES = {
 };
 const int NUM_LFO_SYNC_RATES = LFO_SYNC_RATES.size();
 
-#endif // LFO_CONSTANTS_H
+#endif
