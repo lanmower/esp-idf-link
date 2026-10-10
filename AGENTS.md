@@ -121,6 +121,19 @@ tighten the click; only the esp_timer one-shot sets the edge.
   whose due time is already behind (capped `MAX_CATCHUP_PULSES_PER_SCHEDULE =
   1024`) — a burst of clocks reads as a tempo spike to any downstream PLL.
 - `MIDI_CLOCK_RESYNC_THRESHOLD` is **log-only**: one warning, no burst.
+- **The note path carries the same skip-don't-catch-up rule.**
+  `BassEngine::process` fires every note whose `posInSteps` lies in
+  `(last, current]`, so a discontinuous `beatAtTime` plays that entire span
+  back-to-back inside ONE call — an audible burst — and a backward phase jump is
+  worse: the `wrapped` branch marks everything from the old position to the end of
+  the phrase due, plus everything up to the new one. `process()` runs off the
+  250 us Link tick, so a genuine advance is far below one beat per call; anything
+  past `kMaxAdvanceStepsPerProcess` is a discontinuity, so it releases the
+  note-offs, re-anchors `m_lastPhrasePosSteps` and emits nothing.
+  **A tempo change does NOT trip it** — `Link.ipp`
+  `BasicLink<Clock>::SessionState::setTempo` rebuilds the timeline from
+  `toBeats(atTime)` and re-derives `timeOrigin`, so `beatAtTime` stays continuous
+  across a tempo change. Only a phase/timeline jump (peer join, adoption) moves it.
 - A watchdog re-arms the alarm from the tick when a pulse is really overdue — an
   alarm that never got re-armed would stop the clock silently.
 
@@ -260,7 +273,8 @@ Ports, all little-endian `int64` payloads on both ends:
 MIDI emission — one path, no per-device clock code; byte values are named
 constants in `main.h` (`0xF8` clock, `0xFA` start, `0xFC` stop, `0xFB` continue,
 `0xF2` SPP, CC123 all-notes-off), rates `MIDI_PULSES_PER_QUARTER_NOTE = 24` and
-`MIDI_SPP_UNITS_PER_BEAT = 4`.
+`MIDI_SPP_UNITS_PER_BEAT = 4` — both defined in `link_sync.cpp:17`, NOT in
+`main.h`, which carries only the byte values.
 
 - Continuous 24 ppqn clock; at the 16-bar phrase boundary only, SPP + Start/
   Continue; Stop + CC123 on all 16 channels on transport stop and on peer loss
