@@ -299,4 +299,4 @@ int generateTurnaround(TurnNote out[3], int root, int scaleIdx,
     return n;
 }
 
-}  // namespace bli
+}

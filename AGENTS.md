@@ -402,6 +402,11 @@ that makes the value correct. All were comments; none can be expressed in code.
 - `kRegisterSpan = 15` (`main/bassline_interpreter.cpp`, semitones) must track
   the anchorMotif clamp in `bass_engine.cpp`. That coupling is recorded nowhere
   else and neither file references the other.
+- `kProgs` (`main/bass_engine.cpp`) rows are **scale-degree indices**, not
+  semitones and not MIDI notes. Their intents are recorded nowhere else:
+  `{0,5,3,6}` i-VI-iv-VII, `{0,6,5,6}` i-VII-VI-VII, `{0,3,6,2}` i-iv-VII-III,
+  `{0,5,6,4}` i-VI-VII-V ("dark cadence"), `{0,2,6,3}` i-III-VII-iv,
+  `{0,0,5,6}` the pedal row (i-i-VI-VII, a tonic drone).
 
 ## Synth CC/NRPN facts that are not derivable from the code
 

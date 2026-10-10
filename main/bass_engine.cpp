@@ -68,12 +68,12 @@ static int scaleDegree(int scIdx, int degree) { return bli::scaleDegree(scIdx, d
 
 static const int kNumProgs = 6;
 static const int kProgs[kNumProgs][kBarsPerChordCell] = {
-    {0, 5, 3, 6},   // i - VI - iv - VII
-    {0, 6, 5, 6},   // i - VII - VI - VII
-    {0, 3, 6, 2},   // i - iv - VII - III
-    {0, 5, 6, 4},   // i - VI - VII - V (dark cadence)
-    {0, 2, 6, 3},   // i - III - VII - iv
-    {0, 0, 5, 6},   // pedal-leaning: i - i - VI - VII
+    {0, 5, 3, 6},
+    {0, 6, 5, 6},
+    {0, 3, 6, 2},
+    {0, 5, 6, 4},
+    {0, 2, 6, 3},
+    {0, 0, 5, 6},
 };
 
 static float rand01() {
@@ -324,7 +324,7 @@ void BassEngine::playNote(const NoteSlot& n, double bpm) {
     m_activeNotes.push_back({note, offPosInSteps});
 }
 
-void BassEngine::processNoteOffs(double phrasePosInSteps, double /*bpm*/) {
+void BassEngine::processNoteOffs(double phrasePosInSteps, double) {
     for (auto it = m_activeNotes.begin(); it != m_activeNotes.end(); ) {
         double diff = phrasePosInSteps - it->offPosInSteps;
         if (diff >= 0.0 || diff < kWrapBackwardThreshold) {

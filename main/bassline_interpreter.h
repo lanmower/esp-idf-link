@@ -76,4 +76,4 @@ struct TurnNote {
 int generateTurnaround(TurnNote out[3], int root, int scaleIdx,
                        const Dials& dials, RngSource& rng);
 
-}  // namespace bli
+}
