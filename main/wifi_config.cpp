@@ -16,6 +16,7 @@
 #include <lwip/tcpip.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 static const ip4_addr_t LINK_DISCOVERY_MULTICAST_GROUP = {
     .addr = PP_HTONL(LWIP_MAKEU32(LINK_MCAST_OCTET_A, LINK_MCAST_OCTET_B,
@@ -51,6 +52,14 @@ static void remember_ap_sta_ip(uint32_t ip) {
 
 static esp_netif_t* g_sta_netif = NULL;
 static esp_netif_t* g_ap_netif = NULL;
+static SemaphoreHandle_t g_ap_netif_lock = NULL;
+static TaskHandle_t g_relay_task = NULL;
+static volatile bool g_relay_stop = false;
+
+static SemaphoreHandle_t ap_netif_lock() {
+    if (!g_ap_netif_lock) g_ap_netif_lock = xSemaphoreCreateMutex();
+    return g_ap_netif_lock;
+}
 
 static void wifi_event_handler(void* arg, esp_event_base_t base,
                                int32_t id, void* data) {
@@ -85,6 +94,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t base,
 }
 
 esp_err_t wifi_config_init() {
+    ap_netif_lock();
     esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                         wifi_event_handler, NULL, NULL);
     esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID,
@@ -209,9 +219,12 @@ esp_err_t wifi_connect_sta(const char* ssid, const char* password) {
 
 esp_err_t wifi_start_link_ap(const char* ssid) {
     g_sta_wanted = false;
+    SemaphoreHandle_t ap_lock = ap_netif_lock();
+    xSemaphoreTake(ap_lock, portMAX_DELAY);
     if (!g_ap_netif) {
         g_ap_netif = esp_netif_create_default_wifi_ap();
     }
+    xSemaphoreGive(ap_lock);
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
 
     wifi_config_t cfg = {};
@@ -300,20 +313,36 @@ extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, u
     }
 }
 
+static const uint32_t RELAY_RECV_TIMEOUT_MS = 20;
+static const uint32_t RELAY_STOP_POLL_MS = 20;
+
+static void link_relay_release(int rs, struct raw_pcb* rpcb) {
+    if (rpcb) {
+        LOCK_TCPIP_CORE();
+        raw_remove(rpcb);
+        UNLOCK_TCPIP_CORE();
+    }
+    if (rs >= 0) close(rs);
+    g_relay_task = NULL;
+    vTaskDelete(NULL);
+}
+
 static void link_multicast_relay_task(void*) {
     static const char* RELAY_TAG = "LINK_RELAY";
     static const char* AP_ADDR   = "192.168.4.1";
 
     int rs = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (rs < 0) { ESP_LOGE(RELAY_TAG, "recv socket failed"); vTaskDelete(NULL); return; }
+    if (rs < 0) { ESP_LOGE(RELAY_TAG, "recv socket failed"); link_relay_release(rs, NULL); return; }
     int one = 1;
     setsockopt(rs, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    int recv_timeout_ms = (int)RELAY_RECV_TIMEOUT_MS;
+    setsockopt(rs, SOL_SOCKET, SO_RCVTIMEO, &recv_timeout_ms, sizeof(recv_timeout_ms));
     struct sockaddr_in bind_addr = {};
     bind_addr.sin_family      = AF_INET;
     bind_addr.sin_port        = htons(LINK_DISCOVERY_MULTICAST_PORT);
     bind_addr.sin_addr.s_addr = INADDR_ANY;
     if (bind(rs, (struct sockaddr*)&bind_addr, sizeof(bind_addr)) < 0) {
-        ESP_LOGE(RELAY_TAG, "bind failed"); close(rs); vTaskDelete(NULL); return;
+        ESP_LOGE(RELAY_TAG, "bind failed"); link_relay_release(rs, NULL); return;
     }
     struct ip_mreq mreq = {};
     inet_aton(LINK_DISCOVERY_MULTICAST_ADDR, &mreq.imr_multiaddr);
@@ -325,7 +354,7 @@ static void link_multicast_relay_task(void*) {
     UNLOCK_TCPIP_CORE();
     if (!rpcb) {
         ESP_LOGE(RELAY_TAG, "raw_new failed -- relay disabled");
-        close(rs); vTaskDelete(NULL); return;
+        link_relay_release(rs, NULL); return;
     }
 
     uint32_t ap_ip    = inet_addr(AP_ADDR);
@@ -339,6 +368,7 @@ static void link_multicast_relay_task(void*) {
     ESP_LOGI(RELAY_TAG, "Ableton Link relay running on %s:%u", LINK_DISCOVERY_MULTICAST_ADDR, LINK_DISCOVERY_MULTICAST_PORT);
 
     for (;;) {
+        if (g_relay_stop) break;
         struct sockaddr_in src = {};
         socklen_t sl = sizeof(src);
         int n = recvfrom(rs, payload, sizeof(payload), 0, (struct sockaddr*)&src, &sl);
@@ -383,6 +413,8 @@ static void link_multicast_relay_task(void*) {
             sta_ips[sta_ip_count++] = sta_ip;
         }
 
+        SemaphoreHandle_t netif_lock = ap_netif_lock();
+        xSemaphoreTake(netif_lock, portMAX_DELAY);
         LOCK_TCPIP_CORE();
         struct netif* ap_lwip = g_ap_netif ? (struct netif*)esp_netif_get_netif_impl(g_ap_netif) : NULL;
         if (ap_lwip) {
@@ -399,13 +431,20 @@ static void link_multicast_relay_task(void*) {
             }
         }
         UNLOCK_TCPIP_CORE();
+        xSemaphoreGive(netif_lock);
 
         pbuf_free(p);
     }
+    link_relay_release(rs, rpcb);
 }
 
 void wifi_start_link_relay() {
-    xTaskCreate(link_multicast_relay_task, "link_relay", 4096, NULL, 5, NULL);
+    if (g_relay_task) {
+        g_relay_stop = true;
+        while (g_relay_task) vTaskDelay(pdMS_TO_TICKS(RELAY_STOP_POLL_MS));
+    }
+    g_relay_stop = false;
+    xTaskCreate(link_multicast_relay_task, "link_relay", 4096, NULL, 5, &g_relay_task);
 }
 
 static void wifi_supervisor_task(void* arg) {
@@ -458,7 +497,10 @@ static void wifi_supervisor_task(void* arg) {
                 ESP_LOGW(TAG, "Lost dual-host tie-break (lower BSSID seen) -- dropping AP, joining");
                 esp_wifi_stop();
                 g_wifi_started = false;
+                SemaphoreHandle_t ap_lock = ap_netif_lock();
+                xSemaphoreTake(ap_lock, portMAX_DELAY);
                 if (g_ap_netif) { esp_netif_destroy(g_ap_netif); g_ap_netif = NULL; }
+                xSemaphoreGive(ap_lock);
                 g_ap_active = false;
                 ensure_sta_started();
                 wifi_connect_sta(ssid, "");
