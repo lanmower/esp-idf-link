@@ -13,6 +13,48 @@ namespace {
     constexpr uint8_t kMidiBipolarCenter = 64;
     constexpr uint8_t kMidiMax = 127;
 
+    constexpr uint8_t kCcNrpnParamMsb = 99;
+    constexpr uint8_t kCcNrpnParamLsb = 98;
+    constexpr uint8_t kCcDataEntryMsb = 6;
+    constexpr uint8_t kCcDataEntryLsb = 38;
+    constexpr uint8_t kCcRpnParamMsb = 101;
+    constexpr uint8_t kCcRpnParamLsb = 100;
+    constexpr uint8_t kMidiParamDeselect = 127;
+
+    class NrpnWrite {
+    public:
+        NrpnWrite(uint8_t channel, uint8_t nrpn_msb, uint8_t nrpn_lsb)
+            : channel_(channel)
+        {
+            send_midi_cc(channel_, kCcNrpnParamMsb, nrpn_msb);
+            send_midi_cc(channel_, kCcNrpnParamLsb, nrpn_lsb);
+        }
+
+        NrpnWrite(const NrpnWrite&) = delete;
+        NrpnWrite& operator=(const NrpnWrite&) = delete;
+
+        ~NrpnWrite()
+        {
+            send_midi_cc(channel_, kCcRpnParamMsb, kMidiParamDeselect);
+            send_midi_cc(channel_, kCcRpnParamLsb, kMidiParamDeselect);
+        }
+
+        void setValue(uint8_t value_msb)
+        {
+            send_midi_cc(channel_, kCcDataEntryMsb, value_msb);
+            send_midi_cc(channel_, kCcDataEntryLsb, 0);
+        }
+
+    private:
+        uint8_t channel_;
+    };
+
+    void write_nrpn(uint8_t channel, uint8_t nrpn_msb, uint8_t nrpn_lsb, uint8_t value_msb)
+    {
+        NrpnWrite write(channel, nrpn_msb, nrpn_lsb);
+        write.setValue(value_msb);
+    }
+
     const uint8_t FX_ROUTING_NRPN_MSB = 0;
     const uint8_t FX_ROUTING_NRPN_LSB = 98;
     const uint8_t FX_ROUTING_TYPE_SECOND_SLOT = 1;
@@ -141,117 +183,117 @@ void SynthMininova::setSidechainLevel(uint8_t level) {
 void SynthMininova::setSidechainPattern(uint8_t pattern_index) {
     ESP_LOGI(TAG_MININOVA, "Setting Sidechain Pattern (Gator via NRPN 0:97=1): %d", pattern_index);
 
-    send_midi_nrpn(midi_channel, FX_ROUTING_NRPN_MSB, FX_ROUTING_NRPN_LSB, FX_ROUTING_TYPE_SECOND_SLOT);
+    write_nrpn(midi_channel, FX_ROUTING_NRPN_MSB, FX_ROUTING_NRPN_LSB, FX_ROUTING_TYPE_SECOND_SLOT);
     vTaskDelay(pdMS_TO_TICKS(1));
 
-    send_midi_nrpn(midi_channel, GATE_SELECT_NRPN_MSB, GATE_SELECT_NRPN_LSB, GATE_EFFECT_CODE);
+    write_nrpn(midi_channel, GATE_SELECT_NRPN_MSB, GATE_SELECT_NRPN_LSB, GATE_EFFECT_CODE);
     vTaskDelay(pdMS_TO_TICKS(1));
 
-    send_midi_nrpn(midi_channel, GATE_HOLD_NRPN_MSB, GATE_HOLD_NRPN_LSB, kGateHoldDefault);
+    write_nrpn(midi_channel, GATE_HOLD_NRPN_MSB, GATE_HOLD_NRPN_LSB, kGateHoldDefault);
     vTaskDelay(pdMS_TO_TICKS(1));
 
-    send_midi_nrpn(midi_channel, GATE_ESLEW_NRPN_MSB, GATE_ESLEW_NRPN_LSB, kGateESlewDefault);
+    write_nrpn(midi_channel, GATE_ESLEW_NRPN_MSB, GATE_ESLEW_NRPN_LSB, kGateESlewDefault);
     vTaskDelay(pdMS_TO_TICKS(1));
 
-    send_midi_nrpn(midi_channel, GATE_KEYSYNC_NRPN_MSB, GATE_KEYSYNC_NRPN_LSB, kGateKeySyncOn);
+    write_nrpn(midi_channel, GATE_KEYSYNC_NRPN_MSB, GATE_KEYSYNC_NRPN_LSB, kGateKeySyncOn);
     vTaskDelay(pdMS_TO_TICKS(1));
 
-    send_midi_nrpn(midi_channel, GATE_DELAY_NRPN_MSB, GATE_DELAY_NRPN_LSB, kGateDelayValueForMinus15);
+    write_nrpn(midi_channel, GATE_DELAY_NRPN_MSB, GATE_DELAY_NRPN_LSB, kGateDelayValueForMinus15);
     vTaskDelay(pdMS_TO_TICKS(1));
 
-    send_midi_nrpn(midi_channel, GATE_RSYNC_NRPN_MSB, GATE_RSYNC_NRPN_LSB, kGateRSyncSecond);
+    write_nrpn(midi_channel, GATE_RSYNC_NRPN_MSB, GATE_RSYNC_NRPN_LSB, kGateRSyncSecond);
     vTaskDelay(pdMS_TO_TICKS(1));
 
-    send_midi_nrpn(midi_channel, GATE_LVL1_NRPN_MSB, GATE_LVL1_NRPN_LSB, kGateLevel1AlwaysSilent);
+    write_nrpn(midi_channel, GATE_LVL1_NRPN_MSB, GATE_LVL1_NRPN_LSB, kGateLevel1AlwaysSilent);
     vTaskDelay(pdMS_TO_TICKS(1));
 
     switch (pattern_index) {
         case 0:
-            send_midi_nrpn(midi_channel, GATE_LVL2_NRPN_MSB, GATE_LVL2_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL3_NRPN_MSB, GATE_LVL3_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL4_NRPN_MSB, GATE_LVL4_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL5_NRPN_MSB, GATE_LVL5_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL6_NRPN_MSB, GATE_LVL6_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL7_NRPN_MSB, GATE_LVL7_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL8_NRPN_MSB, GATE_LVL8_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL2_NRPN_MSB, GATE_LVL2_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL3_NRPN_MSB, GATE_LVL3_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL4_NRPN_MSB, GATE_LVL4_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL5_NRPN_MSB, GATE_LVL5_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL6_NRPN_MSB, GATE_LVL6_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL7_NRPN_MSB, GATE_LVL7_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL8_NRPN_MSB, GATE_LVL8_NRPN_LSB, 127);
             break;
         case 1:
-            send_midi_nrpn(midi_channel, GATE_LVL2_NRPN_MSB, GATE_LVL2_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL3_NRPN_MSB, GATE_LVL3_NRPN_LSB, 0);
-            send_midi_nrpn(midi_channel, GATE_LVL4_NRPN_MSB, GATE_LVL4_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL5_NRPN_MSB, GATE_LVL5_NRPN_LSB, 0);
-            send_midi_nrpn(midi_channel, GATE_LVL6_NRPN_MSB, GATE_LVL6_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL7_NRPN_MSB, GATE_LVL7_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL8_NRPN_MSB, GATE_LVL8_NRPN_LSB, 0);
+            write_nrpn(midi_channel, GATE_LVL2_NRPN_MSB, GATE_LVL2_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL3_NRPN_MSB, GATE_LVL3_NRPN_LSB, 0);
+            write_nrpn(midi_channel, GATE_LVL4_NRPN_MSB, GATE_LVL4_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL5_NRPN_MSB, GATE_LVL5_NRPN_LSB, 0);
+            write_nrpn(midi_channel, GATE_LVL6_NRPN_MSB, GATE_LVL6_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL7_NRPN_MSB, GATE_LVL7_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL8_NRPN_MSB, GATE_LVL8_NRPN_LSB, 0);
             break;
         case 2:
-            send_midi_nrpn(midi_channel, GATE_LVL2_NRPN_MSB, GATE_LVL2_NRPN_LSB, 100);
-            send_midi_nrpn(midi_channel, GATE_LVL3_NRPN_MSB, GATE_LVL3_NRPN_LSB, 50);
-            send_midi_nrpn(midi_channel, GATE_LVL4_NRPN_MSB, GATE_LVL4_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL5_NRPN_MSB, GATE_LVL5_NRPN_LSB, 80);
-            send_midi_nrpn(midi_channel, GATE_LVL6_NRPN_MSB, GATE_LVL6_NRPN_LSB, 30);
-            send_midi_nrpn(midi_channel, GATE_LVL7_NRPN_MSB, GATE_LVL7_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL8_NRPN_MSB, GATE_LVL8_NRPN_LSB, 60);
+            write_nrpn(midi_channel, GATE_LVL2_NRPN_MSB, GATE_LVL2_NRPN_LSB, 100);
+            write_nrpn(midi_channel, GATE_LVL3_NRPN_MSB, GATE_LVL3_NRPN_LSB, 50);
+            write_nrpn(midi_channel, GATE_LVL4_NRPN_MSB, GATE_LVL4_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL5_NRPN_MSB, GATE_LVL5_NRPN_LSB, 80);
+            write_nrpn(midi_channel, GATE_LVL6_NRPN_MSB, GATE_LVL6_NRPN_LSB, 30);
+            write_nrpn(midi_channel, GATE_LVL7_NRPN_MSB, GATE_LVL7_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL8_NRPN_MSB, GATE_LVL8_NRPN_LSB, 60);
             break;
         case 3:
-            send_midi_nrpn(midi_channel, GATE_LVL2_NRPN_MSB, GATE_LVL2_NRPN_LSB, 0);
-            send_midi_nrpn(midi_channel, GATE_LVL3_NRPN_MSB, GATE_LVL3_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL4_NRPN_MSB, GATE_LVL4_NRPN_LSB, 0);
-            send_midi_nrpn(midi_channel, GATE_LVL5_NRPN_MSB, GATE_LVL5_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL6_NRPN_MSB, GATE_LVL6_NRPN_LSB, 0);
-            send_midi_nrpn(midi_channel, GATE_LVL7_NRPN_MSB, GATE_LVL7_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL8_NRPN_MSB, GATE_LVL8_NRPN_LSB, 0);
+            write_nrpn(midi_channel, GATE_LVL2_NRPN_MSB, GATE_LVL2_NRPN_LSB, 0);
+            write_nrpn(midi_channel, GATE_LVL3_NRPN_MSB, GATE_LVL3_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL4_NRPN_MSB, GATE_LVL4_NRPN_LSB, 0);
+            write_nrpn(midi_channel, GATE_LVL5_NRPN_MSB, GATE_LVL5_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL6_NRPN_MSB, GATE_LVL6_NRPN_LSB, 0);
+            write_nrpn(midi_channel, GATE_LVL7_NRPN_MSB, GATE_LVL7_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL8_NRPN_MSB, GATE_LVL8_NRPN_LSB, 0);
             break;
         default:
-            send_midi_nrpn(midi_channel, GATE_LVL2_NRPN_MSB, GATE_LVL2_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL3_NRPN_MSB, GATE_LVL3_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL4_NRPN_MSB, GATE_LVL4_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL5_NRPN_MSB, GATE_LVL5_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL6_NRPN_MSB, GATE_LVL6_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL7_NRPN_MSB, GATE_LVL7_NRPN_LSB, 127);
-            send_midi_nrpn(midi_channel, GATE_LVL8_NRPN_MSB, GATE_LVL8_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL2_NRPN_MSB, GATE_LVL2_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL3_NRPN_MSB, GATE_LVL3_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL4_NRPN_MSB, GATE_LVL4_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL5_NRPN_MSB, GATE_LVL5_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL6_NRPN_MSB, GATE_LVL6_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL7_NRPN_MSB, GATE_LVL7_NRPN_LSB, 127);
+            write_nrpn(midi_channel, GATE_LVL8_NRPN_MSB, GATE_LVL8_NRPN_LSB, 127);
             break;
     }
 }
 
 void SynthMininova::activateDelay() {
-    send_midi_nrpn(midi_channel, FX_ROUTING_NRPN_MSB, FX_ROUTING_NRPN_LSB, FX_ROUTING_TYPE_SECOND_SLOT);
+    write_nrpn(midi_channel, FX_ROUTING_NRPN_MSB, FX_ROUTING_NRPN_LSB, FX_ROUTING_TYPE_SECOND_SLOT);
     vTaskDelay(pdMS_TO_TICKS(1));
 
-    send_midi_nrpn(midi_channel, FX1_SELECT_NRPN_MSB, FX1_SELECT_NRPN_LSB, FX1_EFFECT_DELAY1);
+    write_nrpn(midi_channel, FX1_SELECT_NRPN_MSB, FX1_SELECT_NRPN_LSB, FX1_EFFECT_DELAY1);
     vTaskDelay(pdMS_TO_TICKS(1));
 }
 
 void SynthMininova::activateReverb() {
-    send_midi_nrpn(midi_channel, FX_ROUTING_NRPN_MSB, FX_ROUTING_NRPN_LSB, FX_ROUTING_TYPE_SECOND_SLOT);
+    write_nrpn(midi_channel, FX_ROUTING_NRPN_MSB, FX_ROUTING_NRPN_LSB, FX_ROUTING_TYPE_SECOND_SLOT);
     vTaskDelay(pdMS_TO_TICKS(1));
 
-    send_midi_nrpn(midi_channel, FX1_SELECT_NRPN_MSB, FX1_SELECT_NRPN_LSB, FX1_EFFECT_REVERB1);
+    write_nrpn(midi_channel, FX1_SELECT_NRPN_MSB, FX1_SELECT_NRPN_LSB, FX1_EFFECT_REVERB1);
     vTaskDelay(pdMS_TO_TICKS(1));
 }
 
 void SynthMininova::setDelayTime(uint8_t value) {
-    send_midi_nrpn(midi_channel, DELAY1_TIME_NRPN_MSB, DELAY1_TIME_NRPN_LSB, value);
+    write_nrpn(midi_channel, DELAY1_TIME_NRPN_MSB, DELAY1_TIME_NRPN_LSB, value);
 }
 
 void SynthMininova::setDelayFeedback(uint8_t value) {
-    send_midi_nrpn(midi_channel, DELAY1_FEEDBACK_NRPN_MSB, DELAY1_FEEDBACK_NRPN_LSB, value);
+    write_nrpn(midi_channel, DELAY1_FEEDBACK_NRPN_MSB, DELAY1_FEEDBACK_NRPN_LSB, value);
 }
 
 void SynthMininova::setDelaySyncRate(uint8_t rate_val) {
-    send_midi_nrpn(midi_channel, DELAY1_SYNC_NRPN_MSB, DELAY1_SYNC_NRPN_LSB, rate_val);
+    write_nrpn(midi_channel, DELAY1_SYNC_NRPN_MSB, DELAY1_SYNC_NRPN_LSB, rate_val);
 }
 
 void SynthMininova::disableDelaySync() {
-    send_midi_nrpn(midi_channel, DELAY1_SYNC_NRPN_MSB, DELAY1_SYNC_NRPN_LSB, 0);
+    write_nrpn(midi_channel, DELAY1_SYNC_NRPN_MSB, DELAY1_SYNC_NRPN_LSB, 0);
 }
 
 void SynthMininova::setReverbDecay(uint8_t value) {
-    send_midi_nrpn(midi_channel, REVERB1_DECAY_NRPN_MSB, REVERB1_DECAY_NRPN_LSB, value);
+    write_nrpn(midi_channel, REVERB1_DECAY_NRPN_MSB, REVERB1_DECAY_NRPN_LSB, value);
 }
 
 void SynthMininova::setReverbDamping(uint8_t value) {
-    send_midi_nrpn(midi_channel, REVERB1_DAMPING_NRPN_MSB, REVERB1_DAMPING_NRPN_LSB, value);
+    write_nrpn(midi_channel, REVERB1_DAMPING_NRPN_MSB, REVERB1_DAMPING_NRPN_LSB, value);
 }
 
 void SynthMininova::selectFxSlot1Effect(EffectType type) {
@@ -267,7 +309,7 @@ void SynthMininova::setFxSlot1Level(uint8_t level) {
 }
 
 void SynthMininova::activateFilter(uint8_t default_cutoff, uint8_t default_res) {
-    send_midi_nrpn(midi_channel, FILT1_TYPE_NRPN_MSB, FILT1_TYPE_NRPN_LSB, FILT1_TYPE_LP24);
+    write_nrpn(midi_channel, FILT1_TYPE_NRPN_MSB, FILT1_TYPE_NRPN_LSB, FILT1_TYPE_LP24);
     vTaskDelay(pdMS_TO_TICKS(1));
     setFilterCutoff(default_cutoff);
     setFilterResonance(default_res);
@@ -289,26 +331,26 @@ void SynthMininova::setFilterResonance(uint8_t value) {
 
 void SynthMininova::patchLfoToFilter(uint8_t initial_depth_midi) {
     ESP_LOGD(TAG_MININOVA, "Patching LFO2 -> Filter Freq (Mod Slot 1)");
-    send_midi_nrpn(midi_channel, MOD1_SOURCE_NRPN_MSB, MOD1_SOURCE_NRPN_LSB, MOD_SRC_LFO2);
+    write_nrpn(midi_channel, MOD1_SOURCE_NRPN_MSB, MOD1_SOURCE_NRPN_LSB, MOD_SRC_LFO2);
     vTaskDelay(pdMS_TO_TICKS(1));
-    send_midi_nrpn(midi_channel, MOD1_DEST_NRPN_MSB, MOD1_DEST_NRPN_LSB, MOD_DEST_FILT1_FREQ);
+    write_nrpn(midi_channel, MOD1_DEST_NRPN_MSB, MOD1_DEST_NRPN_LSB, MOD_DEST_FILT1_FREQ);
     vTaskDelay(pdMS_TO_TICKS(1));
-    send_midi_nrpn(midi_channel, MOD1_DEPTH_NRPN_MSB, MOD1_DEPTH_NRPN_LSB, initial_depth_midi);
+    write_nrpn(midi_channel, MOD1_DEPTH_NRPN_MSB, MOD1_DEPTH_NRPN_LSB, initial_depth_midi);
     vTaskDelay(pdMS_TO_TICKS(1));
     setLfoSyncEnabled(true);
 }
 
 void SynthMininova::unpatchLfoFromFilter() {
     ESP_LOGD(TAG_MININOVA, "Unpatching LFO from Filter (Mod Slot 1 Depth = 64)");
-    send_midi_nrpn(midi_channel, MOD1_DEPTH_NRPN_MSB, MOD1_DEPTH_NRPN_LSB, kMidiBipolarCenter);
+    write_nrpn(midi_channel, MOD1_DEPTH_NRPN_MSB, MOD1_DEPTH_NRPN_LSB, kMidiBipolarCenter);
 }
 
 void SynthMininova::setLfoShape(uint8_t shape_val) {
-    send_midi_nrpn(midi_channel, LFO2_SHAPE_NRPN_MSB, LFO2_SHAPE_NRPN_LSB, shape_val);
+    write_nrpn(midi_channel, LFO2_SHAPE_NRPN_MSB, LFO2_SHAPE_NRPN_LSB, shape_val);
 }
 
 void SynthMininova::setLfoRateSync(uint8_t rate_val) {
-    send_midi_nrpn(midi_channel, LFO2_RATE_SYNC_NRPN_MSB, LFO2_RATE_SYNC_NRPN_LSB, rate_val);
+    write_nrpn(midi_channel, LFO2_RATE_SYNC_NRPN_MSB, LFO2_RATE_SYNC_NRPN_LSB, rate_val);
     setLfoSyncEnabled(true);
 }
 
@@ -316,11 +358,11 @@ void SynthMininova::setLfoDepth(int8_t signed_depth) {
     int midi_depth = signed_depth + kMidiBipolarCenter;
     if (midi_depth < 0) midi_depth = 0;
     if (midi_depth > 127) midi_depth = 127;
-    send_midi_nrpn(midi_channel, MOD1_DEPTH_NRPN_MSB, MOD1_DEPTH_NRPN_LSB, (uint8_t)midi_depth);
+    write_nrpn(midi_channel, MOD1_DEPTH_NRPN_MSB, MOD1_DEPTH_NRPN_LSB, (uint8_t)midi_depth);
 }
 
 void SynthMininova::setLfoSyncEnabled(bool enabled) {
-    send_midi_nrpn(midi_channel, LFO2_SYNC_ENABLE_NRPN_MSB, LFO2_SYNC_ENABLE_NRPN_LSB, enabled ? 1 : 0);
+    write_nrpn(midi_channel, LFO2_SYNC_ENABLE_NRPN_MSB, LFO2_SYNC_ENABLE_NRPN_LSB, enabled ? 1 : 0);
 }
 
 void SynthMininova::sendNoteOn(uint8_t note, uint8_t velocity) {
@@ -333,7 +375,7 @@ void SynthMininova::sendNoteOn(uint8_t note, uint8_t velocity) {
 
 void SynthMininova::setGateESlew(uint8_t value) {
     ESP_LOGD(TAG_MININOVA, "Setting Gate E-Slew: %d", value);
-    send_midi_nrpn(midi_channel, GATE_ESLEW_NRPN_MSB, GATE_ESLEW_NRPN_LSB, value);
+    write_nrpn(midi_channel, GATE_ESLEW_NRPN_MSB, GATE_ESLEW_NRPN_LSB, value);
 }
 
 void SynthMininova::setGateWetDry(uint8_t value) {
