@@ -1,6 +1,9 @@
 import importlib.util, os, socket, struct, sys, time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _HERE)
+from ch341 import RELEASE_BOTH, HOLD_EN, HOLD_IO0
+
 _spec = importlib.util.spec_from_file_location("usbip_port",
                                                os.path.join(_HERE, "usbip-port.py"))
 _m = importlib.util.module_from_spec(_spec)
@@ -53,10 +56,10 @@ def main():
     print("devid=0x%08x version=%s" % (port.devid, port.init().hex()), flush=True)
     port.drain(6.0)
 
-    print("=== enter download: 0x40 -> 0x20 ===", flush=True)
-    port.hs(0x40)
+    print("=== enter download: HOLD_EN -> HOLD_IO0 ===", flush=True)
+    port.hs(HOLD_EN)
     port.drain(0.6)
-    port.hs(0x20)
+    port.hs(HOLD_IO0)
     txt = port.drain(6.0)
     print("  %s" % port.verdict(txt), flush=True)
 
@@ -92,7 +95,7 @@ def main():
 
     print("=== esptool sync on the same port ===", flush=True)
     print("  %s" % port.sync(), flush=True)
-    port.hs(0x00)
+    port.hs(RELEASE_BOTH)
     port.close()
 
 
