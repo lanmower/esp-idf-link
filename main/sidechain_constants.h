@@ -3,8 +3,13 @@
 
 #include <vector>
 #include <array>
+#include <cstdint>
 
 const int SIDECHAIN_RHYTHM_STEPS = 16;
+
+constexpr int SIDECHAIN_DEPTH_MIN = 0;
+constexpr int SIDECHAIN_DEPTH_MAX = 127;
+constexpr int SIDECHAIN_DEFAULT_DEPTH = SIDECHAIN_DEPTH_MAX;
 
 constexpr bool SC_GATE_ON = true;
 constexpr bool SC_GATE_OFF = false;
@@ -41,5 +46,11 @@ const std::vector<std::array<bool, SIDECHAIN_RHYTHM_STEPS>> SIDECHAIN_PATTERNS =
 const int NUM_SIDECHAIN_PATTERNS = SIDECHAIN_PATTERNS.size();
 
 const int SIDECHAIN_DEFAULT_PATTERN_INDEX = 0;
+
+constexpr uint8_t gateWetDryForDepth(int depth) {
+    if (depth < SIDECHAIN_DEPTH_MIN) depth = SIDECHAIN_DEPTH_MIN;
+    if (depth > SIDECHAIN_DEPTH_MAX) depth = SIDECHAIN_DEPTH_MAX;
+    return static_cast<uint8_t>(depth);
+}
 
 #endif

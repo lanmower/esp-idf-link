@@ -24,7 +24,7 @@ void reset_sidechain_to_default() {
 
     s_last_sc_step_index = -1;
 
-    s_current_sidechain_depth = 127;
+    s_current_sidechain_depth = SIDECHAIN_DEFAULT_DEPTH;
 
     s_current_sidechain_sheer = 0;
 
@@ -34,7 +34,7 @@ void reset_sidechain_to_default() {
         if (g_synth_type == SYNTH_MININOVA) {
             SynthMininova* mininova = static_cast<SynthMininova*>(g_current_synth);
             mininova->setGateESlew(gateESlewForSheer(s_current_sidechain_sheer));
-            mininova->setGateWetDry(127);
+            mininova->setGateWetDry(gateWetDryForDepth(s_current_sidechain_depth));
         }
     }
 

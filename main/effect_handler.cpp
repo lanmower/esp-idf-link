@@ -27,7 +27,7 @@ extern SynthType g_synth_type;
 
 int s_global_filter_cutoff = 127;
 int s_global_filter_resonance = 0;
-int s_current_sidechain_depth = 100;
+int s_current_sidechain_depth = SIDECHAIN_DEFAULT_DEPTH;
 int s_current_sidechain_sheer = 0;
 int s_current_delay_time = 64;
 int s_current_delay_feedback = 64;
@@ -49,7 +49,7 @@ void initialize_effects() {
 
     s_global_filter_cutoff = 127;
     s_global_filter_resonance = 0;
-    s_current_sidechain_depth = 100;
+    s_current_sidechain_depth = SIDECHAIN_DEFAULT_DEPTH;
     s_current_sidechain_sheer = 0;
     s_current_delay_time = 64;
     s_current_delay_feedback = 64;
@@ -81,7 +81,7 @@ void handle_sidechain_adjust_pots(int pot1_delta, int pot2_delta, bool& pot1_use
     if (g_synth_type == SYNTH_MININOVA) {
         SynthMininova* mininova = static_cast<SynthMininova*>(g_current_synth);
 
-        uint8_t wetdry = 127 - s_current_sidechain_depth;
+        uint8_t wetdry = gateWetDryForDepth(s_current_sidechain_depth);
         mininova->setGateWetDry(wetdry);
 
         uint8_t eslew = gateESlewForSheer(s_current_sidechain_sheer);
