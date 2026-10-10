@@ -146,7 +146,7 @@ static esp_err_t info_handler(httpd_req_t* req) {
 static esp_err_t clear_handler(httpd_req_t* req) {
     ESP_LOGI(TAG, "Clearing all MIDI clips from /spiffs/loops/");
 
-    DIR* dir = opendir("/spiffs/loops");
+    DIR* dir = opendir(kLoopsDir);
     if (!dir) {
         httpd_resp_send(req, "Directory not found", HTTPD_RESP_USE_STRLEN);
         return ESP_FAIL;
@@ -158,7 +158,11 @@ static esp_err_t clear_handler(httpd_req_t* req) {
     while ((entry = readdir(dir)) != nullptr) {
         if (entry->d_type == DT_REG && strstr(entry->d_name, ".mid")) {
             char filepath[512];
-            snprintf(filepath, sizeof(filepath), "/spiffs/loops/%s", entry->d_name);
+            int path_len = snprintf(filepath, sizeof(filepath), "%s/%s", kLoopsDir, entry->d_name);
+            if (path_len < 0 || path_len >= (int)sizeof(filepath)) {
+                ESP_LOGE(TAG, "Clip path too long, skipping: %s", entry->d_name);
+                continue;
+            }
             if (remove(filepath) == 0) {
                 ESP_LOGI(TAG, "Deleted: %s", entry->d_name);
                 deleted++;
@@ -272,7 +276,9 @@ void network_midi_init() {
 void network_midi_start() {
     if (g_server) {
         ESP_LOGI(TAG, "Network MIDI server already running on %s:8080", g_device_ip);
+        return;
     }
+    network_midi_init();
 }
 
 void network_midi_stop() {
