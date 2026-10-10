@@ -13,8 +13,13 @@ static constexpr int MIDI_DIN_BAUD_RATE = 31250;
 static constexpr int MIDI_UART_RX_BUFFER_BYTES = 512;
 static constexpr int MIDI_UART_TX_BUFFER_BYTES = 256;
 static constexpr int MIDI_CONTROL_CHANGE_CMD = 0xB0;
-static constexpr int MIDI_CHANNEL_MIN = 1;
-static constexpr int MIDI_CHANNEL_MAX = 16;
+extern constexpr uint8_t MIDI_USER_CHANNEL_MIN = 1;
+extern constexpr uint8_t MIDI_USER_CHANNEL_MAX = 16;
+static constexpr uint8_t MIDI_WIRE_CHANNEL_MIN = 0;
+static constexpr uint8_t MIDI_WIRE_CHANNEL_MAX =
+    MIDI_WIRE_CHANNEL_MIN + (MIDI_USER_CHANNEL_MAX - MIDI_USER_CHANNEL_MIN);
+static_assert(MIDI_WIRE_CHANNEL_MAX == 15,
+              "MIDI user channels 1..16 must map onto wire channels 0..15");
 static constexpr int MIDI_DATA_BYTE_MASK = 0x7F;
 static constexpr int MIDI_VALUE_MID = 64;
 static constexpr int MIDI_CC_NRPN_PARAM_MSB = 99;
@@ -369,15 +374,21 @@ void send_midi_message(const uint8_t *message, size_t size)
     }
 }
 
+uint8_t midi_wire_channel_from_user_channel(uint8_t user_channel)
+{
+    return static_cast<uint8_t>(MIDI_WIRE_CHANNEL_MIN + (user_channel - MIDI_USER_CHANNEL_MIN));
+}
+
 void send_midi_cc(uint8_t channel, uint8_t cc_num, uint8_t value)
 {
-    if (channel < MIDI_CHANNEL_MIN || channel > MIDI_CHANNEL_MAX)
+    if (channel < MIDI_USER_CHANNEL_MIN || channel > MIDI_USER_CHANNEL_MAX)
     {
         ESP_LOGE("MIDI", "Invalid MIDI channel: %d", channel);
         return;
     }
+    const uint8_t wire_channel = midi_wire_channel_from_user_channel(channel);
     uint8_t midi_msg[3];
-    midi_msg[0] = MIDI_CONTROL_CHANGE_CMD | (channel - 1);
+    midi_msg[0] = MIDI_CONTROL_CHANGE_CMD | wire_channel;
     midi_msg[1] = cc_num & MIDI_DATA_BYTE_MASK;
     midi_msg[2] = value & MIDI_DATA_BYTE_MASK;
     send_midi_message(midi_msg, sizeof(midi_msg));

@@ -10,12 +10,15 @@
 #include "esp_netif.h"
 #include "wifi_config.h"
 
+extern const uint8_t MIDI_USER_CHANNEL_MIN;
+extern const uint8_t MIDI_USER_CHANNEL_MAX;
+uint8_t midi_wire_channel_from_user_channel(uint8_t user_channel);
+
 static constexpr int     MIDI_PULSES_PER_QUARTER_NOTE = 24;
 static constexpr int     MIDI_SPP_UNITS_PER_BEAT      = 4;
 static constexpr int     MIDI_SPP_UNITS_MASK          = 0x3FFF;
 static constexpr int     MIDI_DATA_BYTE_MASK          = 0x7F;
 static constexpr int     MIDI_DATA_BYTE_SHIFT         = 7;
-static constexpr int     MIDI_WIRE_CHANNEL_COUNT      = 16;
 static constexpr double  LINK_TEMPO_MIN_BPM           = 20.0;
 static constexpr double  LINK_TEMPO_MAX_BPM           = 999.0;
 static constexpr double  FALLBACK_TEMPO_BPM           = 120.0;
@@ -336,8 +339,9 @@ static void send_midi_bytes(const uint8_t* buf, size_t len) {
 }
 
 static void send_all_notes_off_all_channels() {
-    for (uint8_t ch = 0; ch < MIDI_WIRE_CHANNEL_COUNT; ++ch) {
-        const uint8_t cc[] = { (uint8_t)(MIDI_CC_CMD | ch), MIDI_CC_ALL_NOTES_OFF, 0 };
+    for (uint8_t user_channel = MIDI_USER_CHANNEL_MIN; user_channel <= MIDI_USER_CHANNEL_MAX; ++user_channel) {
+        const uint8_t cc[] = { (uint8_t)(MIDI_CC_CMD | midi_wire_channel_from_user_channel(user_channel)),
+                               MIDI_CC_ALL_NOTES_OFF, 0 };
         send_midi_bytes(cc, sizeof(cc));
     }
 }
