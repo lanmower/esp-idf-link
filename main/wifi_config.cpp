@@ -118,8 +118,19 @@ void wifi_get_sta_mac(uint8_t out_mac[6]) {
     esp_read_mac(out_mac, ESP_MAC_WIFI_STA);
 }
 
+// The BSSID a scan record reports for our own AP is the Soft-AP interface MAC, which is
+// derived from the base MAC by an offset this code must not assume. esp_read_mac() reads
+// eFuse and IDF documents it as possibly differing from esp_wifi_get_mac(), so the
+// interface read is the only value that is guaranteed to match a scan record's bssid.
+static bool wifi_get_own_ap_mac(uint8_t out_mac[6]) {
+    return esp_wifi_get_mac(WIFI_IF_AP, out_mac) == ESP_OK;
+}
+
 int wifi_scan_best_bssid(const char* ssid, uint8_t out_best_bssid[6]) {
     ensure_sta_started();
+
+    uint8_t own_ap_mac[6];
+    const bool have_own_ap_mac = wifi_get_own_ap_mac(own_ap_mac);
 
     wifi_scan_config_t scan_cfg = {};
     scan_cfg.ssid = (uint8_t*)ssid;
@@ -143,24 +154,37 @@ int wifi_scan_best_bssid(const char* ssid, uint8_t out_best_bssid[6]) {
     wifi_ap_record_t records[MAX_RECORDS];
     uint16_t n = (count < MAX_RECORDS) ? count : MAX_RECORDS;
     if (esp_wifi_scan_get_ap_records(&n, records) != ESP_OK) {
-        ESP_LOGW(TAG, "scan_get_ap_records failed; treating as %u matches, no BSSID", count);
-        return count;
+        ESP_LOGW(TAG, "scan_get_ap_records failed; no BSSID to elect on");
+        return 0;
     }
 
+    static int s_self_ap_skip_log = 0;
     int best = -1;
+    int peers = 0;
     for (uint16_t i = 0; i < n; ++i) {
+        if (have_own_ap_mac && memcmp(records[i].bssid, own_ap_mac, 6) == 0) {
+            if (s_self_ap_skip_log < 3) {
+                ESP_LOGI(TAG, "Scan: ignoring own AP " MACSTR " -- never yield to myself",
+                         MAC2STR(records[i].bssid));
+                s_self_ap_skip_log++;
+            }
+            continue;
+        }
+        peers++;
         if (best < 0 || memcmp(records[i].bssid, records[best].bssid, 6) < 0) {
             best = i;
         }
     }
-    if (best >= 0) {
-        memcpy(out_best_bssid, records[best].bssid, 6);
-        ESP_LOGI(TAG, "Scan: %u '%s' AP(s); lowest BSSID %02x:%02x:%02x:%02x:%02x:%02x",
-                 n, ssid,
-                 out_best_bssid[0], out_best_bssid[1], out_best_bssid[2],
-                 out_best_bssid[3], out_best_bssid[4], out_best_bssid[5]);
+    if (best < 0) {
+        ESP_LOGI(TAG, "Scan: no eligible '%s' AP to elect (%u seen)", ssid, n);
+        return 0;
     }
-    return n;
+    memcpy(out_best_bssid, records[best].bssid, 6);
+    ESP_LOGI(TAG, "Scan: %d '%s' AP(s); lowest BSSID %02x:%02x:%02x:%02x:%02x:%02x",
+             peers, ssid,
+             out_best_bssid[0], out_best_bssid[1], out_best_bssid[2],
+             out_best_bssid[3], out_best_bssid[4], out_best_bssid[5]);
+    return peers;
 }
 
 bool wifi_scan_for_ssid(const char* ssid) {
@@ -425,9 +449,11 @@ static void wifi_supervisor_task(void* arg) {
             if (ap_has_associated_stations()) {
                 continue;
             }
-            uint8_t best[6];
+            uint8_t best[6] = {0};
             int matches = wifi_scan_best_bssid(ssid, best);
-            if (matches > 0 && memcmp(best, my_mac, 6) < 0) {
+            uint8_t own_ap_mac[6];
+            const bool bssid_is_self = wifi_get_own_ap_mac(own_ap_mac) && memcmp(best, own_ap_mac, 6) == 0;
+            if (matches > 0 && !bssid_is_self && memcmp(best, my_mac, 6) < 0) {
                 ESP_LOGW(TAG, "Lost dual-host tie-break (lower BSSID seen) -- dropping AP, joining");
                 esp_wifi_stop();
                 g_wifi_started = false;
