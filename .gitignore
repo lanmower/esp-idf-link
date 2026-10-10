@@ -6,6 +6,7 @@ dependencies.lock
 *.bin
 components/*
 !components/link-esp/
+!components/asio_patch/
 
 .devcontainer/
 .claude/
