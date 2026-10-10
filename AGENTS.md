@@ -298,69 +298,61 @@ MIDI emission -- one path, no per-device clock code:
 `network_midi_init()` starts an `esp_http_server` on **port 8080** from
 `app_main`: `POST /upload/*` writes the body to `/spiffs/loops/<name>`,
 `GET /info` returns `{"device_ip":...}`, `POST /clear` deletes every `*.mid`
-under `/spiffs/loops`. Two bounds are invisible at the call sites: the server
-reserves **4 sockets** (`max_open_sockets = 4`) inside the
-`CONFIG_LWIP_MAX_SOCKETS=16` budget above, and the SoftAP allows **8 stations**
-(`cfg.ap.max_connection = 8`, matching `MAX_AP_STA_IPS = 8`) -- 8 is also how
-many the multicast forwarder can unicast to, so a 9th station associates but
-never receives relayed Link traffic. WiFi power-save is explicitly disabled
-(`WIFI_PS_NONE`) -- a dozing station misses multicast; do not re-enable it.
+there. Two bounds are invisible at the call sites: the server reserves **4
+sockets** (`max_open_sockets = 4`) of the `CONFIG_LWIP_MAX_SOCKETS=16` budget,
+and the SoftAP allows **8 stations** (`cfg.ap.max_connection = 8` =
+`MAX_AP_STA_IPS`) -- 8 is also all the multicast forwarder can unicast to, so a
+9th associates but never gets relayed Link traffic. WiFi power-save is off
+(`WIFI_PS_NONE`): a dozing station misses multicast; do not re-enable it.
 
-### 8080 audit (2026-10-10): what is fixed, what is deliberately not
+### 8080 audit (2026-10-10): fixed vs deliberately not
 
-Fixed in `network_midi.cpp`, each provable from the code: the URI wildcard went
-into `/spiffs/loops/%s` unsanitised, so a name carrying `/` or `..` escaped that
-namespace -- and SPIFFS has no real directories, so `readdir` never lists it and
-`POST /clear` could not remove it; the wildcard must now be one plain segment.
-`filepath` is 512 bytes while `CONFIG_HTTPD_MAX_URI_LEN=8192`, so `snprintf`
-could truncate and silently write a different file -- the result is now checked.
-`fopen(..., "wb")` ran before any body check, so a `Content-Length: 0` upload
-destroyed an existing clip; empty bodies are rejected first. `fwrite` and
-`httpd_req_recv` were unchecked and the handler answered 200 regardless, leaving
-a truncated MIDI file for the player to parse -- an incomplete upload now
-removes the partial file and answers 500. `new` was unchecked under
-`CONFIG_COMPILER_CXX_EXCEPTIONS=y`, so OOM threw `std::bad_alloc` out of the
-handler. `GET /info` served `g_device_ip` filled once at boot, but the netif is
-destroyed and recreated on every AP<->STA role change, so it now re-reads per
-request. `network_midi_init()` is idempotent now; a second call used to
-overwrite `g_server` and leak the first server's sockets.
+Fixed, each provable from the code: the URI wildcard entered
+`/spiffs/loops/%s` unsanitised, so a name with `/` or `..` escaped it -- and
+SPIFFS has no real directories, so `readdir` never lists that file and `/clear`
+cannot remove it; the wildcard is now one segment. `filepath` is 512 bytes
+against `CONFIG_HTTPD_MAX_URI_LEN=8192`, so `snprintf` could silently write a
+different file -- now checked. `fopen(...,"wb")` ran before any body check, so
+`Content-Length: 0` destroyed an existing clip; empty bodies are rejected
+first. `fwrite`/`httpd_req_recv` were unchecked and the handler answered 200
+regardless, leaving a truncated MIDI file -- an incomplete upload now unlinks
+the partial file and answers 500. Unchecked `new` under
+`CONFIG_COMPILER_CXX_EXCEPTIONS=y` threw `std::bad_alloc` out of the handler.
+`/info` served `g_device_ip` from boot, but the netif is recreated on every
+AP<->STA role change -- now re-read per request. `network_midi_init()` is
+idempotent; a second call used to overwrite `g_server` and leak its sockets.
 
-Checked, NOT defects: embedded NUL in the URI (`%s` stops at NUL, so worst case
-a shortened path, never an overflow) and socket leaks on the existing error
-paths (every early return already sends and returns non-`ESP_OK`, which closes
-the session). esp_http_server runs every session in one task, so the handlers
-cannot interleave -- though a long upload still pins one of the 4 sockets.
+Checked, NOT defects: an embedded NUL (`%s` stops at NUL -- a shortened path,
+never an overflow); the existing error returns (each already sends and returns
+non-`ESP_OK`, closing the session). esp_http_server runs all sessions in one
+task, so handlers cannot interleave.
 
-Left alone as PRD rows: **nothing mounts SPIFFS** (0 hits for
-`esp_vfs_spiffs_register` / `esp_vfs` / `mount_point` in `main/`), so
-`fopen("/spiffs/...")` always fails and both storage endpoints are inert in
-shipped firmware -- mounting needs a base path, a partition label and
-`format_if_mount_failed`, which is destructive, so it is a decision. Also: no
-auth on an open SSID; no size cap against the 100K partition;
-`network_midi_start()` is a no-op while `_stop()` really stops (both dead, 0
-call sites). `POST /clear` filters `d_type == DT_REG`, which SPIFFS VFS may
-leave `DT_UNKNOWN`, and `strstr(d_name, ".mid")` matches anywhere, so
-`notes.midi` is deleted too -- both unverifiable without a device.
+PRD rows, not code: **nothing mounts SPIFFS** (0 hits for
+`esp_vfs_spiffs_register`/`esp_vfs`/`mount_point` in `main/`), so
+`fopen("/spiffs/...")` always fails and both storage endpoints are inert --
+mounting needs a base path, a partition label and `format_if_mount_failed`,
+which is destructive. Also: no auth on an open SSID; no size cap against the
+100K partition; `network_midi_start()` a no-op vs `_stop()` (both dead).
+`/clear` filters `d_type == DT_REG`, which SPIFFS VFS may leave `DT_UNKNOWN`;
+`strstr(d_name, ".mid")` matches anywhere, so `notes.midi` dies too -- both
+unverifiable without a device.
 
 ## MIDI file player (`main/midi_file.cpp`, files on SPIFFS)
 
 - Parser relies on **MIDI running status**: a data byte with no status byte in
   front repeats the previous status. Note-on with **velocity 0 IS a note-off**;
-  a note still held at end-of-track is released implicitly.
+  a note held at end-of-track is released implicitly.
 - `process()` walks notes in `startBeat` order and early-breaks, so **the sort
   order is load-bearing**, not cosmetic.
-- Trigger window is 0.03 beat, with `playedNotes`/`sentCCs` dedup so a note or
-  CC fires once per pass.
-- Loop length rounds to the nearest quantum when within 0.1 of one, else
-  rounds up (ceil).
+- Trigger window is 0.03 beat; `playedNotes`/`sentCCs` dedup fires each once.
+- Loop length rounds to the nearest quantum within 0.1, else up (ceil).
 - **SPIFFS has no real directories**, so `setFolder()` cannot `opendir` a
-  subfolder: it falls back to scanning `/spiffs` and matching a name prefix.
-- `updateTempo`'s 120 bpm reference and 0.5 bpm change threshold are dormant
-  (`syncToBpm` is false). See CLAUDE.md for why that stays off.
-- Known warts, left alone: `parseFile()` closes the file twice (explicit
-  `fclose` plus a `FileGuard`); the built-in default MIDI file's `MTrk`
-  declares 19 bytes but only 12 are written, and its header encodes format 1.
-  (Unbuilt and SPIFFS is unmounted, so none of it runs.)
+  subfolder: it scans `/spiffs` and matches a name prefix.
+- `updateTempo`'s 120 bpm reference and 0.5 bpm threshold are dormant
+  (`syncToBpm` is false). See CLAUDE.md for why.
+- Warts, left alone: `parseFile()` closes the file twice (`fclose` plus a
+  `FileGuard`); the built-in default MIDI file's `MTrk` declares 19 bytes but
+  writes 12, and its header encodes format 1. (Unbuilt, SPIFFS unmounted.)
 
 ## Input and buzzer wiring facts
 
@@ -398,19 +390,28 @@ expressible in code.
   the tree. If it is ever wired up it must stay **larger than the longest
   reasonably expected progression sequence** -- that bound, not 128, is the
   requirement.
-- **E-Slew default is 104, and it now has one writer.** `kGateESlewDefault`
-  (`main/synth_mininova.h`, built) is what every `setSidechainPattern()` sends.
-  The two other writers (`effect_handler.cpp:87`, `effect_sidechain.cpp:36`,
-  both unbuilt) call `gateESlewForSheer(sheer)` -- 104 at the sheer default,
-  the rest of the pot spread over 104..127 -- so all three agree at reset. The
-  old `64 + (sheer / 2)` gave 64 there, contradicting the 104 just sent.
-- `kScales[3]` in `main/bassline_interpreter.cpp` is `{0, 3, 5, 7, 10, 3, 5}`
-  while `kScaleLens[3] == 5`. The trailing `{3, 5}` is deliberate padding, not
-  a typo: the row is sized to match its neighbours and only its first five
-  entries are ever read. Do not "fix" it to five entries.
-- `kRegisterSpan = 15` (`main/bassline_interpreter.cpp`, semitones) must track
-  the anchorMotif clamp in `bass_engine.cpp`. That coupling is recorded nowhere
-  else and neither file references the other.
+- **E-Slew must stay derivable from sheer, anchored at 104.** `reset` sets sheer
+  to 0 (`effect_handler.cpp:31`, `effect_sidechain.cpp:29`), so a derivation
+  returning anything but 104 at sheer 0 makes the reset overwrite what
+  `setSidechainPattern()` (`synth_mininova.cpp:153`) just sent.
+  `gateESlewForSheer(sheer)` (`synth_mininova.h:6-11`) is
+  `kGateESlewDefault + sheer*kHeadroomAboveDefault/kSheerMax` -- 104 at sheer 0
+  rising to 127. The old `64 + sheer/2` gave 64. 104 is not magic; sheer 0 is.
+- **Gate wet/dry must equal depth, not `127 - depth`.**
+  `gateWetDryForDepth(depth)` (`main/sidechain_constants.h:50`) returns clamped
+  depth, and `SIDECHAIN_DEFAULT_DEPTH == SIDECHAIN_DEPTH_MAX == 127` (`:12`),
+  because MiniNova **CC 91 is wetness with 127 = full Gator** (User Manual
+  v1.01: the Slot's FX Amount "needs to be at maximum - 127" for the Gator to
+  have full effect). `setGateWetDry` therefore writes wet directly; the old
+  `127 - depth` paired the deepest ducking with a bypassed gate.
+  `setFxSlot1Level()` sends the same CC 91. Both rows live outside
+  `main/CMakeLists.txt` SRCS, so none of it runs on-device today.
+- `kScales[3]` (`main/bassline_interpreter.cpp`) is `{0,3,5,7,10,3,5}` while
+  `kScaleLens[3] == 5`: the trailing `{3,5}` is deliberate padding so the row
+  matches its neighbours; only the first five are read. Do not "fix" it.
+- `kRegisterSpan = 15` (semitones, same file) must track the anchorMotif clamp
+  in `bass_engine.cpp` -- recorded nowhere else, and neither file includes the
+  other.
 - `kProgs` (`main/bass_engine.cpp`) rows are **scale-degree indices**, not
   semitones and not MIDI notes. Intents exist nowhere else: `{0,5,3,6}` i-VI-iv-VII, `{0,6,5,6}` i-VII-VI-VII, `{0,3,6,2}` i-iv-VII-III,
   `{0,5,6,4}` i-VI-VII-V ("dark cadence"), `{0,2,6,3}` i-III-VII-iv,
