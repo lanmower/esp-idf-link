@@ -6,7 +6,7 @@ dependencies.lock
 *.bin
 components/*
 !components/link-esp/
-# IDE
+
 .devcontainer/
 .claude/
 .vexify.db
@@ -14,46 +14,38 @@ components/*
 __pycache__/
 *.pyc
 
-# Prerequisites
 *.d
 
-# Compiled Object files
 *.slo
 *.lo
 *.o
 *.obj
 
-# Precompiled Headers
 *.gch
 *.pch
 
-# Compiled Dynamic libraries
 *.so
 *.dylib
 *.dll
 
-# Fortran module files
 *.mod
 *.smod
 
-# Compiled Static libraries
 *.lai
 *.la
 *.a
 *.lib
 
-# Executables
 *.exe
 *.out
 *.app
-.glootie-stop-verified
-.gm-stop-verified
 
-.code-search/
-
-# --- gm managed (agent spool, learn db, runtime markers) ---
 .gm/
 .codeinsight
 .gm/pw-sock-*/
-node_modules
 .agentplug-kv/
+.code-search/
+.glootie-stop-verified
+.gm-stop-verified
+
+node_modules
