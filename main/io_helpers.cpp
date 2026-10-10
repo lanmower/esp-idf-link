@@ -16,7 +16,6 @@ static constexpr int MIDI_CONTROL_CHANGE_CMD = 0xB0;
 static constexpr int MIDI_CHANNEL_MIN = 1;
 static constexpr int MIDI_CHANNEL_MAX = 16;
 static constexpr int MIDI_DATA_BYTE_MASK = 0x7F;
-static constexpr int MIDI_VALUE_MAX = 127;
 static constexpr int MIDI_VALUE_MID = 64;
 static constexpr int MIDI_CC_NRPN_PARAM_MSB = 99;
 static constexpr int MIDI_CC_NRPN_PARAM_LSB = 98;
@@ -25,7 +24,6 @@ static constexpr int MIDI_CC_DATA_ENTRY_LSB = 38;
 static constexpr int MIDI_CC_RPN_PARAM_MSB = 101;
 static constexpr int MIDI_CC_RPN_PARAM_LSB = 100;
 static constexpr int MIDI_CC_PARAM_DESELECT = 127;
-static constexpr int ADC_RAW_MAX = 4095;
 static constexpr int HALL_SENSOR_STUB_READING = 2048;
 static constexpr float TOUCH_CALIBRATION_THRESHOLD_RATIO = 0.7f;
 

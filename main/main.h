@@ -52,8 +52,12 @@
 #define ADC_WIDTH ADC_BITWIDTH_DEFAULT
 #define MIDI_CC_THRESHOLD 1
 
+constexpr int ADC_RAW_MAX = 4095;
+constexpr int MIDI_VALUE_MAX = 127;
+
 #define LINK_QUANTUM 16.0
 #define PHRASE_BEATS 64.0
+#define LINK_TICK_NOTIFY_BIT 0x1
 
 #define LEDC_MODE              LEDC_HIGH_SPEED_MODE
 #define LEDC_DUTY_RES         LEDC_TIMER_10_BIT

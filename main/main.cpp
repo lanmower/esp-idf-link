@@ -59,7 +59,7 @@ void tickTask(void *userParam) {
         const auto time = g_link->clock().micros();
         const auto state = g_link->captureAppSessionState();
 
-        if (ulNotifiedValue & 1) {
+        if (ulNotifiedValue & LINK_TICK_NOTIFY_BIT) {
             handle_link_sync(was_connected, start_wait_time, force_start,
                              was_playing, state, time);
             update_input_state(current_input_event);
@@ -68,7 +68,7 @@ void tickTask(void *userParam) {
     }
 }
 
-static uint32_t sta_mac_rank(const uint8_t mac[6]) {
+static uint32_t sta_mac_rank(const uint8_t mac[kMacLen]) {
     return ((uint32_t)mac[3] << 16) | ((uint32_t)mac[4] << 8) | mac[5];
 }
 
@@ -85,7 +85,7 @@ static bool join_ticker_during_hold(uint32_t hold_ms) {
         uint32_t step = (hold_ms - waited_ms > RESCAN_STEP_MS) ? RESCAN_STEP_MS : (hold_ms - waited_ms);
         vTaskDelay(pdMS_TO_TICKS(step));
         waited_ms += step;
-        uint8_t bssid[6] = {0};
+        uint8_t bssid[kMacLen] = {0};
         if (wifi_scan_best_bssid("ticker", bssid) > 0) {
             ESP_LOGI(TAG, "Peer 'ticker' appeared during hold -- joining as STA");
             wifi_connect_sta("ticker", "");
@@ -114,7 +114,7 @@ extern "C" void app_main() {
     ESP_ERROR_CHECK(wifi_config_init());
 
     const uint32_t SCAN_STAGGER_MS_PER_MAC_BYTE = 15;
-    uint8_t mac[6];
+    uint8_t mac[kMacLen];
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     uint32_t scan_delay_ms = mac[5] * SCAN_STAGGER_MS_PER_MAC_BYTE;
     if (scan_delay_ms > 0) {
@@ -123,7 +123,7 @@ extern "C" void app_main() {
     }
 
     ESP_LOGI(TAG, "Scanning for 'ticker' network...");
-    uint8_t best_bssid[6] = {0};
+    uint8_t best_bssid[kMacLen] = {0};
     int matches = wifi_scan_best_bssid("ticker", best_bssid);
 
     if (matches > 0) {
