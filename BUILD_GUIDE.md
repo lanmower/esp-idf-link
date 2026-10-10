@@ -141,7 +141,7 @@ is whatever that tag resolves to at build time. It includes:
 - All ESP-IDF components
 - Pre-built WiFi binaries for all ESP32 variants
 - Python environment with all tools
-- Git for submodule operations
+- Git
 
 ## Customization
 

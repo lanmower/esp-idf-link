@@ -99,12 +99,16 @@ carry multicast. Committed here in `88d6866` / `622f7ca`.
 **Any future Link version bump must re-apply that hook.** Losing it
 compiles perfectly and fails only at runtime, as silent non-discovery.
 
-There is no `.gitmodules` in this repo. `Dockerfile`, `setup.sh` and
-`.github/workflows/build.yml` therefore deliberately do NOT initialise
-submodules: with nothing declared those steps were no-ops, but they are exactly
-the mechanism that would overwrite the fork above the moment a `.gitmodules`
-entry comes back. Do not re-add them, and do not reintroduce Link as a submodule
-to satisfy them.
+There is no `.gitmodules` at the repo root, and the root one is the only one git
+reads. `Dockerfile`, `setup.sh` and `.github/workflows/build.yml` therefore
+deliberately do NOT initialise submodules: no-ops today, they are exactly the
+mechanism that would overwrite the fork above the moment a root `.gitmodules`
+comes back. Do not re-add them. Two nested `.gitmodules` files survive, inert
+only because git reads none but the root: `components/link-esp/link/.gitmodules`
+is upstream's own, kept so the fork's divergence stays limited to the hook
+above; `components/link-esp/.gitmodules` was this repo's stale
+`[submodule "link"]` entry and is deleted -- leaving it invites the
+`git submodule update` that clobbers the fork.
 
 ## Metronome and MIDI clock are hardware-scheduled, not tick-emitted
 
