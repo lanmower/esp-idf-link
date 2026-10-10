@@ -51,17 +51,17 @@ Derived from a full audit of both trees against Link's own header docs.
   `commitAppSessionState()` off the audio thread; the `AudioSessionState`
   variants only on it. This project uses the App variants throughout.
 - **Start/stop sync is OFF here and ON in aloopprime: the pair is asymmetric
-  right now.** Tempo and phase are shared either way; transport is not, until
-  this is reconciled. This project calls `g_link->enableStartStopSync(false)`
-  (`main.cpp:43`), still CONSUMES transport (`state.isPlaying()` in
-  `link_sync.cpp` -> MIDI Start/Stop/Continue + all-notes-off), and never
-  calls `setIsPlaying` — it has no local play/stop control. With sync disabled
-  `isPlaying()` reads true for the whole session, so downstream gear gets one
-  Start and never a Stop. `../aloopprime/src/link/link_bridge.cpp` calls
-  `enableStartStopSync(true)`, added as the "both projects enable it" row of
-  its `docs/LINK-MESH-TESTING.md` — a row written on the belief that this tree
-  enabled it too, which it does not. One value has to be picked and set on
-  BOTH; the ESP32 side additionally needs a firmware flash to take effect.
+  right now, and OFF is the value both sides want.** A stop on one device must
+  not stop the whole mesh — every box keeps its own timeline so timing survives
+  a local stop somewhere else. This project calls
+  `g_link->enableStartStopSync(false)` (`main.cpp:43`), still CONSUMES
+  transport (`state.isPlaying()` in `link_sync.cpp` -> MIDI
+  Start/Stop/Continue + all-notes-off) and never calls `setIsPlaying` — it has
+  no local play/stop control. With sync disabled `isPlaying()` reads true for
+  the whole session, so downstream gear gets one Start and never a Stop.
+  `../aloopprime/src/link/link_bridge.cpp` calls `enableStartStopSync(true)`;
+  reconciling means setting it false there, and going the other way would
+  instead need this tree flipped plus a firmware flash.
 - **The three notification callbacks** — `setNumPeersCallback(std::size_t)`,
   `setTempoCallback(double)`, `setStartStopCallback(bool)`. Link's header
   documents each as invoked on a Link-managed thread and **Realtime-safe:
