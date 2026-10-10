@@ -9,9 +9,14 @@
 #include <esp_adc/adc_oneshot.h>
 #include <esp_adc/adc_cali.h>
 
-static constexpr int MIDI_DIN_BAUD_RATE = 31250;
 static constexpr int MIDI_UART_RX_BUFFER_BYTES = 512;
+static constexpr int MIDI_CC_MESSAGE_BYTES = 3;
+static constexpr int MIDI_NRPN_CC_MESSAGE_COUNT = 6;
+static constexpr int MIDI_NRPN_BYTE_COUNT = MIDI_NRPN_CC_MESSAGE_COUNT * MIDI_CC_MESSAGE_BYTES;
+static constexpr int MIDI_LONGEST_BACK_TO_BACK_NRPN_RUN = 7;
 static constexpr int MIDI_UART_TX_BUFFER_BYTES = 256;
+static_assert(MIDI_UART_TX_BUFFER_BYTES >= MIDI_LONGEST_BACK_TO_BACK_NRPN_RUN * MIDI_NRPN_BYTE_COUNT,
+              "MIDI_UART_TX_BUFFER_BYTES must hold the longest back-to-back NRPN run, or uart_write_bytes blocks its caller for the whole shift-out at MIDI_DIN_BAUD_RATE");
 static constexpr int MIDI_CONTROL_CHANGE_CMD = 0xB0;
 extern constexpr uint8_t MIDI_USER_CHANNEL_MIN = 1;
 extern constexpr uint8_t MIDI_USER_CHANNEL_MAX = 16;
