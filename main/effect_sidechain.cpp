@@ -20,7 +20,7 @@ static int s_last_sc_step_index = -1;
 static float s_current_smoothed_level = 0.0f;
 
 void reset_sidechain_to_default() {
-    s_current_sidechain_pattern_index = 0;
+    s_current_sidechain_pattern_index = SIDECHAIN_DEFAULT_PATTERN_INDEX;
 
     s_last_sc_step_index = -1;
 
