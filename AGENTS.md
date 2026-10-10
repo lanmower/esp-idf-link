@@ -110,9 +110,6 @@ contention -- milliseconds of audible jitter. Only the alarm's dispatch
 latency (tens of microseconds) is left, and it is the same for the click
 and the clock.
 
-- The tick the scheduler replaced is `LINK_TICK_PERIOD 250` (250 us = 4 kHz).
-  Raising its rate does not tighten the click, because a tick can only ever
-  notice a beat AFTER it passed; only the esp_timer one-shot sets the edge.
 - **Link's ESP clock IS `esp_timer_get_time()`**
   (`components/link-esp/link/include/ableton/platforms/esp32/Clock.hpp`), so
   a Link-clock microsecond timestamp is already an esp_timer deadline: no
@@ -214,8 +211,7 @@ and `--baud` takes effect only after esptool uploads its RAM stub and re-times
 the port -- passing `--baud` into the sync is what made the first 921600
 attempt fail. Measured on the 1262560-byte app image: **115200 -> 72.2 s**
 (139.9 kbit/s) versus **460800 -> 19.4 s** (519.9 kbit/s, `Hash of data
-verified`, boots `boot:0x13`). Two consecutive runs both measured 19.4 s, so
-460800 is repeatable, not a lucky run. 921600 dies right after `Changing baud rate to 921600...
+verified`, boots `boot:0x13`). 921600 dies right after `Changing baud rate to 921600...
 Changed.` with `FatalError: No more data to read from the serial port` from
 `reset_chip -> soft_reset -> flash_begin`: no `Writing` line at all, nothing
 written, chip left in the stub. `--dry` recovers it and the old firmware is
@@ -297,21 +293,6 @@ MIDI emission -- one path, no per-device clock code:
   other before either free-runs at an independent phase.
 
 ## Input and buzzer wiring facts
-
-Touch pad / pot / MIDI wiring, from `main/main.h` (the GPIO numbers used to be
-comments there and are now here, since a pin number cannot be expressed in
-code that reads the macro):
-
-| Function | Pad / channel | GPIO |
-|---|---|---|
-| Touch 1 | `TOUCH_PAD_NUM0` | 4 |
-| Touch ARP | `TOUCH_PAD_NUM5` | 12 |
-| Touch REV | `TOUCH_PAD_NUM6` | 14 |
-| Touch FILT | `TOUCH_PAD_NUM7` | 27 |
-| Pot 1 | `ADC_CHANNEL_6` | 34 |
-| Pot 2 | `ADC_CHANNEL_0` | 39 |
-| Buzzer (LEDC) | `BUZZER` | 13 |
-| MIDI UART2 TX / RX | `MIDI_TX_PIN` / `MIDI_RX_PIN` | 17 / 16 |
 
 - Touch pads use the **legacy `driver/touch_pad.h` API** (ESP-IDF 6.2 also
   ships the modern `touch_sensor` driver; this tree is on the legacy one). A
