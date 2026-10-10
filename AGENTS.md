@@ -428,8 +428,7 @@ velocity (0..1)**; the accessors are still `getPot1Value`/`getPot2Value`.
 
 **NOT** in the build: `effect_arp.cpp`, `effect_filter.cpp`, `effect_handler.cpp`,
 `effect_sidechain.cpp`, `midi_file.cpp` — nothing `#include`s a `.cpp`, so that cluster
-is reachable only from itself. Edits there cannot break the build; adding them to SRCS
-is a behaviour change. `bassline_interpreter` must stay **host-compilable**: only its
+is reachable only from itself. Edits there cannot break the build. `bassline_interpreter` must stay **host-compilable**: only its
 own header plus `<algorithm>` `<cmath>` `<cstring>` — no ESP-IDF headers — so
 `g++ -std=c++17` exercises its DP and scale logic off-device, the only way to. On
 MinGW also pass `-D_USE_MATH_DEFINES` or `M_PI` is undefined.
@@ -482,12 +481,13 @@ Historical — none visible in current source, each silently re-breaks on a bump
 new comment must become self-explanatory code; what cannot goes here, after checking
 it is still relevant and factual. Re-count before quoting.
 
-## gm usage gotchas (folded in from memory)
+## gm usage gotchas
 
-- `prd-add` **rejects a row with no `id`** — pass `body.id` explicitly.
-- `git_finalize` params go inside `body` as JSON
-  (`{"message":..., "paths":[...], "recover_remote_moved": true}`) plus a top-level
-  `session_id`; top-level `paths`/`message` yields `blanket_stage_refused`.
-- gm `bash` takes `raw_body` when the JSON `body` key arrives mangled.
-- `codesearch` takes `query`/`mode`/`path`/`exhaustive`/`max_results` in `body`; regex
-  mode honours the pattern.
+- `codesearch` is the canonical search verb; `{"help":true}` lists every field.
+  Exhaustive modes (`literal`/`regex`/`filename`) REFUSE unknown fields; `dual`
+  ignores them. `mode:"comments"` (or `{"comments":true}`) needs no query.
+- `git_finalize` takes `message`/`paths`/`files`/`allow_whole_index`/
+  `recover_remote_moved`/`source_ref`/`rev` in `body` or at the top level; top-level
+  is folded in, `body` wins.
+- `prd-add` derives an `id` from any text field when none is given; `bash`/`exec_js`
+  take their script in a JSON `body` (`script`/`command`/`code`/`text`) or `raw_body`.
