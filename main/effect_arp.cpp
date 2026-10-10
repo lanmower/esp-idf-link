@@ -115,8 +115,6 @@ bool handle_arp_active(const ableton::Link::SessionState& state,
         return false;
     }
 
-    const double sessionBeat = state.beatAtTime(time, LINK_QUANTUM);
-
     g_midi_player.process(state, time);
 
     return true;
@@ -217,7 +215,7 @@ void handle_arp_adjust_pots(int pot1_delta, int pot2_delta, bool& pot1_used, boo
         g_midi_player.setVelocityScale(velocity_scale);
         g_midi_player.setPot2Value(pot2_value);
 
-        ESP_LOGI(TAG, "Velocity Scale: %d (Pot2: %d)", pot2_value, pot2_value);
+        ESP_LOGI(TAG, "Velocity Scale: %.0f%% (Pot2: %d)", velocity_scale * 100, pot2_value);
         pot2_used = true;
     }
 }
