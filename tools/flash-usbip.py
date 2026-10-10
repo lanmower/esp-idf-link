@@ -1,4 +1,4 @@
-import argparse, importlib.util, os, re, sys, time
+import argparse, importlib.util, os, sys, time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location("usbip_port",
@@ -9,16 +9,28 @@ UsbipPort = _m.UsbipPort
 
 ROOT = os.path.dirname(_HERE)
 import struct
-from ch341 import (REG_DIVISOR, REG_PRESCALER, REQ_WRITE_REG, VENDOR_OUT)
+from ch341 import (HOLD_EN, HOLD_IO0, RELEASE_BOTH, REG_DIVISOR, REG_PRESCALER,
+                   REQ_WRITE_REG, VENDOR_OUT)
 
 SLIP_REQUEST, CMD_SYNC = 0x00, 0x08
 SYNC_PAYLOAD = b"\x07\x07\x12\x20" + b"\x55" * 32
 SYNC_BODY = (struct.pack("<BBHI", SLIP_REQUEST, CMD_SYNC, len(SYNC_PAYLOAD), 0)
              + SYNC_PAYLOAD)
-HOLD_EN, HOLD_IO0 = 0x40, 0x20
 OFF_BOOTLOADER, OFF_PARTITIONS = "0x1000", "0x8000"
 ROM_BAUD = 115200
+DEFAULT_FLASH_BAUD = "460800"
 PARTITION_MAGIC, PARTITION_ENTRY_SIZE, PARTITION_TYPE_APP = 0x50AA, 32, 0
+EN_LOW_SECONDS = 0.6
+ROM_BANNER_SECONDS = 2.0
+RESYNC_SETTLE_SECONDS = 0.2
+RESET_LINE_SETTLE_SECONDS = 0.3
+APP_BOOT_LOG_SECONDS = 8.0
+ATTACH_TRIES = 10
+ATTACH_RETRY_GAP_SECONDS = 6.0
+PRIME_FRAMES = 12
+PRIME_REPLY_WAIT_SECONDS = 0.4
+SYNC_ATTEMPTS = 8
+CH341_WITHHELD_REPLY_TIMEOUT_SECONDS = 2.0
 
 
 def ch341_divisor(baud):
@@ -68,7 +80,7 @@ def app_offset(root=ROOT):
     raise SystemExit("no app partition in %s" % bin_)
 
 
-def open_port(tries=10, gap=6.0):
+def open_port(tries=ATTACH_TRIES, gap=ATTACH_RETRY_GAP_SECONDS):
     for i in range(tries):
         try:
             return Port()
@@ -80,9 +92,9 @@ def open_port(tries=10, gap=6.0):
 
 def enter_download(port, banner=True):
     port.hs(HOLD_EN)
-    port.drain(0.6)
+    port.drain(EN_LOW_SECONDS)
     port.hs(HOLD_IO0)
-    txt = port.drain(2.0 if banner else 0.2)
+    txt = port.drain(ROM_BANNER_SECONDS if banner else RESYNC_SETTLE_SECONDS)
     line = ""
     for l in txt.split("\n"):
         if "boot:" in l:
@@ -94,9 +106,9 @@ def enter_download(port, banner=True):
 def boot_app(port):
     port.baudrate = ROM_BAUD
     port.hs(HOLD_EN)
-    port.drain(0.3)
-    port.hs(0x00)
-    return port.drain(8.0)
+    port.drain(RESET_LINE_SETTLE_SECONDS)
+    port.hs(RELEASE_BOTH)
+    return port.drain(APP_BOOT_LOG_SECONDS)
 
 
 def slip(body):
@@ -104,7 +116,7 @@ def slip(body):
             + b"\xc0")
 
 
-def prime(port, frames=12, wait=0.4):
+def prime(port, frames=PRIME_FRAMES, wait=PRIME_REPLY_WAIT_SECONDS):
     for i in range(frames):
         port.reset_input_buffer()
         port.write(slip(SYNC_BODY))
@@ -114,10 +126,10 @@ def prime(port, frames=12, wait=0.4):
     return 0
 
 
-def enter_and_sync(port, baud, attempts=8):
+def enter_and_sync(port, baud, attempts=SYNC_ATTEMPTS):
     last = ""
     import esptool.loader
-    esptool.loader.SYNC_TIMEOUT = 2.0
+    esptool.loader.SYNC_TIMEOUT = CH341_WITHHELD_REPLY_TIMEOUT_SECONDS
     from esptool.targets.esp32 import ESP32ROM
     for i in range(attempts):
         line, txt = enter_download(port, banner=(i == 0))
@@ -142,8 +154,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true",
                     help="prove download-mode entry and sync, then boot the app")
-    ap.add_argument("--baud", default="460800",
-                    help="flash baud (measured: 115200=72s, 460800=20s, 921600 fails); "
+    ap.add_argument("--baud", default=DEFAULT_FLASH_BAUD,
+                    help="flash baud (measured: 115200=72s, 460800=19s, 921600 fails); "
                          "the ROM sync below always runs at 115200")
     ap.add_argument("--no-stub", action="store_true", help="skip the RAM stub upload")
     args = ap.parse_args()
@@ -153,7 +165,8 @@ def main():
     port._ready = True
     print("devid=0x%08x  rom baud=%d" % (port.devid, port.baudrate), flush=True)
 
-    print("=== enter download mode: 0x40 -> 0x20 ===", flush=True)
+    print("=== enter download mode: 0x%02x -> 0x%02x ===" % (HOLD_EN, HOLD_IO0),
+          flush=True)
     esp = enter_and_sync(port, ROM_BAUD)
     print("  sync ok  chip=esp32  mac=%s" %
           ":".join("%02X" % b for b in esp.read_mac()), flush=True)
@@ -178,16 +191,16 @@ def main():
     if missing:
         raise SystemExit("missing image(s): %s" % ", ".join(missing))
 
-    argv = ["--before", "no-reset", "--after", "no-reset", "--baud", args.baud]
+    esptool_args = ["--before", "no-reset", "--after", "no-reset", "--baud", args.baud]
     if args.no_stub:
-        argv.append("--no-stub")
-    argv.append("write-flash")
+        esptool_args.append("--no-stub")
+    write_flash_args = ["write-flash"]
     for off, path in images:
-        argv += [off, path]
-    print("=== flashing: %s ===" % " ".join(argv[6:]), flush=True)
+        write_flash_args += [off, path]
+    print("=== flashing: %s ===" % " ".join(write_flash_args), flush=True)
     import esptool
     try:
-        esptool.main(argv, esp=esp)
+        esptool.main(esptool_args + write_flash_args, esp=esp)
     except SystemExit as e:
         print("esptool exited %s" % e, flush=True)
 

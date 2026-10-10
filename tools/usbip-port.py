@@ -1,10 +1,17 @@
 import os, socket, struct, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from ch341 import Ch341, recvn
+from ch341 import (CONTROL_BIT7, HOLD_EN, HOLD_IO0, RELEASE_BOTH, Ch341, recvn)
 
-BIT_DTR, BIT_RTS = 0x20, 0x40
 EP_IN, EP_OUT = 0x82, 0x02
+ROM_BAUD = 115200
+BULK_IN_REQUEST_SIZE = 4096
+MIN_PUMP_TIMEOUT_SECONDS = 0.2
+SYNC_TIMEOUT_SECONDS = 1.0
+SYNC_RETRY_GAP_SECONDS = 0.3
+PRE_TRIAL_SETTLE_SECONDS = 10.0
+BOOT_LOG_SECONDS = 6.0
+LINE_SETTLE_SECONDS = 0.3
 
 
 class UsbipPort(Ch341):
@@ -13,7 +20,7 @@ class UsbipPort(Ch341):
         self.rxbuf = bytearray()
         self.timeout = timeout
         self.write_timeout = None
-        self.baudrate = 115200
+        self.baudrate = ROM_BAUD
         self.port = "usbip"
         self.name = "usbip:ch341"
         self.dtr = False
@@ -39,9 +46,9 @@ class UsbipPort(Ch341):
     def _pump(self):
         try:
             self.s.sendall(struct.pack(">IIIIIIIIII", 1, self.seq, self.devid,
-                                       1, EP_IN, 0, 4096, 0, 0, 0) + b"\0" * 8)
+                                       1, EP_IN, 0, BULK_IN_REQUEST_SIZE, 0, 0, 0) + b"\0" * 8)
             self.seq += 1
-            self.s.settimeout(max(self.timeout, 0.2))
+            self.s.settimeout(max(self.timeout, MIN_PUMP_TIMEOUT_SECONDS))
             f = struct.unpack(">IIIIIIIIII", recvn(self.s, 48)[:40])
         except (socket.timeout, EOFError):
             return False
@@ -114,33 +121,33 @@ class UsbipPort(Ch341):
         for _ in range(tries):
             try:
                 self.reset_input_buffer()
-                self.timeout = 1.0
-                esp = ESP32ROM(self, 115200)
+                self.timeout = SYNC_TIMEOUT_SECONDS
+                esp = ESP32ROM(self, ROM_BAUD)
                 esp.sync()
                 mac = ":".join("%02X" % b for b in esp.read_mac())
-                self.timeout = 1.0
+                self.timeout = SYNC_TIMEOUT_SECONDS
                 return "SYNC OK mac=%s" % mac
             except Exception as e:
                 last = str(e).splitlines()[0][:52]
-                time.sleep(0.3)
+                time.sleep(SYNC_RETRY_GAP_SECONDS)
         return "no rom (%s)" % last
 
 
-def trial(port, label, steps, settle=10.0):
+def trial(port, label, steps, settle=PRE_TRIAL_SETTLE_SECONDS):
     port.drain(settle)
     for control, hold in steps:
         port.hs(control)
         if hold:
             port.drain(hold)
-    txt = port.drain(6.0)
+    txt = port.drain(BOOT_LOG_SECONDS)
     print("  %-34s %-20s %s" % (label, port.verdict(txt), port.sync()), flush=True)
     if "boot:" in txt or "waiting" in txt:
         for line in txt.split("\n"):
             if "boot:" in line or "waiting for download" in line:
                 print("      | %s" % line.strip()[:70], flush=True)
                 break
-    port.hs(0x00)
-    port.drain(0.3)
+    port.hs(RELEASE_BOTH)
+    port.drain(LINE_SETTLE_SECONDS)
 
 
 def main():
@@ -148,16 +155,22 @@ def main():
     print("devid=0x%08x version=%s" % (port.devid, port.init().hex()), flush=True)
     print("=== baseline: is the app legible, and does a plain EN edge boot? ===",
           flush=True)
-    trial(port, "A idle only (control)", [(0x00, 3.0)])
-    trial(port, "B EN hold -> release all", [(0x40, 1.0), (0x00, 0.0)])
+    trial(port, "A idle only (control)", [(RELEASE_BOTH, 3.0)])
+    trial(port, "B EN hold -> release all", [(HOLD_EN, 1.0), (RELEASE_BOTH, 0.0)])
     print("=== IO0 held across the EN edge (bit5=DTR, bit6=RTS) ===", flush=True)
-    trial(port, "C IO0+EN -> release EN only", [(0x60, 1.0), (0x20, 0.0)])
-    trial(port, "D IO0+EN -> EN rel -> IO0 rel", [(0x60, 1.0), (0x20, 0.6), (0x00, 0.0)])
-    trial(port, "E IO0 first, then EN, then rel", [(0x20, 0.5), (0x60, 1.0), (0x20, 0.0)])
-    trial(port, "F EN hold, IO0 added, EN rel", [(0x40, 0.8), (0x60, 0.5), (0x20, 0.0)])
+    trial(port, "C IO0+EN -> release EN only",
+          [(HOLD_EN | HOLD_IO0, 1.0), (HOLD_IO0, 0.0)])
+    trial(port, "D IO0+EN -> EN rel -> IO0 rel",
+          [(HOLD_EN | HOLD_IO0, 1.0), (HOLD_IO0, 0.6), (RELEASE_BOTH, 0.0)])
+    trial(port, "E IO0 first, then EN, then rel",
+          [(HOLD_IO0, 0.5), (HOLD_EN | HOLD_IO0, 1.0), (HOLD_IO0, 0.0)])
+    trial(port, "F EN hold, IO0 added, EN rel",
+          [(HOLD_EN, 0.8), (HOLD_EN | HOLD_IO0, 0.5), (HOLD_IO0, 0.0)])
     print("=== bit7 also held EN in the sweep: try it as the EN line ===", flush=True)
-    trial(port, "G bit7 EN + bit5 IO0", [(0xA0, 1.0), (0x20, 0.0)])
-    trial(port, "H bit7+bit6 EN + bit5 IO0", [(0xE0, 1.0), (0x20, 0.0)])
+    trial(port, "G bit7 EN + bit5 IO0",
+          [(CONTROL_BIT7 | HOLD_IO0, 1.0), (HOLD_IO0, 0.0)])
+    trial(port, "H bit7+bit6 EN + bit5 IO0",
+          [(CONTROL_BIT7 | HOLD_EN | HOLD_IO0, 1.0), (HOLD_IO0, 0.0)])
     port.close()
 
 
