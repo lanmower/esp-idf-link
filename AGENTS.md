@@ -7,11 +7,10 @@ inline in the code.
 
 This project (the ESP32 "ticker" box) and `../aloopprime` (the Pi 4 hardware
 looper) form ONE ad-hoc single-AP mesh so Ableton Link's multicast peer
-discovery reaches every device. There is no credential provisioning:
-exactly one device hosts the open SSID `ticker` and everyone else joins it
-as a station — whichever device boots first wins, Pi or ESP32. Every value
-below exists in BOTH trees; changing it in one project alone silently stops
-the two from meshing, with no error on either side.
+discovery reaches every device. No credential provisioning: exactly one device
+hosts the open SSID `ticker` and the rest join as stations. Every value below
+exists in BOTH trees; changing it in one alone silently stops the two from
+meshing, with no error on either side.
 
 | Invariant | esp-idf-link | aloopprime |
 |---|---|---|
@@ -35,13 +34,11 @@ exists, so a naive "nothing found -> host" makes BOTH host, producing two
 isolated L2 domains Link can never cross. This project holds for a
 duration strictly monotonic in its own STA MAC (`HOLD_MAX_MS = 6000`,
 lowest MAC ≈ 0ms), rescanning every second and joining the instant a peer's
-AP appears. `../aloopprime/src/net/autoap.sh` now implements the identical
-scheme (same 0–6s bound, same lowest-wins convention) so a Pi and an ESP32
-elect one host between them. Both supervisors also yield if another
-`ticker` AP with a strictly-lower BSSID appears — but never while clients
-are attached, since that would drop peers mid-session. If this convention
-is ever inverted here (highest-wins), it MUST be inverted in aloopprime in the
-same change.
+AP appears. `../aloopprime/src/net/autoap.sh` implements the identical
+scheme (same 0–6s bound, same lowest-wins convention). Both supervisors also
+yield to a strictly-lower `ticker` BSSID -- but never while clients are
+attached, which would drop peers mid-session. Invert this convention here and
+it MUST be inverted in aloopprime in the same change.
 
 ### By-the-book Ableton Link integration checklist (both projects)
 
@@ -75,10 +72,10 @@ Derived from a full audit of both trees against Link's own header docs.
   deliberately different — do not "align" it to the quantum.
 - **Interface readiness is a real race, and this project already models the
   fix.** The 500ms settle before constructing Link (`main.cpp`) and the ~10s
-  IGMP re-assert (`wifi_config.cpp`, whose comment notes a single join at
-  GOT_IP can race netif readiness so membership does not stick) are the
-  reference `../aloopprime` was corrected against — it had no service ordering
-  between its `aloopprime` and `autoap` units at all.
+  IGMP re-assert (`wifi_config.cpp`) are the reference `../aloopprime` was
+  corrected against -- it had no service ordering between its `aloopprime` and
+  `autoap` units at all. The re-assert exists because a single IGMP join at
+  GOT_IP can race netif readiness, so membership silently does not stick.
 
 ### The vendored Link is a FORK, checked in — not a submodule
 
@@ -166,71 +163,65 @@ No OTA path and no serial console on this machine: a firmware change gets to
 the device only over USB.
 
 - CI (espressif/idf docker, ESP-IDF 6.2) builds on push to any branch, and on
-  a green `main` it commits the three images into the repo --
-  `build/bootloader/bootloader.bin`,
-  `build/partition_table/partition-table.bin`,
-  `build/link-idf-example.bin` (commit "ci: update firmware binaries
-  [skip ci]"). The flashable images therefore come from git, not from a local
-  build.
+  a green `main` it commits the three images -- `build/bootloader/bootloader.bin`,
+  `build/partition_table/partition-table.bin`, `build/link-idf-example.bin`
+  (commit "ci: update firmware binaries [skip ci]"). The flashable images
+  therefore come from git, not from a local build.
 - `node flash-ticker.js [COMx]` (repo root) does the whole thing over a COM
   port with esptool 5.x (`python -m esptool`; note v5's hyphenated
   `write-flash` subcommand -- though the underscored `write_flash` alias still
-  works on 5.5.0, which `flash_midi_data.sh` relies on). Offsets: 0x1000 bootloader, 0x8000 partition
-  table, and the app at the first app partition of the BUILT table (0x20000
-  with `partitions_large.csv`; the script reads
+  works on 5.5.0, which `flash_midi_data.sh` relies on). Offsets: 0x1000
+  bootloader, 0x8000 partition table, and the app at the first app partition of
+  the BUILT table (0x20000 with `partitions_large.csv`; the script reads
   `build/partition_table/partition-table.bin`, never hardcode 0x10000).
-  **Read the offset from the built binary, not the CSV** -- `partitions_large.csv`
-  leaves every offset but nvs's empty because the build computes them, so
-  parsing it yields `int('')`. Entries are 32 bytes, little-endian magic
-  `0x50AA`, then type(1) subtype(1) offset(4) size(4) label(16); app entries
-  have type == 0. `--list` lists ports, and it refuses to guess when more than
-  one serial port exists -- this machine has two Bluetooth COM ports that are
-  not the ESP32. esptool 5.x dropped `--verify` because it always verifies
-  ("Hash of data verified" per image), so a `--verify` flag is not ignored --
-  it aborts `write-flash` with "No such option" and flashes nothing.
+  **Read the offset from the built binary, not the CSV** --
+  `partitions_large.csv` leaves every offset but nvs's empty because the build
+  computes them, so parsing it yields `int('')`. Entries are 32 bytes,
+  little-endian magic `0x50AA`, then type(1) subtype(1) offset(4) size(4)
+  label(16); app entries have type == 0. `--list` lists ports, and it refuses
+  to guess when more than one serial port exists -- this machine has two
+  Bluetooth COM ports that are not the ESP32. esptool 5.x dropped `--verify`
+  because it always verifies ("Hash of data verified" per image), so a
+  `--verify` flag is not ignored -- it aborts `write-flash` with "No such
+  option" and flashes nothing.
 
 - The SPIFFS `storage` partition (the MIDI files) is flashed separately from
   the firmware: `flash_midi_data.sh` builds a `0x19000` (100K) image from
   `./data` and writes it at **`0x317000`**. That offset is NOT re-derivable
-  from `partitions_large.csv` -- the `storage` row leaves its offset blank
-  (only `nvs` has one) because the build computes it. `0x317000` appears
-  nowhere else in the repo but that script's own argument, so if the layout
-  changes, re-read it from the built partition-table binary.
+  from `partitions_large.csv` -- the `storage` row leaves its offset blank (only
+  `nvs` has one) because the build computes it. `0x317000` appears nowhere else
+  in the repo but that script's own argument, so if the layout changes, re-read
+  it from the built partition-table binary.
 
 ### No BOOT hold: `python tools/flash-usbip.py` flashes it hands-free
 
-`flash-ticker.js` needs the BOOT/IO0 button held, but that is a limitation of
-the WCH/CH340 Windows driver, not of the board. `tools/flash-usbip.py` talks to
-the CH341 over USB/IP (usbipd-win, `usbipd bind --busid 2-2` once) with its own
+`flash-ticker.js` needs the BOOT/IO0 button held, but that is a WCH/CH340
+Windows driver limitation, not the board. `tools/flash-usbip.py` talks to the
+CH341 over USB/IP (usbipd-win, `usbipd bind --busid 2-2` once) with a
 pyserial-shaped shim, so the WCH driver is never loaded and Windows cannot
-re-assert a line. Nothing has to be touched on the device:
+re-assert a line. Nothing on the device is touched: `--dry` = enter download
+mode, prove sync, reboot; bare = flash the committed images and boot.
 
-    python tools/flash-usbip.py --dry      # enter download mode, prove sync, reboot
-    python tools/flash-usbip.py            # flash the committed images and boot them
-
-Two measured facts make it work, and both are counter-intuitive:
+Three measured facts make it work, and all are counter-intuitive:
 
 1. **The D1 R32's auto-reset circuit is DIFFERENTIAL.** Each transistor is
-   driven by the DTR#-RTS# difference, so EN is pulled low only when
-   (DTR# high, RTS# low) -> `0xA4` byte `0x40`, and IO0 only when
-   (DTR# low, RTS# high) -> `0x20`. Asserting both (`0x60`) or clearing both
-   (`0x00`) makes NEITHER transistor conduct. That is the opposite of the
-   convention esptool hard-codes, which is why every esptool reset sequence
-   produced `boot:0x13`. The entry is the flip **0x40 -> 0x20**: EN is released
-   (its RC rises) while IO0 is already low. Verified `boot:0x3`. Going back is
-   the reverse: `0x40` (EN low, IO0 high) then `0x00`.
-2. **The CH341 withholds the first replies.** A single sync frame gets no
-   answer for seconds, then several past replies surface at once behind a
-   later FULL-SIZE OUT -- a 1-byte `0xC0` kick does not release them. After
-   the first reply lands, latency is ~20 ms and stays there. esptool sends
-   exactly one sync frame with a 0.1 s deadline, so the pipe must be primed
-   with repeated correctly-framed sync frames first (and `SYNC_TIMEOUT` raised
-   to 2 s); typically 2-8 frames.
-3. **The first attach back often fails.** usbipd keeps the device claimed for
-   a moment after a client disconnects, so the first `OP_REP_IMPORT` comes back
-   `status=4`. `open_port()` retries (10 x 6 s) and the second lands; the
-   `attach 1/10: OP_REP_IMPORT status=4` line at the start of a run is normal,
-   not a failure.
+   driven by the DTR#-RTS# difference: EN pulls low only at (DTR# high, RTS#
+   low) -> `0xA4` byte `0x40`; IO0 only at (DTR# low, RTS# high) -> `0x20`.
+   Asserting both (`0x60`) or clearing both (`0x00`) makes NEITHER conduct --
+   the opposite of the convention esptool hard-codes, which is why every
+   esptool reset sequence produced `boot:0x13`. The entry is the flip
+   **0x40 -> 0x20** (EN released, its RC rising, while IO0 is already low);
+   verified `boot:0x3`. Reverse to leave: `0x40` then `0x00`.
+2. **The CH341 withholds the first replies.** One sync frame gets no answer for
+   seconds, then several past replies surface behind a later FULL-SIZE OUT; a
+   1-byte `0xC0` kick does not release them. After the first reply, latency is
+   ~20 ms and stays. esptool sends exactly one frame with a 0.1 s deadline, so
+   the pipe must be primed with repeated correctly-framed sync frames
+   (`SYNC_TIMEOUT` raised to 2 s); typically 2-8.
+3. **The first attach back often fails.** usbipd keeps the device claimed
+   briefly after a client disconnects, so the first `OP_REP_IMPORT` returns
+   `status=4`; `open_port()` retries (10 x 6 s) and the second lands. An
+   `attach 1/10: OP_REP_IMPORT status=4` line is normal, not a failure.
 
 Three consecutive `--dry` cycles each produced `boot:0x3`, sync, then
 `boot:0x13` with the app's log, so entry is not a one-off.
@@ -242,14 +233,14 @@ and `--baud` takes effect only after esptool uploads its RAM stub and re-times
 the port -- passing `--baud` into the sync is what made the first 921600
 attempt fail. Measured on the 1262560-byte app image: **115200 -> 72.2 s**
 (139.9 kbit/s) versus **460800 -> 19.4 s** (519.9 kbit/s, `Hash of data
-verified`, boots `boot:0x13`). Two consecutive runs both measured 19.4 s, so
-460800 is repeatable, not a lucky run. Both numbers are the USB/IP path only;
+verified`, boots `boot:0x13`); two consecutive runs both measured 19.4 s, so it
+is repeatable, not lucky. Both numbers are the USB/IP path only --
 `flash-ticker.js` drives a real COM port through the WCH driver at `--baud
-921600`, a different transport that was not the one measured here. 921600 dies right after `Changing baud rate to 921600...
-Changed.` with `FatalError: No more data to read from the serial port` from
-`reset_chip -> soft_reset -> flash_begin`: no `Writing` line at all, nothing
-written, chip left in the stub. `--dry` recovers it and the old firmware is
-intact.
+921600`, a different transport that was not measured here. 921600 dies right
+after `Changing baud rate to 921600... Changed.` with `FatalError: No more data
+to read from the serial port` from `reset_chip -> soft_reset -> flash_begin`:
+no `Writing` line, nothing written, chip left in the stub. `--dry` recovers it
+and the old firmware is intact.
 
 esptool leaves the port at the flash baud, so `boot_app()` resets it to
 `ROM_BAUD` before pulsing EN -- without that the app's 115200 log is read at
@@ -257,11 +248,11 @@ esptool leaves the port at the flash baud, so `boot_app()` resets it to
 
 `tools/ch341.py` (raw USB/IP + the `ch341.c` init order: `SET_CONFIGURATION`
 before anything, or bulk IN is dead), `tools/usbip-port.py` (bulk OUT + the
-pyserial surface), and `tools/flash-usbip.py` (entry, priming, esptool) are the
-three layers. `tools/usbip-boot-entry.py` (the entry-sequence instrument behind
-the `0x40 -> 0x20` flip) and `tools/usbip-sync-latency.py` (the sync-timing
-measurement behind the priming fact) are kept too: they are the instruments the
-measured facts above came from, and nothing else calls them.
+pyserial surface) and `tools/flash-usbip.py` (entry, priming, esptool) are the
+three layers. `tools/usbip-boot-entry.py` (instrument behind the
+`0x40 -> 0x20` flip) and `tools/usbip-sync-latency.py` (behind the priming
+fact) are kept too: they produced the measured facts above and nothing calls
+them.
 
 Known oddity, benign: `flash_id()` reads `0xFFFFFF` (SPI RDID returns all
 ones) in download mode on this board, so esptool prints "Failed to communicate
@@ -317,17 +308,31 @@ MIDI emission -- one path, no per-device clock code:
 - Note-offs go out as velocity 0; CC123 on stop is what keeps RC-505 MK2
   loops from sticking.
 - Target behaviour that constrains the design: KO2 locks to ext clock, needs
-  Start, and is SPP-sensitive (hence one SPP per phrase, not per 4 beats);
-  Volca Drum follows the pulse and ignores SPP; MicroKorg/MiniNova arp, delay
-  and LFO follow the pulse and need it non-bursting; Micron needs Start and
-  stays in phrase when Start is phrase-aligned; RC-505 MK2 locks to
-  clock+Start and repositions on SPP.
+  Start, is SPP-sensitive (hence one SPP per phrase, not per 4 beats); Volca
+  Drum follows the pulse and ignores SPP; MicroKorg/MiniNova arp, delay and LFO
+  follow the pulse and need it non-bursting; Micron needs Start and stays in
+  phrase when Start is phrase-aligned; RC-505 MK2 locks to clock+Start and
+  repositions on SPP.
 - Start is deferred to the next phrase boundary so gear begins in phrase
   rather than jerking mid-phrase. `s_transport_running` records what
   downstream gear was last TOLD (Start vs Continue) -- it is not
   `isPlaying()`.
 - Force-start waits 8 s, not 5 s, so two co-booting devices can discover each
   other before either free-runs at an independent phase.
+
+## HTTP clip server is live, and the mesh tops out at 8 stations
+
+`main/network_midi.cpp` is **in the build** (see the SRCS note below) and
+`network_midi_init()` starts an `esp_http_server` on **port 8080** from
+`app_main`: `POST /upload/*` writes the body to `/spiffs/loops/<name>`,
+`GET /info` returns `{"device_ip":...}`, `POST /clear` deletes every `*.mid`
+under `/spiffs/loops`. Two bounds are invisible at the call sites: the server
+reserves **4 sockets** (`max_open_sockets = 4`) inside the
+`CONFIG_LWIP_MAX_SOCKETS=16` budget above, and the SoftAP allows **8 stations**
+(`cfg.ap.max_connection = 8`, matching `MAX_AP_STA_IPS = 8`) -- 8 is also how
+many the multicast forwarder can unicast to, so a 9th station associates but
+never receives relayed Link traffic. WiFi power-save is explicitly disabled
+(`WIFI_PS_NONE`) -- a dozing station misses multicast; do not re-enable it.
 
 ## MIDI file player (`main/midi_file.cpp`, files on SPIFFS)
 
@@ -344,16 +349,14 @@ MIDI emission -- one path, no per-device clock code:
   subfolder: it falls back to scanning `/spiffs` and matching a name prefix.
 - `updateTempo`'s 120 bpm reference and 0.5 bpm change threshold are currently
   dormant (`syncToBpm` is false). See CLAUDE.md for why that stays off.
-- Known warts, deliberately left alone: `parseFile()` closes the file twice
-  (explicit `fclose` plus a `FileGuard`); the built-in default MIDI file's
-  `MTrk` declares 19 bytes but only 12 are written, and its header encodes
-  format 1.
+- Known warts, left alone: `parseFile()` closes the file twice (explicit
+  `fclose` plus a `FileGuard`); the built-in default MIDI file's `MTrk` declares
+  19 bytes but only 12 are written, and its header encodes format 1.
 
 ## Input and buzzer wiring facts
 
-Touch pad / pot / MIDI wiring, from `main/main.h` (the GPIO numbers used to be
-comments there and are now here, since a pin number cannot be expressed in
-code that reads the macro):
+Touch pad / pot / MIDI wiring (GPIO numbers, from `main/main.h` -- a pin number
+cannot be expressed in code that reads the macro):
 
 | Function | Pad / channel | GPIO |
 |---|---|---|
@@ -367,17 +370,15 @@ code that reads the macro):
 | MIDI UART2 TX / RX | `MIDI_TX_PIN` / `MIDI_RX_PIN` | 17 / 16 |
 
 - Touch pads use the **legacy `driver/touch_pad.h` API** (ESP-IDF 6.2 also
-  ships the modern `touch_sensor` driver; this tree is on the legacy one). A
-  pad reads LOW when touched. The ARP pad is read before the others so its
-  press latency stays lowest.
-- Pots are raw ADC 0-4095 mapped to MIDI 0-127; a slow EMA tracks the
-  "stable center" alongside the fast one used for control.
+  ships the modern `touch_sensor` driver; this tree is on the legacy one). A pad
+  reads LOW when touched. The ARP pad is read first so its press latency stays
+  lowest.
+- Pots are raw ADC 0-4095 mapped to MIDI 0-127; a slow EMA tracks the "stable
+  center" alongside the fast one used for control.
 - In the MIDI file player the two pots are **pot1 = note-length scale (0..2),
   pot2 = velocity scale (0..1)** (`effect_arp.cpp` `handle_arp_adjust_pots`,
-  `midi_file.h` `noteLengthScalePotValue`/`velocityScalePotValue`). The old
-  field comments said "speed" and "transpose" -- those were stale and are gone.
-  The accessors are still `getPot1Value`/`getPot2Value`, called from
-  `effect_arp.cpp`.
+  `midi_file.h` `noteLengthScalePotValue`/`velocityScalePotValue`). The accessors
+  are still `getPot1Value`/`getPot2Value`, called from `effect_arp.cpp`.
 - `DOUBLE_TAP_TIME_MS = 300` and `HOLD_TIME_MS = 200` (`main/main.cpp`,
   externed in `main/main.h`) are **dead constants**: nothing reads either one,
   so they are not the pad gesture timings despite their names.
@@ -387,18 +388,22 @@ code that reads the macro):
 
 ## Constants whose constraint is not visible in the code
 
-Several constants survive with the right values but no longer carry the rule
-that makes the value correct. All were comments; none can be expressed in code.
+Constants with the right value but no visible rule. All were comments; none can
+be expressed in code.
 
-- `MAX_ARP_INDEX_WRAP = 128` (`main/arp_constants.h`) wraps the raw note index
-  in `effect_handler`. It must stay **larger than the longest reasonably
-  expected progression sequence** -- that bound, not 128, is the requirement.
-  It is currently unreferenced, so nothing enforces or exercises it.
-- **E-Slew default is 104**, and 104 is not an independent number: `effect_handler`
-  computes `64 + (s_current_sidechain_sheer / 2)`, so it is the sheer default
-  (80) halved and offset. `reset_sidechain_to_default()`'s `setGateESlew(104)`
-  is the same value written as a bare literal. Changing one without the other
-  silently changes the sidechain's default sound.
+- `MAX_ARP_INDEX_WRAP = 128` (`main/arp_constants.h`) is **referenced nowhere
+  in the tree** -- not by `effect_handler`, not by anything. It was meant to
+  wrap a raw note index; if it is ever wired up it must stay **larger than the
+  longest reasonably expected progression sequence** -- that bound, not 128, is
+  the requirement.
+- **E-Slew: the two writers disagree and nobody has decided which is right.**
+  `effect_handler.cpp:87` computes `64 + (s_current_sidechain_sheer / 2)`, and
+  `reset_sidechain_to_default()` (`effect_sidechain.cpp:36`) writes a bare
+  `setGateESlew(104)`. The sheer default is **0** (both
+  `effect_handler.cpp:31` and `effect_sidechain.cpp:29`), so the formula
+  yields 64 at reset, not 104: 104 is no longer "the sheer default halved and
+  offset", and the two paths silently disagree. Open question filed as a PRD
+  row -- do not reconcile them by picking a value without that decision.
 - `kScales[3]` in `main/bassline_interpreter.cpp` is `{0, 3, 5, 7, 10, 3, 5}`
   while `kScaleLens[3] == 5`. The trailing `{3, 5}` is deliberate padding, not
   a typo: the row is sized to match its neighbours and only its first five
@@ -438,24 +443,24 @@ that makes the value correct. All were comments; none can be expressed in code.
 
 ## `bassline_interpreter` must stay host-compilable
 
-`main/bassline_interpreter.cpp` is deliberately kept free of ESP-IDF headers so
-it compiles on the host with plain `g++ -std=c++17`. Do not add ESP-IDF includes
-to it: that property is the only way to exercise the interpreter's DP and scale
-logic off-device. On MinGW a host build of it additionally needs
-`-D_USE_MATH_DEFINES`, or `M_PI` is not declared.
+`main/bassline_interpreter.cpp` is kept free of ESP-IDF headers so it compiles
+on the host with plain `g++ -std=c++17`. Do not add ESP-IDF includes: that
+property is the only way to exercise the interpreter's DP and scale logic
+off-device. On MinGW a host build also needs `-D_USE_MATH_DEFINES`, or `M_PI` is
+not declared.
 
 ## Five `main/*.cpp` files are not in the build
 
-`main/CMakeLists.txt` SRCS names 11 translation units. `effect_arp.cpp`,
-`effect_filter.cpp`, `effect_handler.cpp`, `effect_sidechain.cpp` and
-`midi_file.cpp` are NOT among them, and nothing in the tree `#include`s a
-`.cpp`, so that cluster is never compiled or linked -- it is reachable only
-from itself (`effect_handler.h` is included solely by those four effect
-`.cpp`s; `midi_file.h` solely by `effect_arp.h` and `midi_file.cpp`). This is
-long-standing, not a regression: HEAD's SRCS list carries the same 11 entries.
-Consequence: the MIDI-file-player behaviour described in `CLAUDE.md` is not
-running on the device, and edits to those five files cannot break the build.
-Adding them to SRCS is a real behaviour change, not a cleanup.
+`main/CMakeLists.txt` SRCS names 12 translation units, and `network_midi.cpp`
+IS one of them -- it is compiled and linked, despite sitting below a blank line
+away from the original 11. `effect_arp.cpp`, `effect_filter.cpp`,
+`effect_handler.cpp`, `effect_sidechain.cpp` and `midi_file.cpp` are NOT among
+them, and nothing in the tree `#include`s a `.cpp`, so that cluster is never
+compiled or linked -- it is reachable only from itself (`effect_handler.h` only
+by those four effect `.cpp`s; `midi_file.h` only by `effect_arp.h` and
+`midi_file.cpp`). Consequence: the MIDI-file-player behaviour described in
+`CLAUDE.md` is not running on the device, and edits to those five files cannot
+break the build. Adding them to SRCS is a behaviour change, not a cleanup.
 
 ## CI commits binaries with `reset --soft`, never a rebase
 
