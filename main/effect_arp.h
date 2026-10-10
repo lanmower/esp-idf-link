@@ -20,7 +20,7 @@ bool handle_arp_adjusting_pads(const ableton::Link::SessionState& state, const s
 #define SUBMENU_REVERSE    1
 #define SUBMENU_SIDECHAIN  2
 
-void reset_arp_to_midi_player(bool chord_mode = false);
+void reset_arp_to_midi_player();
 
 void handle_arp_adjust_pots(int pot1_delta, int pot2_delta, bool& pot1_used, bool& pot2_used);
 
@@ -29,22 +29,5 @@ extern MidiFilePlayer g_midi_player;
 extern int g_current_arp_transpose;
 extern double g_current_arp_playback_rate;
 extern bool g_midi_player_active;
-
-extern const char* NOTES_BASE_FOLDER;
-extern const char* CHORDS_BASE_FOLDER;
-
-extern const char* NOTES_FILTER_MIDI_FOLDER;
-extern const char* NOTES_REVERSE_MIDI_FOLDER;
-extern const char* NOTES_SIDECHAIN_MIDI_FOLDER;
-extern const char* NOTES_ARP_MIDI_FOLDER;
-
-extern const char* CHORDS_FILTER_MIDI_FOLDER;
-extern const char* CHORDS_REVERSE_MIDI_FOLDER;
-extern const char* CHORDS_SIDECHAIN_MIDI_FOLDER;
-extern const char* CHORDS_ARP_MIDI_FOLDER;
-
-extern const char* FILTER_MIDI_FOLDER;
-extern const char* REVERSE_MIDI_FOLDER;
-extern const char* SIDECHAIN_MIDI_FOLDER;
 
 #endif

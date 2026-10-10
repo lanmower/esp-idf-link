@@ -19,22 +19,18 @@ bool g_midi_player_active = false;
 int g_current_arp_transpose = 0;
 double g_current_arp_playback_rate = 1.0;
 
-const char* NOTES_BASE_FOLDER = "/spiffs/loops/notes";
-const char* CHORDS_BASE_FOLDER = "/spiffs/loops/chords";
+static const char* const LOOP_FOLDER_SHAPE = "/spiffs/loops/%s/%s";
+static const char* const LOOP_FOLDER_NOTES = "notes";
+static const char* const LOOP_FOLDER_CHORDS = "chords";
+static const char* const LOOP_FOLDER_ARP = "arp";
+static const char* const LOOP_FOLDER_FILTER = "fil";
+static const char* const LOOP_FOLDER_SIDECHAIN = "sid";
+static const char* const LOOP_FOLDER_REVERSE = "rev";
 
-const char* NOTES_FILTER_MIDI_FOLDER = "/spiffs/loops/notes/fil";
-const char* NOTES_REVERSE_MIDI_FOLDER = "/spiffs/loops/notes/rev";
-const char* NOTES_SIDECHAIN_MIDI_FOLDER = "/spiffs/loops/notes/sid";
-const char* NOTES_ARP_MIDI_FOLDER = "/spiffs/loops/notes/arp";
-
-const char* CHORDS_FILTER_MIDI_FOLDER = "/spiffs/loops/chords/fil";
-const char* CHORDS_REVERSE_MIDI_FOLDER = "/spiffs/loops/chords/rev";
-const char* CHORDS_SIDECHAIN_MIDI_FOLDER = "/spiffs/loops/chords/sid";
-const char* CHORDS_ARP_MIDI_FOLDER = "/spiffs/loops/chords/arp";
-
-const char* FILTER_MIDI_FOLDER = "/spiffs/loops/notes/fil";
-const char* REVERSE_MIDI_FOLDER = "/spiffs/loops/notes/rev";
-const char* SIDECHAIN_MIDI_FOLDER = "/spiffs/loops/notes/sid";
+static void format_loop_folder(char* out, size_t out_size, const char* leaf) {
+    const char* base = (g_synth_type == SYNTH_MININOVA) ? LOOP_FOLDER_CHORDS : LOOP_FOLDER_NOTES;
+    snprintf(out, out_size, LOOP_FOLDER_SHAPE, base, leaf);
+}
 
 bool directoryExists(const char* path) {
     DIR* dir = opendir(path);
@@ -67,7 +63,7 @@ bool directoryExists(const char* path) {
     return exists;
 }
 
-void reset_arp_to_midi_player(bool unused) {
+void reset_arp_to_midi_player() {
     g_midi_player.stop();
 
     if (!g_current_synth) {
@@ -75,9 +71,8 @@ void reset_arp_to_midi_player(bool unused) {
         return;
     }
 
-    const char* folder_type = (g_synth_type == SYNTH_MININOVA) ? "chords" : "notes";
     char target_folder[64] = {0};
-    snprintf(target_folder, sizeof(target_folder), "/spiffs/loops/%s/arp", folder_type);
+    format_loop_folder(target_folder, sizeof(target_folder), LOOP_FOLDER_ARP);
 
     ESP_LOGI(TAG, "Setting MIDI folder: %s (synth: %s)", target_folder,
              (g_synth_type == SYNTH_MININOVA) ? "Mininova" : "MicroKorg");
@@ -150,38 +145,34 @@ bool handle_arp_adjusting_pads(const ableton::Link::SessionState& state,
             g_midi_player.stop();
             g_midi_player_active = false;
 
-            const char* target_folder = nullptr;
-            char folder_path[64] = {0};
-
-            const char* folder_type = (g_synth_type == SYNTH_MININOVA) ? "chords" : "notes";
-
+            const char* leaf = nullptr;
             if (i == FILTER_PAD_INDEX) {
-                snprintf(folder_path, sizeof(folder_path), "/spiffs/loops/%s/fil", folder_type);
-                target_folder = folder_path;
+                leaf = LOOP_FOLDER_FILTER;
             } else if (i == SIDECHAIN_PAD_INDEX) {
-                snprintf(folder_path, sizeof(folder_path), "/spiffs/loops/%s/sid", folder_type);
-                target_folder = folder_path;
+                leaf = LOOP_FOLDER_SIDECHAIN;
             } else if (i == DELAY_REVERB_PAD_INDEX) {
-                snprintf(folder_path, sizeof(folder_path), "/spiffs/loops/%s/rev", folder_type);
-                target_folder = folder_path;
+                leaf = LOOP_FOLDER_REVERSE;
             }
 
-            if (target_folder == nullptr) {
+            if (leaf == nullptr) {
                 ESP_LOGE(TAG, "Failed to determine target folder for pad %d", i);
                 return handled;
             }
 
+            char folder_path[64] = {0};
+            format_loop_folder(folder_path, sizeof(folder_path), leaf);
+
             size_t currentIndex = g_midi_player.getCurrentFileIndex();
 
-            g_midi_player.setFolder(target_folder);
+            g_midi_player.setFolder(folder_path);
 
             g_midi_player.setCurrentFileIndex(currentIndex);
 
             if (g_midi_player.start()) {
                 g_midi_player_active = true;
-                ESP_LOGI(TAG, "Started MIDI playback from folder: %s with file index: %zu", target_folder, currentIndex);
+                ESP_LOGI(TAG, "Started MIDI playback from folder: %s with file index: %zu", folder_path, currentIndex);
             } else {
-                ESP_LOGE(TAG, "Failed to start MIDI playback from folder: %s", target_folder);
+                ESP_LOGE(TAG, "Failed to start MIDI playback from folder: %s", folder_path);
             }
             break;
         }
