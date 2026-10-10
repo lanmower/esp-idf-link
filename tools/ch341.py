@@ -1,7 +1,6 @@
 import socket, struct, time, sys
 
-HOST, PORT = "127.0.0.1", 3240
-USBIPD_BUSID = "2-2"
+HOST, PORT, BUSID = "127.0.0.1", 3240, "2-2"
 
 STANDARD_OUT, VENDOR_IN, VENDOR_OUT = 0x00, 0xC0, 0x40
 REQ_SET_CONFIGURATION, REQ_READ_VERSION = 0x09, 0x5F
@@ -10,10 +9,6 @@ REG_PRESCALER, REG_DIVISOR, REG_LCR, REG_LCR2 = 0x12, 0x13, 0x18, 0x25
 LCR_ENABLE_RX, LCR_ENABLE_TX, LCR_CS8 = 0x80, 0x40, 0x03
 
 BIT_DTR, BIT_RTS = 0x20, 0x40
-CONTROL_BIT7 = 0x80
-RELEASE_BOTH = 0x00
-HOLD_EN = BIT_RTS
-HOLD_IO0 = BIT_DTR
 DIV115200 = 0xCC83
 LCR = LCR_ENABLE_RX | LCR_ENABLE_TX | LCR_CS8
 
@@ -29,7 +24,7 @@ class Ch341:
     def __init__(self):
         self.s = socket.create_connection((HOST, PORT), timeout=8)
         self.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        self.s.sendall(struct.pack(">HHI", 0x0111, 0x8003, 0) + USBIPD_BUSID.encode().ljust(32, b"\0"))
+        self.s.sendall(struct.pack(">HHI", 0x0111, 0x8003, 0) + BUSID.encode().ljust(32, b"\0"))
         v, c, st = struct.unpack(">HHI", recvn(self.s, 8))
         if st: raise OSError("OP_REP_IMPORT status=%d" % st)
         d = recvn(self.s, 312)
@@ -91,10 +86,10 @@ if __name__ == "__main__":
     print("=== 2. assert RTS (EN low): the log must stop dead ===", flush=True)
     d.hs(BIT_RTS); show("RTS held 3s", d.read(3.0))
     print("=== 3. release RTS: ROM banner must appear ===", flush=True)
-    d.hs(RELEASE_BOTH); show("released 4s", d.read(4.0))
+    d.hs(0); show("released 4s", d.read(4.0))
     print("=== 4. IO0 low across the EN edge ===", flush=True)
     d.hs(BIT_RTS); time.sleep(0.3)
     d.hs(BIT_DTR); time.sleep(0.5)
-    d.hs(RELEASE_BOTH)
+    d.hs(0)
     show("after boot edge 5s", d.read(5.0))
     d.close()
