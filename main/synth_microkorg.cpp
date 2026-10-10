@@ -159,7 +159,7 @@ void SynthMicroKorg::patchLfoToFilter(uint8_t initial_depth_midi) {
 }
 
 void SynthMicroKorg::unpatchLfoFromFilter() {
-    send_midi_cc(midi_channel, kCcLfo2FilterIntensity, 0);
+    send_midi_cc(midi_channel, kCcLfo2FilterIntensity, kMidiBipolarZero);
 }
 
 void SynthMicroKorg::setLfoShape(uint8_t shape_val) {
