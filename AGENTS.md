@@ -193,6 +193,14 @@ Two measured facts make it work, and both are counter-intuitive:
    exactly one sync frame with a 0.1 s deadline, so the pipe must be primed
    with repeated correctly-framed sync frames first (and `SYNC_TIMEOUT` raised
    to 2 s); typically 2-8 frames.
+3. **The first attach back often fails.** usbipd keeps the device claimed for
+   a moment after a client disconnects, so the first `OP_REP_IMPORT` comes back
+   `status=4`. `open_port()` retries (10 x 6 s) and the second lands; the
+   `attach 1/10: OP_REP_IMPORT status=4` line at the start of a run is normal,
+   not a failure.
+
+Three consecutive `--dry` cycles each produced `boot:0x3`, sync, then
+`boot:0x13` with the app's log, so entry is not a one-off.
 
 `tools/ch341.py` (raw USB/IP + the `ch341.c` init order: `SET_CONFIGURATION`
 before anything, or bulk IN is dead), `tools/usbip-port.py` (bulk OUT + the
