@@ -8,28 +8,6 @@ if [ ! -f "build/bootloader/bootloader.bin" ]; then
     exit 1
 fi
 
-if [ ! -f "build/partition_table/partition-table.bin" ]; then
-    echo "Error: Partition table not found. Run ./build.sh first"
-    exit 1
-fi
-
-app_offset() {
-    python3.12 - "build/partition_table/partition-table.bin" <<'PY'
-import struct, sys
-ENTRY_BYTES, MAGIC, TYPE_APP = 32, 0x50AA, 0
-table = open(sys.argv[1], "rb").read()
-for i in range(0, len(table) - ENTRY_BYTES + 1, ENTRY_BYTES):
-    magic, ptype = struct.unpack("<HB", table[i:i + 3])
-    if magic != MAGIC: break
-    if ptype == TYPE_APP:
-        print("0x%x" % struct.unpack("<I", table[i + 4:i + 8])[0])
-        sys.exit(0)
-sys.exit("no app partition in %s" % sys.argv[1])
-PY
-}
-
-APP_OFFSET=$(app_offset)
-
 find_device() {
     for port in /dev/ttyUSB* /dev/ttyACM* /dev/ttyS*; do
         if [ -e "$port" ]; then
@@ -65,14 +43,14 @@ if [ ! -e "$DEVICE" ]; then
     exit 1
 fi
 
-echo "Flashing to $DEVICE (app partition at $APP_OFFSET)..."
+echo "Flashing to $DEVICE..."
 sudo PYTHONPATH=/home/user/.local/lib/python3.12/site-packages python3.12 /home/user/.local/bin/esptool \
     --chip esp32 --port "$DEVICE" -b 460800 \
     --before default-reset --after hard-reset \
     write-flash --flash-mode dio --flash-size 4MB --flash-freq 40m \
     0x1000 build/bootloader/bootloader.bin \
     0x8000 build/partition_table/partition-table.bin \
-    $APP_OFFSET build/link-idf-example.bin
+    0x20000 build/link-idf-example.bin
 
 echo ""
 echo "[OK] Flash complete!"

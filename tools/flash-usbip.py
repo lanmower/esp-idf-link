@@ -9,13 +9,13 @@ UsbipPort = _m.UsbipPort
 
 ROOT = os.path.dirname(_HERE)
 import struct
-from ch341 import (REG_DIVISOR, REG_PRESCALER, REQ_WRITE_REG, VENDOR_OUT,
-                   RELEASE_BOTH, HOLD_EN, HOLD_IO0)
+from ch341 import (REG_DIVISOR, REG_PRESCALER, REQ_WRITE_REG, VENDOR_OUT)
 
 SLIP_REQUEST, CMD_SYNC = 0x00, 0x08
 SYNC_PAYLOAD = b"\x07\x07\x12\x20" + b"\x55" * 32
 SYNC_BODY = (struct.pack("<BBHI", SLIP_REQUEST, CMD_SYNC, len(SYNC_PAYLOAD), 0)
              + SYNC_PAYLOAD)
+HOLD_EN, HOLD_IO0 = 0x40, 0x20
 OFF_BOOTLOADER, OFF_PARTITIONS = "0x1000", "0x8000"
 ROM_BAUD = 115200
 PARTITION_MAGIC, PARTITION_ENTRY_SIZE, PARTITION_TYPE_APP = 0x50AA, 32, 0
@@ -95,7 +95,7 @@ def boot_app(port):
     port.baudrate = ROM_BAUD
     port.hs(HOLD_EN)
     port.drain(0.3)
-    port.hs(RELEASE_BOTH)
+    port.hs(0x00)
     return port.drain(8.0)
 
 

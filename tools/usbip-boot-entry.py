@@ -1,11 +1,6 @@
 import importlib.util, os, sys, time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, _HERE)
-from ch341 import RELEASE_BOTH, HOLD_EN, HOLD_IO0
-
-BOTH_HELD = HOLD_EN | HOLD_IO0
-
 _spec = importlib.util.spec_from_file_location("usbip_port",
                                                os.path.join(_HERE, "usbip-port.py"))
 _m = importlib.util.module_from_spec(_spec)
@@ -25,7 +20,7 @@ def trial(port, label, steps, hi=0xFF, settle=9.0):
         if "boot:" in line or "waiting for download" in line:
             print("      | %s" % line.strip()[:70], flush=True)
             break
-    port.hs(RELEASE_BOTH, hi=hi)
+    port.hs(0x00, hi=hi)
     port.drain(0.3)
 
 
@@ -44,21 +39,21 @@ def main():
     print("devid=0x%08x version=%s" % (port.devid, port.init().hex()), flush=True)
 
     print("=== control: EN edge with IO0 never low (must stay boot:0x13) ===", flush=True)
-    trial(port, "A 0x40 -> 0x00", [(HOLD_EN, 0.6), (RELEASE_BOTH, 0.0)])
+    trial(port, "A 0x40 -> 0x00", [(0x40, 0.6), (0x00, 0.0)])
 
     print("=== predicted win: EN released while IO0 already low ===", flush=True)
-    trial(port, "B 0x40 -> 0x20", [(HOLD_EN, 0.6), (HOLD_IO0, 0.0)])
-    trial(port, "C 0x40 -> 0x20 -> 0x00", [(HOLD_EN, 0.6), (HOLD_IO0, 1.0), (RELEASE_BOTH, 0.0)])
-    trial(port, "D 0x40 -> 0x20 (long hold)", [(HOLD_EN, 1.5), (HOLD_IO0, 0.0)])
+    trial(port, "B 0x40 -> 0x20", [(0x40, 0.6), (0x20, 0.0)])
+    trial(port, "C 0x40 -> 0x20 -> 0x00", [(0x40, 0.6), (0x20, 1.0), (0x00, 0.0)])
+    trial(port, "D 0x40 -> 0x20 (long hold)", [(0x40, 1.5), (0x20, 0.0)])
 
     print("=== same, with the wValue high byte cleared (ch341.c sends no hi byte) ===",
           flush=True)
-    trial(port, "E hi=0x00 0x40 -> 0x20", [(HOLD_EN, 0.6), (HOLD_IO0, 0.0)], hi=0x00)
-    trial(port, "F hi=0x00 0x40 -> 0x00", [(HOLD_EN, 0.6), (RELEASE_BOTH, 0.0)], hi=0x00)
+    trial(port, "E hi=0x00 0x40 -> 0x20", [(0x40, 0.6), (0x20, 0.0)], hi=0x00)
+    trial(port, "F hi=0x00 0x40 -> 0x00", [(0x40, 0.6), (0x00, 0.0)], hi=0x00)
 
     print("=== full cycle, then a second edge ===", flush=True)
-    trial(port, "G 0x00->0x20->0x40->0x20", [(RELEASE_BOTH, 0.2), (HOLD_IO0, 0.3),
-                                             (HOLD_EN, 0.6), (HOLD_IO0, 0.0)])
+    trial(port, "G 0x00->0x20->0x40->0x20", [(0x00, 0.2), (0x20, 0.3), (0x40, 0.6),
+                                             (0x20, 0.0)])
     port.close()
 
 

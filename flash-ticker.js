@@ -53,8 +53,7 @@ const images = [
   ['0x8000', tableFile],
   ['0x' + firstAppOffset(tableFile).toString(16), path.join(root, 'build', 'link-idf-example.bin')],
 ];
-const args = ['-m', 'esptool', '--chip', 'esp32', '--port', port, '--baud', '921600',
-  'write-flash', '-z', '--flash-size', '4MB'];
+const args = ['-m', 'esptool', '--chip', 'esp32', '--port', port, '--baud', '921600', 'write-flash', '-z'];
 for (const [addr, file] of images) args.push(addr, file);
 
 console.log(`flashing ${port}: ${images.map(([a, f]) => `${a} ${path.basename(f)}`).join('   ')}`);

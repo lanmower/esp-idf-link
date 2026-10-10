@@ -1,12 +1,10 @@
 import os, socket, struct, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from ch341 import (Ch341, recvn, CONTROL_BIT7, RELEASE_BOTH, HOLD_EN, HOLD_IO0)
+from ch341 import Ch341, recvn
 
+BIT_DTR, BIT_RTS = 0x20, 0x40
 EP_IN, EP_OUT = 0x82, 0x02
-BOTH_HELD = HOLD_EN | HOLD_IO0
-BIT7_IO0 = CONTROL_BIT7 | HOLD_IO0
-BIT7_BOTH = CONTROL_BIT7 | BOTH_HELD
 
 
 class UsbipPort(Ch341):
@@ -141,7 +139,7 @@ def trial(port, label, steps, settle=10.0):
             if "boot:" in line or "waiting for download" in line:
                 print("      | %s" % line.strip()[:70], flush=True)
                 break
-    port.hs(RELEASE_BOTH)
+    port.hs(0x00)
     port.drain(0.3)
 
 
@@ -150,16 +148,16 @@ def main():
     print("devid=0x%08x version=%s" % (port.devid, port.init().hex()), flush=True)
     print("=== baseline: is the app legible, and does a plain EN edge boot? ===",
           flush=True)
-    trial(port, "A idle only (control)", [(RELEASE_BOTH, 3.0)])
-    trial(port, "B EN hold -> release all", [(HOLD_EN, 1.0), (RELEASE_BOTH, 0.0)])
+    trial(port, "A idle only (control)", [(0x00, 3.0)])
+    trial(port, "B EN hold -> release all", [(0x40, 1.0), (0x00, 0.0)])
     print("=== IO0 held across the EN edge (bit5=DTR, bit6=RTS) ===", flush=True)
-    trial(port, "C IO0+EN -> release EN only", [(BOTH_HELD, 1.0), (HOLD_IO0, 0.0)])
-    trial(port, "D IO0+EN -> EN rel -> IO0 rel", [(BOTH_HELD, 1.0), (HOLD_IO0, 0.6), (RELEASE_BOTH, 0.0)])
-    trial(port, "E IO0 first, then EN, then rel", [(HOLD_IO0, 0.5), (BOTH_HELD, 1.0), (HOLD_IO0, 0.0)])
-    trial(port, "F EN hold, IO0 added, EN rel", [(HOLD_EN, 0.8), (BOTH_HELD, 0.5), (HOLD_IO0, 0.0)])
+    trial(port, "C IO0+EN -> release EN only", [(0x60, 1.0), (0x20, 0.0)])
+    trial(port, "D IO0+EN -> EN rel -> IO0 rel", [(0x60, 1.0), (0x20, 0.6), (0x00, 0.0)])
+    trial(port, "E IO0 first, then EN, then rel", [(0x20, 0.5), (0x60, 1.0), (0x20, 0.0)])
+    trial(port, "F EN hold, IO0 added, EN rel", [(0x40, 0.8), (0x60, 0.5), (0x20, 0.0)])
     print("=== bit7 also held EN in the sweep: try it as the EN line ===", flush=True)
-    trial(port, "G bit7 EN + bit5 IO0", [(BIT7_IO0, 1.0), (HOLD_IO0, 0.0)])
-    trial(port, "H bit7+bit6 EN + bit5 IO0", [(BIT7_BOTH, 1.0), (HOLD_IO0, 0.0)])
+    trial(port, "G bit7 EN + bit5 IO0", [(0xA0, 1.0), (0x20, 0.0)])
+    trial(port, "H bit7+bit6 EN + bit5 IO0", [(0xE0, 1.0), (0x20, 0.0)])
     port.close()
 
 

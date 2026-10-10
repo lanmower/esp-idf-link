@@ -75,16 +75,16 @@ void handle_filter_active(const ableton::Link::SessionState& state, const std::c
         double lfo_value_norm = 0.0;
         int shape_index = s_lfo_shape_index;
         switch (shape_index) {
-             case LFO_SHAPE_SIN:
+             case 0:
                  lfo_value_norm = 0.5 - 0.5 * cos(phase * 2.0 * M_PI);
                  break;
-             case LFO_SHAPE_TRI:
+             case 1:
                  lfo_value_norm = 2.0 * ((phase < 0.5) ? phase : 1.0 - phase);
                  break;
-             case LFO_SHAPE_SAW:
+             case 2:
                  lfo_value_norm = 1.0 - phase;
                  break;
-             case LFO_SHAPE_SQR:
+             case 3:
                  lfo_value_norm = (phase < 0.5) ? 0.0 : 1.0;
                  break;
             default:
@@ -129,7 +129,7 @@ bool handle_filter_adjusting_pads(const bool pad_pressed_this_tick[], std::array
         }
 
         switch (tapped_pad) {
-            case SIDECHAIN_PAD_INDEX:
+            case 0:
                 s_lfo_shape_index = LFO_SHAPE_SQR;
                 s_lfo_rate_index = kLfoRateIndexEighthNote;
                 s_lfo_depth_bipolar = 40;
@@ -159,7 +159,7 @@ bool handle_filter_adjusting_pads(const bool pad_pressed_this_tick[], std::array
                 adjustment_made = true;
                 break;
 
-            case FILTER_PAD_INDEX:
+            case 3:
                 s_lfo_shape_index = LFO_SHAPE_TRI;
                 s_lfo_rate_index = kLfoRateIndexSixteenthTriplet;
                 s_lfo_depth_bipolar = 30;
