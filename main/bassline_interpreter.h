@@ -67,6 +67,12 @@ constexpr int kRegisterSpan = 15;
 void generateMotif(Step m[kStepsPerBar], int root, int scaleIdx,
                    const Dials& dials, RngSource& rng);
 
+constexpr float kMicroOffsetMaxAbsSteps = 0.17f;
+constexpr float kMicroOffsetSdCapSteps  = 0.15f;
+constexpr float kMicroOffsetSdSteps     = 0.0955f;
+extern const float kMicroOffsetSteps[kStepsPerBar];
+float microOffsetForStep(int step);
+
 struct TurnNote {
     float stepOffset;
     int   note;

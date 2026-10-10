@@ -296,26 +296,107 @@ void generateMotif(Step m[kStepsPerBar], int root, int scaleIdx,
     buildArticulation(onsets, pitches, n, dials, rng, m);
 }
 
+constexpr float kMicroOffsetSteps[kStepsPerBar] = {
+     0.f,   0.12f, -0.09f, 0.16f, -0.02f, 0.11f, -0.10f, 0.05f,
+    0.03f,  0.10f, -0.08f, 0.17f,  0.f,   0.13f, -0.09f, 0.04f,
+};
+
+static constexpr float absVal(float x) { return x < 0.f ? -x : x; }
+
+static constexpr float newtonSqrt(float x, float r, int iterations) {
+    return iterations <= 0 ? r : newtonSqrt(x, 0.5f * (r + x / r), iterations - 1);
+}
+
+static constexpr float sqrtVal(float x) {
+    return x <= 0.f ? 0.f : newtonSqrt(x, x < 1.f ? 1.f : x, 16);
+}
+
+static constexpr float microOffsetMaxAbs() {
+    float worst = 0.f;
+    for (int i = 0; i < kStepsPerBar; i++) worst = std::max(worst, absVal(kMicroOffsetSteps[i]));
+    return worst;
+}
+
+static constexpr float microOffsetRmsSteps() {
+    float sum = 0.f;
+    for (int i = 0; i < kStepsPerBar; i++) sum += kMicroOffsetSteps[i] * kMicroOffsetSteps[i];
+    return sqrtVal(sum / float(kStepsPerBar));
+}
+
+static_assert(microOffsetMaxAbs() <= kMicroOffsetMaxAbsSteps,
+              "a microtiming offset must never sit further off the grid than the groove cap");
+static_assert(microOffsetRmsSteps() <= kMicroOffsetSdCapSteps,
+              "microtiming spread must stay under the cap that keeps groove from reading as sloppy");
+static_assert(absVal(microOffsetRmsSteps() - kMicroOffsetSdSteps) <= 0.0005f,
+              "kMicroOffsetSdSteps must stay the measured spread of kMicroOffsetSteps");
+
+float microOffsetForStep(int step) {
+    int i = step % kStepsPerBar;
+    if (i < 0) i += kStepsPerBar;
+    return kMicroOffsetSteps[i];
+}
+
 int generateTurnaround(TurnNote out[3], int root, int scaleIdx,
                         const Dials& dials, RngSource& rng) {
+    static constexpr int   kMaxTurnNotes         = 3;
+    static constexpr int   kTailSpans[]          = {4, 8, 12};
+    static constexpr int   kTailSpanCount        = sizeof(kTailSpans) / sizeof(kTailSpans[0]);
+    static constexpr float kClosingBackoffs[]    = {0.f, 0.5f, 1.f, 1.5f};
+    static constexpr int   kClosingBackoffCount  = sizeof(kClosingBackoffs) / sizeof(kClosingBackoffs[0]);
+    static constexpr float kMinNoteGapSteps      = 0.5f;
+    static constexpr float kNoteGapRangeSteps    = 2.5f;
+    static constexpr int   kOctave               = 12;
+    static constexpr int   kClosingOctaves[]     = {0, 0, kOctave, -kOctave};
+
     int chordTones[4];
     chordToneIntervals(scaleIdx, chordTones);
-    int fifth = chordTones[kChordFifth];
-    int third = chordTones[kChordThird];
-    int seventh = chordTones[kChordSeventh];
 
-    int n = 0;
-    bool useFifth = rng.next01() < (0.4f + dials.harmonyGravity * 0.4f);
-    out[n++] = {4.f, root + (useFifth ? fifth : third), 0.5f, 100, 90, 0.f};
+    int n = 1 + Dials::bandIndex(rng.next01(), kMaxTurnNotes);
+    int span = kTailSpans[Dials::bandIndex(rng.next01(), kTailSpanCount)];
+    float closing = float(span)
+                  - kClosingBackoffs[Dials::bandIndex(rng.next01(), kClosingBackoffCount)];
 
-    bool useColor = rng.next01() < dials.voiceArtic;
-    out[n++] = {5.5f, root + (useColor ? seventh : fifth), 0.5f, 105, 95, 0.f};
-
-    float slidePb = 0.f;
-    if (rng.next01() < dials.voiceArtic * 0.5f) {
-        slidePb = (rng.next01() < 0.5f) ? 3.f : -3.f;
+    float offsets[kMaxTurnNotes];
+    offsets[n - 1] = closing;
+    for (int i = n - 2; i >= 0; i--)
+        offsets[i] = offsets[i + 1] - (kMinNoteGapSteps + rng.next01() * kNoteGapRangeSteps);
+    if (offsets[0] < 0.f) {
+        float lead = offsets[0];
+        float squeeze = closing / (closing - lead);
+        for (int i = 0; i < n; i++) offsets[i] = (offsets[i] - lead) * squeeze;
     }
-    out[n++] = {7.f, root, 1.0f, 120, 110, slidePb};
+
+    int upperTones[4];
+    upperTones[0] = chordTones[kChordThird];
+    upperTones[1] = chordTones[kChordFifth];
+    upperTones[2] = chordTones[kChordSeventh];
+    upperTones[3] = scaleDegree(scaleIdx, 3);
+    int upperCount = (rng.next01() < dials.harmonyColor * 0.7f) ? 4 : 3;
+
+    int pitches[kMaxTurnNotes];
+    for (int i = 0; i < n - 1; i++) {
+        int tone = upperTones[Dials::bandIndex(rng.next01(), upperCount)];
+        int lifted = root + tone + ((rng.next01() < dials.voiceSweep * 0.45f) ? kOctave : 0);
+        pitches[i] = std::max(root, std::min(root + kRegisterSpan, lifted));
+    }
+    pitches[n - 1] = root + kClosingOctaves[Dials::bandIndex(rng.next01(), 4)];
+
+    for (int i = 0; i < n; i++) {
+        bool closes = (i == n - 1);
+        float len = closes ? (0.75f + rng.next01() * 0.75f) : (0.25f + rng.next01() * 0.5f);
+        int vel = std::max(1, std::min(127, static_cast<int>(88.f + rng.next01() * 22.f + 6.f * i)));
+        int fcc = std::max(0, std::min(127, static_cast<int>(80.f + dials.voiceSweep * 30.f
+                                                            + rng.next01() * 15.f)));
+
+        float pb = 0.f;
+        if (closes) {
+            if (rng.next01() < dials.voiceArtic * 0.5f) pb = (rng.next01() < 0.5f) ? 3.f : -3.f;
+        } else if (offsets[i + 1] - offsets[i] <= 3.f && rng.next01() < dials.voiceArtic * 0.5f) {
+            pb = std::max(-3.f, std::min(3.f, (pitches[i + 1] - pitches[i]) * 0.4f));
+        }
+
+        out[i] = {offsets[i], pitches[i], len, vel, fcc, pb};
+    }
 
     return n;
 }
