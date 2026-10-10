@@ -359,7 +359,7 @@ static void link_multicast_relay_task(void*) {
         }
 
         LOCK_TCPIP_CORE();
-        struct netif* ap_lwip = (struct netif*)esp_netif_get_netif_impl(g_ap_netif);
+        struct netif* ap_lwip = g_ap_netif ? (struct netif*)esp_netif_get_netif_impl(g_ap_netif) : NULL;
         if (ap_lwip) {
             if (!from_self) {
                 raw_sendto_if_src(rpcb, p, &dst_addr, ap_lwip, &src_addr);
