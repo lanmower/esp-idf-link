@@ -21,7 +21,7 @@ the two from meshing, with no error on either side.
 | Channel | SoftAP ch6 | `hostapd.conf` `channel=6` |
 | Link multicast | `224.76.78.75:20808` | same (hardcoded in Link itself — cannot drift) |
 | Link quantum | `main.h` `#define LINK_QUANTUM 16.0` | `link_bridge.cpp` `quantum = 16.0` |
-| Start/stop sync | `main.cpp` `g_link->enableStartStopSync(false)` | `link_bridge.cpp` `enableStartStopSync(true)` — SPLIT, see the checklist below |
+| Start/stop sync | `main.cpp` `g_link->enableStartStopSync(false)` | `link_bridge.cpp` `enableStartStopSync(false)` |
 | Host election | lowest MAC/BSSID wins | lowest MAC/BSSID wins |
 
 `PHRASE_BEATS 64.0` is NOT the Link quantum — it is this project's own
@@ -50,18 +50,17 @@ Derived from a full audit of both trees against Link's own header docs.
 - **Thread-correct session-state API.** `captureAppSessionState()` /
   `commitAppSessionState()` off the audio thread; the `AudioSessionState`
   variants only on it. This project uses the App variants throughout.
-- **Start/stop sync is OFF here and ON in aloopprime: the pair is asymmetric
-  right now, and OFF is the value both sides want.** A stop on one device must
-  not stop the whole mesh — every box keeps its own timeline so timing survives
-  a local stop somewhere else. This project calls
+- **Start/stop sync is OFF on both sides on purpose: the mesh is clock-only.**
+  A stop on one device must not stop the whole mesh — every box keeps its own
+  timeline so timing survives a local stop somewhere else. This project calls
   `g_link->enableStartStopSync(false)` (`main.cpp:43`), still CONSUMES
   transport (`state.isPlaying()` in `link_sync.cpp` -> MIDI
   Start/Stop/Continue + all-notes-off) and never calls `setIsPlaying` — it has
   no local play/stop control. With sync disabled `isPlaying()` reads true for
   the whole session, so downstream gear gets one Start and never a Stop.
-  `../aloopprime/src/link/link_bridge.cpp` calls `enableStartStopSync(true)`;
-  reconciling means setting it false there, and going the other way would
-  instead need this tree flipped plus a firmware flash.
+  `../aloopprime/src/link/link_bridge.cpp` calls `enableStartStopSync(false)`
+  too (was `true` until 2026-10-10, aligned on this decision); going the other
+  way needs BOTH flipped in the same change, plus a firmware flash here.
 - **The three notification callbacks** — `setNumPeersCallback(std::size_t)`,
   `setTempoCallback(double)`, `setStartStopCallback(bool)`. Link's header
   documents each as invoked on a Link-managed thread and **Realtime-safe:
