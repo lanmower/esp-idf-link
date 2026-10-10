@@ -5,7 +5,7 @@ HOST, PORT = "127.0.0.1", 3240
 BUSID = "2-2"
 COMPORT = sys.argv[1] if len(sys.argv) > 1 else "COM12"
 REQ = 0xA4
-BIT_RTS, BIT_DTR = 1 << 5, 1 << 6
+BIT_RTS, BIT_DTR = 1 << 6, 1 << 5
 
 
 def connect():
