@@ -3,6 +3,11 @@ set -e
 
 DEVICE="${1:-}"
 
+BOOTLOADER_OFFSET=0x1000
+PARTITION_TABLE_OFFSET=0x8000
+APP_OFFSET=0x20000
+FLASH_BAUD=460800
+
 if [ ! -f "build/bootloader/bootloader.bin" ]; then
     echo "Error: Bootloader binary not found. Run ./build.sh first"
     exit 1
@@ -45,12 +50,12 @@ fi
 
 echo "Flashing to $DEVICE..."
 sudo PYTHONPATH=/home/user/.local/lib/python3.12/site-packages python3.12 /home/user/.local/bin/esptool \
-    --chip esp32 --port "$DEVICE" -b 460800 \
+    --chip esp32 --port "$DEVICE" -b $FLASH_BAUD \
     --before default-reset --after hard-reset \
     write-flash --flash-mode dio --flash-size 4MB --flash-freq 40m \
-    0x1000 build/bootloader/bootloader.bin \
-    0x8000 build/partition_table/partition-table.bin \
-    0x20000 build/link-idf-example.bin
+    $BOOTLOADER_OFFSET build/bootloader/bootloader.bin \
+    $PARTITION_TABLE_OFFSET build/partition_table/partition-table.bin \
+    $APP_OFFSET build/link-idf-example.bin
 
 echo ""
 echo "[OK] Flash complete!"

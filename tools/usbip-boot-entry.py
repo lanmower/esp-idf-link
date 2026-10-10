@@ -8,20 +8,28 @@ _spec.loader.exec_module(_m)
 UsbipPort = _m.UsbipPort
 
 
-def trial(port, label, steps, hi=0xFF, settle=9.0):
+sys.path.insert(0, _HERE)
+from ch341 import HOLD_EN, HOLD_IO0, RELEASE_BOTH
+
+PRE_TRIAL_SETTLE_SECONDS = 9.0
+BOOT_LOG_SECONDS = 6.0
+LINE_SETTLE_SECONDS = 0.3
+
+
+def trial(port, label, steps, hi=0xFF, settle=PRE_TRIAL_SETTLE_SECONDS):
     port.drain(settle)
     for control, hold in steps:
         port.hs(control, hi=hi)
         if hold:
             port.drain(hold)
-    txt = port.drain(6.0)
+    txt = port.drain(BOOT_LOG_SECONDS)
     print("  %-30s %-22s %s" % (label, port.verdict(txt), port.sync()), flush=True)
     for line in txt.split("\n"):
         if "boot:" in line or "waiting for download" in line:
             print("      | %s" % line.strip()[:70], flush=True)
             break
-    port.hs(0x00, hi=hi)
-    port.drain(0.3)
+    port.hs(RELEASE_BOTH, hi=hi)
+    port.drain(LINE_SETTLE_SECONDS)
 
 
 def open_port(tries=10, gap=6.0):
@@ -39,21 +47,28 @@ def main():
     print("devid=0x%08x version=%s" % (port.devid, port.init().hex()), flush=True)
 
     print("=== control: EN edge with IO0 never low (must stay boot:0x13) ===", flush=True)
-    trial(port, "A 0x40 -> 0x00", [(0x40, 0.6), (0x00, 0.0)])
+    trial(port, "A 0x%02x -> 0x%02x" % (HOLD_EN, RELEASE_BOTH),
+          [(HOLD_EN, 0.6), (RELEASE_BOTH, 0.0)])
 
     print("=== predicted win: EN released while IO0 already low ===", flush=True)
-    trial(port, "B 0x40 -> 0x20", [(0x40, 0.6), (0x20, 0.0)])
-    trial(port, "C 0x40 -> 0x20 -> 0x00", [(0x40, 0.6), (0x20, 1.0), (0x00, 0.0)])
-    trial(port, "D 0x40 -> 0x20 (long hold)", [(0x40, 1.5), (0x20, 0.0)])
+    trial(port, "B 0x%02x -> 0x%02x" % (HOLD_EN, HOLD_IO0),
+          [(HOLD_EN, 0.6), (HOLD_IO0, 0.0)])
+    trial(port, "C 0x%02x -> 0x%02x -> 0x%02x" % (HOLD_EN, HOLD_IO0, RELEASE_BOTH),
+          [(HOLD_EN, 0.6), (HOLD_IO0, 1.0), (RELEASE_BOTH, 0.0)])
+    trial(port, "D 0x%02x -> 0x%02x (long hold)" % (HOLD_EN, HOLD_IO0),
+          [(HOLD_EN, 1.5), (HOLD_IO0, 0.0)])
 
     print("=== same, with the wValue high byte cleared (ch341.c sends no hi byte) ===",
           flush=True)
-    trial(port, "E hi=0x00 0x40 -> 0x20", [(0x40, 0.6), (0x20, 0.0)], hi=0x00)
-    trial(port, "F hi=0x00 0x40 -> 0x00", [(0x40, 0.6), (0x00, 0.0)], hi=0x00)
+    trial(port, "E hi=0x00 0x%02x -> 0x%02x" % (HOLD_EN, HOLD_IO0),
+          [(HOLD_EN, 0.6), (HOLD_IO0, 0.0)], hi=0x00)
+    trial(port, "F hi=0x00 0x%02x -> 0x%02x" % (HOLD_EN, RELEASE_BOTH),
+          [(HOLD_EN, 0.6), (RELEASE_BOTH, 0.0)], hi=0x00)
 
     print("=== full cycle, then a second edge ===", flush=True)
-    trial(port, "G 0x00->0x20->0x40->0x20", [(0x00, 0.2), (0x20, 0.3), (0x40, 0.6),
-                                             (0x20, 0.0)])
+    trial(port, "G 0x%02x->0x%02x->0x%02x->0x%02x"
+          % (RELEASE_BOTH, HOLD_IO0, HOLD_EN, HOLD_IO0),
+          [(RELEASE_BOTH, 0.2), (HOLD_IO0, 0.3), (HOLD_EN, 0.6), (HOLD_IO0, 0.0)])
     port.close()
 
 
