@@ -11,7 +11,23 @@
 
 static const char *TAG_SC = "SIDECHAIN";
 
-const double SIDECHAIN_SPEED_FACTOR = 4.0;
+constexpr double SIDECHAIN_SPEED_FACTOR = 4.0;
+
+constexpr double SIDECHAIN_BEATS_PER_STEP = LINK_QUANTUM / (SIDECHAIN_SPEED_FACTOR * SIDECHAIN_RHYTHM_STEPS);
+constexpr double SIDECHAIN_BEATS_PER_PATTERN_PASS = SIDECHAIN_BEATS_PER_STEP * SIDECHAIN_RHYTHM_STEPS;
+
+static_assert(SIDECHAIN_BEATS_PER_PATTERN_PASS == static_cast<double>(SIDECHAIN_BEATS_PER_PATTERN),
+              "one SIDECHAIN_RHYTHM_STEPS pass no longer spans SIDECHAIN_BEATS_PER_PATTERN beats");
+
+constexpr int SIDECHAIN_PATTERN_FOR_SECONDARY_PAD[NUM_TOUCH_PADS] = {
+    SC_PATTERN_INDEX_QUARTER,
+    SC_PATTERN_INDEX_OFFBEAT_EIGHTH,
+    SC_PATTERN_INDEX_SYNCOPATED,
+    SC_PATTERN_INDEX_FOUR_FLOOR
+};
+
+static_assert(SIDECHAIN_PATTERN_FOR_SECONDARY_PAD[SIDECHAIN_PAD_INDEX] == SIDECHAIN_DEFAULT_PATTERN_INDEX,
+              "find_secondary_tapped_pad skips SIDECHAIN_PAD_INDEX, so its pattern is reachable only as the boot default");
 
 extern SynthType g_synth_type;
 
@@ -48,11 +64,8 @@ bool handle_sidechain_adjusting_pads(const bool pad_pressed_this_tick[], std::ar
 
     int tapped_pad = find_secondary_tapped_pad(SIDECHAIN_PAD_INDEX, pad_pressed_this_tick, pads_used);
 
-    if (tapped_pad != -1) {
-        int new_pattern_index = -1;
-        if (tapped_pad == 0) new_pattern_index = 0;
-        else if (tapped_pad == 1) new_pattern_index = 1;
-        else if (tapped_pad == 3) new_pattern_index = 3;
+    if (tapped_pad >= 0 && tapped_pad < NUM_TOUCH_PADS) {
+        int new_pattern_index = SIDECHAIN_PATTERN_FOR_SECONDARY_PAD[tapped_pad];
 
         if (new_pattern_index >= 0 && new_pattern_index < NUM_SIDECHAIN_PATTERNS && new_pattern_index != s_current_sidechain_pattern_index) {
             s_current_sidechain_pattern_index = new_pattern_index;
@@ -83,7 +96,7 @@ void handle_sidechain_active(const ableton::Link::SessionState& state, const std
 
     const double original_beats_per_step = LINK_QUANTUM / static_cast<double>(SIDECHAIN_RHYTHM_STEPS);
 
-    const double PHASE_OFFSET = original_beats_per_step * 0.25;
+    const double PHASE_OFFSET = SIDECHAIN_BEATS_PER_STEP * SIDECHAIN_PATTERN_LEAD_STEPS;
 
     double scaled_phase = (phase_within_quantum + PHASE_OFFSET) * SIDECHAIN_SPEED_FACTOR;
 
