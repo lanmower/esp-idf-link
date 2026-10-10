@@ -22,6 +22,37 @@ static constexpr int kLfoRateIndexHalfNote = 4;
 static constexpr int kLfoRateIndexEighthNote = 10;
 static constexpr int kLfoRateIndexSixteenthTriplet = 14;
 
+struct FilterLfoPreset {
+    int padIndex;
+    int shapeIndex;
+    int rateIndex;
+    int8_t depthBipolar;
+    int resonance;
+    const char* description;
+};
+
+constexpr std::array<FilterLfoPreset, NUM_TOUCH_PADS - 1> kFilterLfoPresets = {{
+    {SIDECHAIN_PAD_INDEX, LFO_SHAPE_SQR, kLfoRateIndexEighthNote, 40, 80,
+     "LFO Preset 1: Wobble Bass - Square wave at 1/8 note, high resonance"},
+    {ARP_PAD_INDEX, LFO_SHAPE_SIN, kLfoRateIndexOneBar, 50, 30,
+     "LFO Preset 2: Smooth Sweep - Sine wave at 1 bar, moderate resonance"},
+    {DELAY_REVERB_PAD_INDEX, LFO_SHAPE_TRI, kLfoRateIndexSixteenthTriplet, 30, 50,
+     "LFO Preset 3: Fast Rhythmic - Triangle wave at 1/16 triplet, medium resonance"}
+}};
+
+constexpr bool filterLfoPresetsBindReachablePads() {
+    for (int i = 0; i < static_cast<int>(kFilterLfoPresets.size()); i++) {
+        const FilterLfoPreset& preset = kFilterLfoPresets[i];
+        if (preset.padIndex < 0 || preset.padIndex >= NUM_TOUCH_PADS) return false;
+        if (preset.padIndex == FILTER_PAD_INDEX) return false;
+        if (preset.rateIndex < 0 || preset.rateIndex >= NUM_LFO_SYNC_RATES) return false;
+    }
+    return true;
+}
+
+static_assert(filterLfoPresetsBindReachablePads(),
+              "Every filter LFO preset must bind to a pad the filter handler can receive and to a declared LFO sync rate");
+
 static int s_lfo_shape_index = LFO_SHAPE_SIN;
 static int s_lfo_rate_index = kLfoRateIndexHalfNote;
 int8_t s_lfo_depth_bipolar = 63;
@@ -45,29 +76,9 @@ void handle_filter_active(const ableton::Link::SessionState& state, const std::c
 
         double lfo_period_beats = 1.0;
         if (s_lfo_rate_index >= 0 && s_lfo_rate_index < NUM_LFO_SYNC_RATES) {
-            const double lfo_period_map[] = {
-                16.0,
-                8.0,
-                4.0,
-                3.0,
-                2.0,
-                4.0/3.0,
-                1.5,
-                1.0,
-                2.0/3.0,
-                0.75,
-                0.5,
-                1.0/3.0,
-                0.375,
-                0.25,
-                1.0/6.0,
-                0.125
-            };
-            if (s_lfo_rate_index < sizeof(lfo_period_map)/sizeof(lfo_period_map[0])) {
-                lfo_period_beats = lfo_period_map[s_lfo_rate_index];
-            } else {
-                ESP_LOGW(TAG_FILTER, "LFO rate index out of bounds for period map!");
-            }
+            lfo_period_beats = LFO_SYNC_RATE_PERIOD_BEATS[s_lfo_rate_index];
+        } else {
+            ESP_LOGW(TAG_FILTER, "LFO rate index out of bounds for period table!");
         }
 
         double phase = fmod(beat / lfo_period_beats, 1.0);
@@ -111,7 +122,7 @@ void handle_filter_active(const ableton::Link::SessionState& state, const std::c
     }
 }
 
-bool handle_filter_adjusting_pads(const bool pad_pressed_this_tick[], std::array<bool, 4>& pads_used)
+bool handle_filter_adjusting_pads(const bool pad_pressed_this_tick[], std::array<bool, NUM_TOUCH_PADS>& pads_used)
 {
     if (!g_current_synth) return false;
 
@@ -128,54 +139,22 @@ bool handle_filter_adjusting_pads(const bool pad_pressed_this_tick[], std::array
             adjustment_made = true;
         }
 
-        switch (tapped_pad) {
-            case SIDECHAIN_PAD_INDEX:
-                s_lfo_shape_index = LFO_SHAPE_SQR;
-                s_lfo_rate_index = kLfoRateIndexEighthNote;
-                s_lfo_depth_bipolar = 40;
-                s_global_filter_resonance = 80;
+        for (const FilterLfoPreset& preset : kFilterLfoPresets) {
+            if (preset.padIndex != tapped_pad) continue;
 
-                g_current_synth->setLfoShape(s_lfo_shape_index);
-                g_current_synth->setLfoRateSync(LFO_SYNC_RATES[s_lfo_rate_index]);
-                g_current_synth->setLfoSyncEnabled(true);
-                g_current_synth->setFilterResonance(s_global_filter_resonance);
+            s_lfo_shape_index = preset.shapeIndex;
+            s_lfo_rate_index = preset.rateIndex;
+            s_lfo_depth_bipolar = preset.depthBipolar;
+            s_global_filter_resonance = preset.resonance;
 
-                ESP_LOGI(TAG_FILTER, "LFO Preset 1: Wobble Bass - Square wave at 1/8 note, high resonance");
-                adjustment_made = true;
-                break;
+            g_current_synth->setLfoShape(s_lfo_shape_index);
+            g_current_synth->setLfoRateSync(LFO_SYNC_RATES[s_lfo_rate_index]);
+            g_current_synth->setLfoSyncEnabled(true);
+            g_current_synth->setFilterResonance(s_global_filter_resonance);
 
-            case ARP_PAD_INDEX:
-                s_lfo_shape_index = LFO_SHAPE_SIN;
-                s_lfo_rate_index = kLfoRateIndexOneBar;
-                s_lfo_depth_bipolar = 50;
-                s_global_filter_resonance = 30;
-
-                g_current_synth->setLfoShape(s_lfo_shape_index);
-                g_current_synth->setLfoRateSync(LFO_SYNC_RATES[s_lfo_rate_index]);
-                g_current_synth->setLfoSyncEnabled(true);
-                g_current_synth->setFilterResonance(s_global_filter_resonance);
-
-                ESP_LOGI(TAG_FILTER, "LFO Preset 2: Smooth Sweep - Sine wave at 1 bar, moderate resonance");
-                adjustment_made = true;
-                break;
-
-            case FILTER_PAD_INDEX:
-                s_lfo_shape_index = LFO_SHAPE_TRI;
-                s_lfo_rate_index = kLfoRateIndexSixteenthTriplet;
-                s_lfo_depth_bipolar = 30;
-                s_global_filter_resonance = 50;
-
-                g_current_synth->setLfoShape(s_lfo_shape_index);
-                g_current_synth->setLfoRateSync(LFO_SYNC_RATES[s_lfo_rate_index]);
-                g_current_synth->setLfoSyncEnabled(true);
-                g_current_synth->setFilterResonance(s_global_filter_resonance);
-
-                ESP_LOGI(TAG_FILTER, "LFO Preset 3: Fast Rhythmic - Triangle wave at 1/16 triplet, medium resonance");
-                adjustment_made = true;
-                break;
-
-            default:
-                break;
+            ESP_LOGI(TAG_FILTER, "%s", preset.description);
+            adjustment_made = true;
+            break;
         }
         return adjustment_made;
     }

@@ -1,6 +1,7 @@
 #ifndef LFO_CONSTANTS_H
 #define LFO_CONSTANTS_H
 
+#include <array>
 #include <vector>
 #include <cstdint>
 
@@ -40,7 +41,7 @@ static_assert(LFO_SYNC_RATE_LAST - LFO_SYNC_RATE_FIRST ==
                   (LFO_SYNC_RATE_COUNT - 1) * LFO_SYNC_RATE_STRIDE,
               "The LFO sync rates must stay a contiguous stride-4 run from FIRST to LAST");
 
-const std::vector<uint8_t> LFO_SYNC_RATES = {
+constexpr std::array<uint8_t, LFO_SYNC_RATE_COUNT> LFO_SYNC_RATES = {{
     LFO_SYNC_RATE_4_BARS,
     LFO_SYNC_RATE_2_BARS,
     LFO_SYNC_RATE_1_BAR,
@@ -57,7 +58,28 @@ const std::vector<uint8_t> LFO_SYNC_RATES = {
     LFO_SYNC_RATE_SIXTEENTH,
     LFO_SYNC_RATE_SIXTEENTH_TRIPLET,
     LFO_SYNC_RATE_THIRTYSECOND
-};
-const int NUM_LFO_SYNC_RATES = LFO_SYNC_RATES.size();
+}};
+constexpr int NUM_LFO_SYNC_RATES = LFO_SYNC_RATES.size();
+
+constexpr std::array<double, NUM_LFO_SYNC_RATES> LFO_SYNC_RATE_PERIOD_BEATS = {{
+    16.0,
+    8.0,
+    4.0,
+    3.0,
+    2.0,
+    4.0/3.0,
+    1.5,
+    1.0,
+    2.0/3.0,
+    0.75,
+    0.5,
+    1.0/3.0,
+    0.375,
+    0.25,
+    1.0/6.0,
+    0.125
+}};
+static_assert(LFO_SYNC_RATE_PERIOD_BEATS.size() == NUM_LFO_SYNC_RATES,
+              "Each LFO sync rate needs exactly one period-in-beats entry at the same index");
 
 #endif
