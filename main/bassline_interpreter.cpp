@@ -26,6 +26,19 @@ constexpr bool everyScaleLengthFitsInItsRow() {
 }
 static_assert(everyScaleLengthFitsInItsRow());
 
+constexpr int maxScaleDegreeSemitones() {
+    int widest = 0;
+    for (int i = 0; i < kNumScales; i++) {
+        for (int d = 0; d < kScaleLens[i]; d++) {
+            if (kScales[i][d] > widest) widest = kScales[i][d];
+        }
+    }
+    return widest;
+}
+constexpr int kMaxScaleDegreeSemitones = maxScaleDegreeSemitones();
+static_assert(kMaxScaleDegreeSemitones <= kRegisterSpan,
+              "a chord-degree step must never span wider than the motif register itself");
+
 static const char* kScaleNames[kNumScales] = {
     "dorian", "aeolian", "phrygian", "minorPentatonic", "melodicMinor",
     "mixolydian", "phrygianDom", "harmonicMinor", "hungarianMinor",

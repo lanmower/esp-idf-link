@@ -65,16 +65,35 @@ static constexpr int     kPitchBendHalfRange = 8191;
 static constexpr int     kPitchBendRawMax    = 16383;
 static constexpr float   kPitchBendSemitoneSpan = 12.f;
 
-static int scaleDegree(int scIdx, int degree) { return bli::scaleDegree(scIdx, degree); }
+static int scaleDegreeSemitones(int scIdx, int degree) { return bli::scaleDegree(scIdx, degree); }
 
-static const int kNumProgs = 6;
-static const int kProgs[kNumProgs][kBarsPerChordCell] = {
-    {0, 5, 3, 6},
-    {0, 6, 5, 6},
-    {0, 3, 6, 2},
-    {0, 5, 6, 4},
-    {0, 2, 6, 3},
-    {0, 0, 5, 6},
+enum ChordDegree {
+    kDegreeTonic       = 0,
+    kDegreeSupertonic  = 1,
+    kDegreeMediant     = 2,
+    kDegreeSubdominant = 3,
+    kDegreeDominant    = 4,
+    kDegreeSubmediant  = 5,
+    kDegreeLeadingTone = 6,
+};
+
+enum ChordProgression {
+    kProgTonicSubmediantSubdominantLeadingTone = 0,
+    kProgTonicLeadingToneSubmediantLeadingTone = 1,
+    kProgTonicSubdominantLeadingToneMediant    = 2,
+    kProgDarkCadence                           = 3,
+    kProgTonicMediantLeadingToneSubdominant    = 4,
+    kProgTonicPedalSubmediantLeadingTone       = 5,
+    kNumProgs                                  = 6,
+};
+
+static const int kChordDegreeProgs[kNumProgs][kBarsPerChordCell] = {
+    {kDegreeTonic, kDegreeSubmediant, kDegreeSubdominant, kDegreeLeadingTone},
+    {kDegreeTonic, kDegreeLeadingTone, kDegreeSubmediant, kDegreeLeadingTone},
+    {kDegreeTonic, kDegreeSubdominant, kDegreeLeadingTone, kDegreeMediant},
+    {kDegreeTonic, kDegreeSubmediant, kDegreeLeadingTone, kDegreeDominant},
+    {kDegreeTonic, kDegreeMediant, kDegreeLeadingTone, kDegreeSubdominant},
+    {kDegreeTonic, kDegreeTonic, kDegreeSubmediant, kDegreeLeadingTone},
 };
 
 static float rand01() {
@@ -113,7 +132,7 @@ void BassEngine::genInterpreted(MS m[bli::kStepsPerBar], int root, int scIdx) {
 }
 
 void BassEngine::anchorMotif(MS m[bli::kStepsPerBar], int root, int scIdx) {
-    int fifthInterval = scaleDegree(scIdx, kFifthScaleDegreeIndex);
+    int fifthInterval = scaleDegreeSemitones(scIdx, kFifthScaleDegreeIndex);
 
     if (m[0].note < 0 || std::abs(m[0].note - root) > kStep0MaxSemitonesFromRoot)
         m[0] = mn(root, 0.5f, 120, 90);
@@ -196,7 +215,7 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
         m_scaleHoldPhrasesRemaining--;
     }
     m_progIdx = randBelow(kNumProgs);
-    const int* prog = kProgs[m_progIdx];
+    const int* prog = kChordDegreeProgs[m_progIdx];
 
     MS motA[bli::kStepsPerBar], motB[bli::kStepsPerBar], motC[bli::kStepsPerBar], motD[bli::kStepsPerBar];
     MS freshA[bli::kStepsPerBar];
@@ -245,8 +264,8 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
         int barInSec  = bar % kBarsPerSection;
         int barInCell = barInSec % kBarsPerChordCell;
 
-        const int* secProg = kProgs[secProgs[sec]];
-        int rootSemitoneOffset = secProg[barInCell];
+        const int* secProg = kChordDegreeProgs[secProgs[sec]];
+        int rootSemitoneOffset = scaleDegreeSemitones(m_scaleIdx, secProg[barInCell]);
 
         char part;
         if (sec == kFirstSection || sec == kLastSection) {
@@ -284,7 +303,8 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
     int turnaroundRate = (m_dials.voiceArtic > kArticulatedTurnaroundThreshold)
                          ? kFrequentTurnaroundPeriodPhrases : kSparseTurnaroundPeriodPhrases;
     if (m_phraseCount % turnaroundRate == 0) {
-        int baseSemitoneOffset = prog[(kBarsPerSection - 1) % kBarsPerChordCell];
+        int baseSemitoneOffset =
+            scaleDegreeSemitones(m_scaleIdx, prog[(kBarsPerSection - 1) % kBarsPerChordCell]);
         int tBase = std::max(0, std::min(127, kRootNoteE2 + baseSemitoneOffset));
         turnInterpreted(tBase, m_scaleIdx);
     }
