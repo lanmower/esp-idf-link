@@ -150,18 +150,61 @@ the device only over USB.
   `build/link-idf-example.bin` (commit "ci: update firmware binaries
   [skip ci]"). The flashable images therefore come from git, not from a local
   build.
-- `node flash-ticker.js [COMx]` (repo root) does the whole thing with esptool
-  5.x (`python -m esptool`; note v5's hyphenated `write-flash` subcommand).
-  Offsets: 0x1000 bootloader, 0x8000 partition table, and the app at the first
-  app partition of the built table (0x20000 with `partitions_large.csv`; the
-  script reads it, never hardcode 0x10000). `--list` lists ports, and it
-  refuses to guess when more than one serial port exists -- this machine has
-  two Bluetooth COM ports that are not the ESP32.
-- A COM port only exists while the ESP32 is plugged in; if esptool cannot
-  connect, hold IO0/BOOT while it starts. On this Windows host with the CH340
-  boards, esptool's reset sequences and every manual DTR/RTS wiring and timing
-  variant tried left the chip in normal boot (`boot:0x13`), so the BOOT hold is
-  needed.
+- `node flash-ticker.js [COMx]` (repo root) does the whole thing over a COM
+  port with esptool 5.x (`python -m esptool`; note v5's hyphenated
+  `write-flash` subcommand). Offsets: 0x1000 bootloader, 0x8000 partition
+  table, and the app at the first app partition of the BUILT table (0x20000
+  with `partitions_large.csv`; the script reads
+  `build/partition_table/partition-table.bin`, never hardcode 0x10000).
+  **Read the offset from the built binary, not the CSV** -- `partitions_large.csv`
+  leaves every offset but nvs's empty because the build computes them, so
+  parsing it yields `int('')`. Entries are 32 bytes, little-endian magic
+  `0x50AA`, then type(1) subtype(1) offset(4) size(4) label(16); app entries
+  have type == 0. `--list` lists ports, and it refuses to guess when more than
+  one serial port exists -- this machine has two Bluetooth COM ports that are
+  not the ESP32.
+
+### No BOOT hold: `python tools/flash-usbip.py` flashes it hands-free
+
+`flash-ticker.js` needs the BOOT/IO0 button held, but that is a limitation of
+the WCH/CH340 Windows driver, not of the board. `tools/flash-usbip.py` talks to
+the CH341 over USB/IP (usbipd-win, `usbipd bind --busid 2-2` once) with its own
+pyserial-shaped shim, so the WCH driver is never loaded and Windows cannot
+re-assert a line. Nothing has to be touched on the device:
+
+    python tools/flash-usbip.py --dry      # enter download mode, prove sync, reboot
+    python tools/flash-usbip.py            # flash the committed images and boot them
+
+Two measured facts make it work, and both are counter-intuitive:
+
+1. **The D1 R32's auto-reset circuit is DIFFERENTIAL.** Each transistor is
+   driven by the DTR#-RTS# difference, so EN is pulled low only when
+   (DTR# high, RTS# low) -> `0xA4` byte `0x40`, and IO0 only when
+   (DTR# low, RTS# high) -> `0x20`. Asserting both (`0x60`) or clearing both
+   (`0x00`) makes NEITHER transistor conduct. That is the opposite of the
+   convention esptool hard-codes, which is why every esptool reset sequence
+   produced `boot:0x13`. The entry is the flip **0x40 -> 0x20**: EN is released
+   (its RC rises) while IO0 is already low. Verified `boot:0x3`. Going back is
+   the reverse: `0x40` (EN low, IO0 high) then `0x00`.
+2. **The CH341 withholds the first replies.** A single sync frame gets no
+   answer for seconds, then several past replies surface at once behind a
+   later FULL-SIZE OUT -- a 1-byte `0xC0` kick does not release them. After
+   the first reply lands, latency is ~20 ms and stays there. esptool sends
+   exactly one sync frame with a 0.1 s deadline, so the pipe must be primed
+   with repeated correctly-framed sync frames first (and `SYNC_TIMEOUT` raised
+   to 2 s); typically 2-8 frames.
+
+`tools/ch341.py` (raw USB/IP + the `ch341.c` init order: `SET_CONFIGURATION`
+before anything, or bulk IN is dead), `tools/usbip-port.py` (bulk OUT + the
+pyserial surface), and `tools/flash-usbip.py` (entry, priming, esptool) are the
+three layers.
+
+Known oddity, benign: `flash_id()` reads `0xFFFFFF` (SPI RDID returns all
+ones) in download mode on this board, so esptool prints "Failed to communicate
+with the flash chip" and auto-detects no size. It is a warning, not a failure
+-- `detect_flash_size` returns None and `_set_flash_parameters` just skips
+`flash_set_parameters`. Erase/program go through the ROM's own flash_begin/
+flash_data and are unaffected.
 
 ## Mesh UDP protocol and MIDI emission
 
