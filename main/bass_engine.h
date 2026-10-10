@@ -70,7 +70,7 @@ private:
 
     void regeneratePhrase(bool advanceArc = true);
 
-    void genInterpreted(MS m[bli::kStepsPerBar], int root, int scIdx);
+    void genInterpreted(MS m[bli::kStepsPerBar], int root, int scIdx, const bli::Dials& dials);
 
     void transformMotif(const MS src[bli::kStepsPerBar], MS dst[bli::kStepsPerBar],
                         int type, int root, int scIdx);
@@ -89,13 +89,20 @@ private:
         bool  rolling;
         bool  questionAnswer;
         bool  pickups;
+        float minGateSteps;
+        float grooveEnergyBias;
+        float contourBias;
+        float swingBias;
+        float articBias;
+        float colorBias;
     };
     static const ApproachShape& shapeFor(int approach);
+    bli::Dials dialsForApproach() const;
     void shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPerBar],
                   int bar, int root, int scIdx);
     static float syncopationFraction(const MS m[bli::kStepsPerBar]);
 
-    void turnInterpreted(int base, int scIdx);
+    void turnInterpreted(int base, int scIdx, const bli::Dials& dials);
 
     void addNote(float posInSteps, int note, float len, int vel, int fcc,
                  float pbSemitones = 0.f);

@@ -120,10 +120,11 @@ struct EspRng : bli::RngSource {
     float next01() override { return rand01(); }
 };
 
-void BassEngine::genInterpreted(MS m[bli::kStepsPerBar], int root, int scIdx) {
+void BassEngine::genInterpreted(MS m[bli::kStepsPerBar], int root, int scIdx,
+                                const bli::Dials& dials) {
     EspRng rng;
     bli::Step steps[bli::kStepsPerBar];
-    bli::generateMotif(steps, root, scIdx, m_dials, rng);
+    bli::generateMotif(steps, root, scIdx, dials, rng);
     for (int i = 0; i < bli::kStepsPerBar; i++) {
         if (steps[i].note < 0) {
             m[i] = {kEmptyNote, 0.f, 0, 0, 0.f, 0.f};
@@ -194,10 +195,10 @@ void BassEngine::addNote(float posInSteps, int note, float len, int vel, int fcc
     m_phrase.push_back({posInSteps, note, len, vel, fcc, pbSemitones});
 }
 
-void BassEngine::turnInterpreted(int base, int scIdx) {
+void BassEngine::turnInterpreted(int base, int scIdx, const bli::Dials& dials) {
     EspRng rng;
     bli::TurnNote tn[3];
-    int n = bli::generateTurnaround(tn, base, scIdx, m_dials, rng);
+    int n = bli::generateTurnaround(tn, base, scIdx, dials, rng);
     for (int i = 0; i < n; i++) {
         addNote(kTurnaroundStartStep + tn[i].stepOffset, tn[i].note, tn[i].len, tn[i].vel,
                 tn[i].fcc, tn[i].pb);
@@ -206,17 +207,36 @@ void BassEngine::turnInterpreted(int base, int scIdx) {
 
 const BassEngine::ApproachShape& BassEngine::shapeFor(int approach) {
     static const ApproachShape kShapes[APP_COUNT] = {
-        {1.00f, 0.50f, 0.10f, 0.00f, 0.35f,  6.f, 18.f, 0.02f, true,  false, false},
-        {0.85f, 0.45f, 0.08f, 0.15f, 0.50f, 22.f, 55.f, 0.00f, false, false, false},
-        {0.50f, 0.55f, 0.12f, 0.38f, 0.60f, 30.f, 25.f, 0.05f, false, true,  true },
-        {0.32f, 0.70f, 0.18f, 0.45f, 0.75f, 34.f, 30.f, 0.09f, false, true,  true },
-        {0.25f, 0.22f, 0.35f, 0.50f, 0.25f, 12.f, 15.f, 0.00f, false, false, false},
-        {0.40f, 1.60f, 0.06f, 0.10f, 0.20f, 10.f, 45.f, 0.03f, false, false, false},
-        {0.20f, 2.50f, 0.15f, 0.20f, 0.15f,  8.f, 35.f, 0.00f, false, false, false},
-        {0.55f, 0.35f, 0.22f, 0.50f, 0.85f, 36.f, 40.f, 0.06f, false, true,  true },
+        {1.00f, 0.50f, 0.10f, 0.00f, 0.35f,  6.f, 18.f, 0.02f, true,  false, false,
+         0.18f,  0.44f,  0.19f, -0.05f, -0.05f,  0.06f},
+        {0.85f, 0.45f, 0.08f, 0.15f, 0.50f, 22.f, 55.f, 0.00f, false, false, false,
+         0.14f,  0.00f,  0.44f,  0.04f, -0.05f, -0.04f},
+        {0.50f, 0.55f, 0.12f, 0.38f, 0.60f, 30.f, 25.f, 0.05f, false, true,  true,
+         0.22f,  0.33f,  0.06f,  0.19f,  0.15f,  0.28f},
+        {0.32f, 0.70f, 0.18f, 0.45f, 0.75f, 34.f, 30.f, 0.09f, false, true,  true,
+         0.10f,  0.11f,  0.31f, -0.16f, -0.25f,  0.40f},
+        {0.25f, 0.22f, 0.35f, 0.50f, 0.25f, 12.f, 15.f, 0.00f, false, false, false,
+         0.10f, -0.11f, -0.44f, -0.06f, -0.30f, -0.26f},
+        {0.40f, 1.60f, 0.06f, 0.10f, 0.20f, 10.f, 45.f, 0.03f, false, false, false,
+         0.70f, -0.33f, -0.31f, -0.26f,  0.55f, -0.15f},
+        {0.20f, 2.50f, 0.15f, 0.20f, 0.15f,  8.f, 35.f, 0.00f, false, false, false,
+         1.10f, -0.44f, -0.44f, -0.36f,  0.60f, -0.26f},
+        {0.55f, 0.35f, 0.22f, 0.50f, 0.85f, 36.f, 40.f, 0.06f, false, true,  true,
+         0.16f,  0.22f, -0.06f,  0.09f, -0.10f,  0.17f},
     };
     if (approach < APP_ROLL || approach >= APP_COUNT) approach = APP_ROLL;
     return kShapes[approach];
+}
+
+bli::Dials BassEngine::dialsForApproach() const {
+    const ApproachShape& sh = shapeFor(m_approach);
+    bli::Dials d = m_dials;
+    d.grooveEnergy  = std::max(0.f, std::min(1.f, d.grooveEnergy  + sh.grooveEnergyBias));
+    d.motionContour = std::max(0.f, std::min(1.f, d.motionContour + sh.contourBias));
+    d.grooveSwing   = std::max(0.f, std::min(1.f, d.grooveSwing   + sh.swingBias));
+    d.voiceArtic    = std::max(0.f, std::min(1.f, d.voiceArtic    + sh.articBias));
+    d.harmonyColor  = std::max(0.f, std::min(1.f, d.harmonyColor  + sh.colorBias));
+    return d;
 }
 
 float BassEngine::syncopationFraction(const MS m[bli::kStepsPerBar]) {
@@ -245,7 +265,6 @@ void BassEngine::shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPer
     static constexpr float kPickupProb         = 0.35f;
     static constexpr float kPickupLengthSteps  = 0.25f;
     static constexpr int   kPickupVelDrop      = 20;
-    static constexpr float kMinGateSteps       = 0.35f;
     static constexpr int   kVelocityWobble     = 3;
     static constexpr float kTwoPi              = 6.28318530717958647692f;
     static constexpr float kQuarterTurn        = 1.57079632679489661923f;
@@ -354,7 +373,7 @@ void BassEngine::shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPer
 
     for (int i = 0; i < bli::kStepsPerBar; i++) {
         if (out[i].note < 0) continue;
-        out[i].len = std::max(kMinGateSteps, out[i].len * sh.gate);
+        out[i].len = std::max(sh.minGateSteps, out[i].len * sh.gate);
         out[i].vel = std::max(1, std::min(127,
             out[i].vel + (int)(velLfo * sh.velDrift) + (randBelow(kVelocityWobble * 2 + 1) - kVelocityWobble)));
         out[i].fcc = std::max(0, std::min(127, out[i].fcc + (int)(filtLfo * sh.filtSweepDepth)));
@@ -368,8 +387,10 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
     if (advanceArc) m_phraseCount++;
     m_phrase.clear();
 
+    const bli::Dials voice = dialsForApproach();
+
     if (m_scaleHoldPhrasesRemaining <= 0) {
-        int base = m_dials.pickScaleIdx();
+        int base = voice.pickScaleIdx();
         int jitter = randChance(kScaleJitterProbability) ? (randBelow(kScaleJitterRange) - 1) : 0;
         m_scaleIdx = std::max(0, std::min(bli::kNumScales - 1, base + jitter));
         m_scaleHoldPhrasesRemaining = kScaleHoldMinPhrases + randBelow(kScaleHoldRangePhrases);
@@ -381,7 +402,7 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
 
     MS motA[bli::kStepsPerBar], motB[bli::kStepsPerBar], motC[bli::kStepsPerBar], motD[bli::kStepsPerBar];
     MS freshA[bli::kStepsPerBar];
-    genInterpreted(freshA, kRootNoteE2, m_scaleIdx);
+    genInterpreted(freshA, kRootNoteE2, m_scaleIdx, voice);
 
     if (m_hasPrevPhraseMotif) {
         for (int i = 0; i < bli::kStepsPerBar; i++) {
@@ -408,7 +429,7 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
     transformMotif(motA, motC, xformC, kRootNoteE2, m_scaleIdx); clampRange(motC, kRootNoteE2);
     transformMotif(motA, motD, MOTIF_DRIFT, kRootNoteE2, m_scaleIdx); clampRange(motD, kRootNoteE2);
 
-    float varVal = m_dials.motionVariation;
+    float varVal = voice.motionVariation;
     const char* structure;
     float rnd = rand01();
     if      (varVal < 0.2f) structure = "AAAD";
@@ -419,7 +440,7 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
     int secProgs[kSectionsPerPhrase] = {m_progIdx, (m_progIdx + 1) % kNumProgs,
                                         (m_progIdx + 2) % kNumProgs, m_progIdx};
 
-    float swingSteps = m_dials.grooveSwing * kMaxSwingSteps;
+    float swingSteps = voice.grooveSwing * kMaxSwingSteps;
 
     for (int bar = 0; bar < kBarsPerPhrase; bar++) {
         int sec       = bar / kBarsPerSection;
@@ -466,13 +487,13 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
     m_phrase.erase(std::remove_if(m_phrase.begin(), m_phrase.end(),
         [](const NoteSlot& n) { return n.posInSteps >= kTurnaroundStartStep; }), m_phrase.end());
 
-    int turnaroundRate = (m_dials.voiceArtic > kArticulatedTurnaroundThreshold)
+    int turnaroundRate = (voice.voiceArtic > kArticulatedTurnaroundThreshold)
                          ? kFrequentTurnaroundPeriodPhrases : kSparseTurnaroundPeriodPhrases;
     if (m_phraseCount % turnaroundRate == 0) {
         int baseSemitoneOffset =
             scaleDegreeSemitones(m_scaleIdx, prog[(kBarsPerSection - 1) % kBarsPerChordCell]);
         int tBase = std::max(0, std::min(127, kRootNoteE2 + baseSemitoneOffset));
-        turnInterpreted(tBase, m_scaleIdx);
+        turnInterpreted(tBase, m_scaleIdx, voice);
     }
 
     std::sort(m_phrase.begin(), m_phrase.end(),
@@ -558,6 +579,8 @@ void BassEngine::setApproach(int approach) {
         m_scaleHoldPhrasesRemaining = 0;
         regeneratePhrase();
     } else {
+        m_hasPrevPhraseMotif        = false;
+        m_scaleHoldPhrasesRemaining = 0;
         m_regenPending = true;
     }
     ESP_LOGI(TAG, "Approach set to %d (bank %d)", m_approach, m_activeBank);
