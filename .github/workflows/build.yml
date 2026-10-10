@@ -7,10 +7,38 @@ on:
   workflow_dispatch:
 
 jobs:
+  resolve-idf-image:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.idf-image.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: idf-image
+        shell: bash
+        run: |
+          image="$(sed -n 's/^ARG IDF_IMAGE=//p' Dockerfile | head -n 1)"
+          digest="${image#espressif/idf@sha256:}"
+          if [ "$digest" = "$image" ] || [ "${#digest}" -ne 64 ]; then
+            echo "Dockerfile must declare ARG IDF_IMAGE as espressif/idf@sha256:<64 hex digits>, got '$image'"
+            exit 1
+          fi
+          case "$digest" in
+            *[!0-9a-f]*)
+              echo "Dockerfile ARG IDF_IMAGE digest is not lowercase hex: '$digest'"
+              exit 1
+              ;;
+          esac
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: resolve-idf-image
     runs-on: ubuntu-latest
     container:
-      image: espressif/idf:latest
+      image: ${{ needs.resolve-idf-image.outputs.image }}
 
     steps:
       - uses: actions/checkout@v4
@@ -45,35 +73,59 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BINS: build/link-idf-example.bin build/bootloader/bootloader.bin build/partition_table/partition-table.bin
         run: |
+          refuse_unless_bins_only() {
+            changed="$(git diff-tree --no-commit-id --name-only -r "$1")"
+            if [ -z "$changed" ]; then
+              echo "Refusing to push $1: it changes no file"
+              return 1
+            fi
+            printf '%s\n' "$changed" > "${RUNNER_TEMP:-/tmp}/ci-autobump-changed-paths"
+            while IFS= read -r path; do
+              case " $BINS " in
+                *" $path "*)
+                  ;;
+                *)
+                  echo "Refusing to push $1: it touches non-binary path $path"
+                  return 1
+                  ;;
+              esac
+            done < "${RUNNER_TEMP:-/tmp}/ci-autobump-changed-paths"
+          }
+
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}"
-          BINS="build/link-idf-example.bin build/bootloader/bootloader.bin build/partition_table/partition-table.bin"
+
           git add -f $BINS
-          git diff --cached --quiet && echo "No binary changes" && exit 0
-          # Pathspec-limited commit: the tree is HEAD plus these three working-tree
-          # files, so nothing else in the index can enter it.
+          if git diff --cached --quiet; then
+            echo "No binary changes"
+            exit 0
+          fi
           git commit -m "ci: update firmware binaries [skip ci]" -- $BINS
-          BUILT_SHA=$(git rev-parse HEAD)
+          refuse_unless_bins_only HEAD || exit 1
+          BUILT_SHA="$(git rev-parse HEAD)"
+
           for attempt in 1 2 3 4 5; do
             if git push origin HEAD:${{ github.ref_name }}; then
-              echo "Pushed binaries (attempt $attempt)"; exit 0
+              echo "Pushed binaries (attempt $attempt)"
+              exit 0
             fi
             echo "Push rejected (attempt $attempt) -- recommitting the built images onto latest ${{ github.ref_name }}"
-            git fetch origin ${{ github.ref_name }}
-            # NOT --soft: that moves HEAD to the fetched tip but leaves the index on the
-            # tree this checkout built, so the next commit diffs built_tree minus
-            # remote_tip and silently reverts every source commit that landed in
-            # between. Move branch, index and worktree to the fetched tip instead, then
-            # restore only the three images from the commit that built them: the diff
-            # is then bins-only by construction.
-            git reset --hard FETCH_HEAD
-            git checkout "$BUILT_SHA" -- $BINS
-            git diff --cached --quiet && echo "Binaries already current on ${{ github.ref_name }}" && exit 0
+            git fetch origin ${{ github.ref_name }} || { echo "Fetch of ${{ github.ref_name }} failed"; exit 1; }
+            FETCHED_SHA="$(git rev-parse FETCH_HEAD)"
+            git reset --hard "$FETCHED_SHA" || { echo "Reset to $FETCHED_SHA failed"; exit 1; }
+            git checkout "$BUILT_SHA" -- $BINS || { echo "Restore of images from $BUILT_SHA failed"; exit 1; }
+            if git diff --cached --quiet; then
+              echo "Binaries already current on ${{ github.ref_name }}"
+              exit 0
+            fi
             git commit -m "ci: update firmware binaries [skip ci]" -- $BINS
-            BUILT_SHA=$(git rev-parse HEAD)
+            refuse_unless_bins_only HEAD || exit 1
+            BUILT_SHA="$(git rev-parse HEAD)"
             sleep 3
           done
-          echo "Failed to push binaries after retries"; exit 1
+          echo "Failed to push binaries after retries"
+          exit 1

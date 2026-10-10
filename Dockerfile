@@ -1,4 +1,5 @@
-FROM espressif/idf:latest
+ARG IDF_IMAGE=espressif/idf@sha256:1355cce31b723f9c66ccbadc1d1e066653f463172452260c86aac194ecbfea95
+FROM ${IDF_IMAGE}
 
 WORKDIR /project
 
