@@ -178,10 +178,10 @@ def main():
     if missing:
         raise SystemExit("missing image(s): %s" % ", ".join(missing))
 
-    argv = ["--before", "no-reset", "--after", "no-reset", "--baud", args.baud,
-            "write-flash"]
+    argv = ["--before", "no-reset", "--after", "no-reset", "--baud", args.baud]
     if args.no_stub:
         argv.append("--no-stub")
+    argv.append("write-flash")
     for off, path in images:
         argv += [off, path]
     print("=== flashing: %s ===" % " ".join(argv[6:]), flush=True)

@@ -88,7 +88,7 @@ if __name__ == "__main__":
     print("=== 3. release RTS: ROM banner must appear ===", flush=True)
     d.hs(0); show("released 4s", d.read(4.0))
     print("=== 4. IO0 low across the EN edge ===", flush=True)
-    d.hs(BIT_RTS | BIT_DTR); time.sleep(0.3)
+    d.hs(BIT_RTS); time.sleep(0.3)
     d.hs(BIT_DTR); time.sleep(0.5)
     d.hs(0)
     show("after boot edge 5s", d.read(5.0))
