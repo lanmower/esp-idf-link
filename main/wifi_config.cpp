@@ -30,17 +30,23 @@ static const ip4_addr_t LINK_DISCOVERY_MULTICAST_GROUP = {
 static uint32_t g_igmp_join_ok = 0;
 static uint32_t g_igmp_join_fail = 0;
 
+static esp_err_t igmp_join_on_tcpip(void* ctx) {
+    struct netif* lwip_netif = (struct netif*)ctx;
+    if (!lwip_netif) return ESP_ERR_INVALID_ARG;
+    return igmp_joingroup_netif(lwip_netif, &LINK_DISCOVERY_MULTICAST_GROUP) == ERR_OK
+               ? ESP_OK
+               : ESP_FAIL;
+}
+
 static void igmp_join_link(esp_netif_t* netif) {
     if (!netif) return;
     struct netif* lwip_netif = (struct netif*)esp_netif_get_netif_impl(netif);
     if (!lwip_netif) return;
-    LOCK_TCPIP_CORE();
-    err_t err = igmp_joingroup_netif(lwip_netif, &LINK_DISCOVERY_MULTICAST_GROUP);
-    UNLOCK_TCPIP_CORE();
-    if (err == ERR_OK) g_igmp_join_ok++;
+    const esp_err_t err = esp_netif_tcpip_exec(igmp_join_on_tcpip, lwip_netif);
+    if (err == ESP_OK) g_igmp_join_ok++;
     else               g_igmp_join_fail++;
-    ESP_LOGI("WIFI", "IGMP join " LINK_DISCOVERY_MULTICAST_ADDR ": %s (ok=%u fail=%u)",
-             err == ERR_OK ? "ok" : "failed", g_igmp_join_ok, g_igmp_join_fail);
+    ESP_LOGI("WIFI", "IGMP join " LINK_DISCOVERY_MULTICAST_ADDR ": %s (ok=%u fail=%u err=%d)",
+             err == ESP_OK ? "ok" : "failed", g_igmp_join_ok, g_igmp_join_fail, (int)err);
 }
 
 static const char* TAG = "WIFI";
@@ -677,12 +683,50 @@ extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, u
 static const uint32_t RELAY_RECV_TIMEOUT_MS = 20;
 static const uint32_t RELAY_STOP_POLL_MS = 20;
 
-static void link_relay_release(int rs, struct raw_pcb* rpcb) {
-    if (rpcb) {
-        LOCK_TCPIP_CORE();
-        raw_remove(rpcb);
-        UNLOCK_TCPIP_CORE();
+struct RelayEmit {
+    struct raw_pcb* pcb;
+    struct pbuf*    p;
+    struct netif*   netif;
+    ip_addr_t       src;
+    ip_addr_t       group;
+    ip_addr_t       ap;
+    uint32_t        sta_ips[MAX_AP_STA_IPS];
+    int             sta_ip_count;
+    bool            from_self;
+};
+
+static esp_err_t relay_emit_on_tcpip(void* ctx) {
+    RelayEmit* e = (RelayEmit*)ctx;
+    if (!e->netif) return ESP_ERR_INVALID_STATE;
+    if (!e->from_self) {
+        raw_sendto_if_src(e->pcb, e->p, &e->group, e->netif, &e->src);
+        raw_sendto_if_src(e->pcb, e->p, &e->ap,    e->netif, &e->src);
     }
+    for (int i = 0; i < e->sta_ip_count; i++) {
+        ip_addr_t sta_addr;
+        ip_addr_set_ip4_u32(&sta_addr, e->sta_ips[i]);
+        raw_sendto_if_src(e->pcb, e->p, &sta_addr, e->netif, &e->src);
+    }
+    return ESP_OK;
+}
+
+struct RawPcbSlot {
+    struct raw_pcb* pcb;
+};
+
+static esp_err_t raw_new_on_tcpip(void* ctx) {
+    RawPcbSlot* slot = (RawPcbSlot*)ctx;
+    slot->pcb = raw_new(IPPROTO_UDP);
+    return slot->pcb ? ESP_OK : ESP_FAIL;
+}
+
+static esp_err_t raw_remove_on_tcpip(void* ctx) {
+    raw_remove((struct raw_pcb*)ctx);
+    return ESP_OK;
+}
+
+static void link_relay_release(int rs, struct raw_pcb* rpcb) {
+    if (rpcb) esp_netif_tcpip_exec(raw_remove_on_tcpip, rpcb);
     if (rs >= 0) close(rs);
     g_relay_task = NULL;
     vTaskDelete(NULL);
@@ -710,9 +754,9 @@ static void link_multicast_relay_task(void*) {
     inet_aton(AP_ADDR,    &mreq.imr_interface);
     setsockopt(rs, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
 
-    LOCK_TCPIP_CORE();
-    struct raw_pcb* rpcb = raw_new(IPPROTO_UDP);
-    UNLOCK_TCPIP_CORE();
+    RawPcbSlot slot = {NULL};
+    esp_netif_tcpip_exec(raw_new_on_tcpip, &slot);
+    struct raw_pcb* rpcb = slot.pcb;
     if (!rpcb) {
         ESP_LOGE(RELAY_TAG, "raw_new failed -- relay disabled");
         link_relay_release(rs, NULL); return;
@@ -762,10 +806,6 @@ static void link_multicast_relay_task(void*) {
         memcpy(buf + 6, &udp_checksum_omitted, 2);
         memcpy(buf + 8, payload, n);
 
-        ip_addr_t src_addr, dst_addr;
-        ip_addr_set_ip4_u32(&src_addr, src.sin_addr.s_addr);
-        ip_addr_set_ip4_u32(&dst_addr, mcast_ip);
-
         uint32_t sta_ips[MAX_AP_STA_IPS];
         int sta_ip_count = 0;
         for (int i = 0; i < MAX_AP_STA_IPS; i++) {
@@ -776,23 +816,23 @@ static void link_multicast_relay_task(void*) {
 
         SemaphoreHandle_t netif_lock = ap_netif_lock();
         xSemaphoreTake(netif_lock, portMAX_DELAY);
-        LOCK_TCPIP_CORE();
         struct netif* ap_lwip = g_ap_netif ? (struct netif*)esp_netif_get_netif_impl(g_ap_netif) : NULL;
-        if (ap_lwip) {
-            if (!from_self) {
-                raw_sendto_if_src(rpcb, p, &dst_addr, ap_lwip, &src_addr);
-                ip_addr_t ap_addr;
-                ip_addr_set_ip4_u32(&ap_addr, ap_ip);
-                raw_sendto_if_src(rpcb, p, &ap_addr, ap_lwip, &src_addr);
-            }
-            for (int i = 0; i < sta_ip_count; i++) {
-                ip_addr_t sta_addr;
-                ip_addr_set_ip4_u32(&sta_addr, sta_ips[i]);
-                raw_sendto_if_src(rpcb, p, &sta_addr, ap_lwip, &src_addr);
-            }
-        }
-        UNLOCK_TCPIP_CORE();
         xSemaphoreGive(netif_lock);
+
+        if (ap_lwip) {
+            RelayEmit emit;
+            memset(&emit, 0, sizeof(emit));
+            emit.pcb          = rpcb;
+            emit.p            = p;
+            emit.netif        = ap_lwip;
+            emit.sta_ip_count = sta_ip_count;
+            emit.from_self    = from_self;
+            ip_addr_set_ip4_u32(&emit.src,   src.sin_addr.s_addr);
+            ip_addr_set_ip4_u32(&emit.group, mcast_ip);
+            ip_addr_set_ip4_u32(&emit.ap,    ap_ip);
+            memcpy(emit.sta_ips, sta_ips, sizeof(sta_ips));
+            esp_netif_tcpip_exec(relay_emit_on_tcpip, &emit);
+        }
 
         pbuf_free(p);
     }
@@ -1039,8 +1079,9 @@ static void wifi_supervisor_task(void* arg) {
             if (igmp_reassert_countdown <= 0) {
                 SemaphoreHandle_t igmp_lock = ap_netif_lock();
                 xSemaphoreTake(igmp_lock, portMAX_DELAY);
-                igmp_join_link(g_ap_netif);
+                esp_netif_t* ap_netif = g_ap_netif;
                 xSemaphoreGive(igmp_lock);
+                igmp_join_link(ap_netif);
                 igmp_reassert_countdown = IGMP_REASSERT_PERIOD_TICKS;
             }
             igmp_reassert_countdown--;
