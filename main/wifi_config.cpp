@@ -335,6 +335,9 @@ volatile uint32_t g_link_msr_datapoints = 0;
 volatile uint32_t g_link_msr_nodata = 0;
 volatile uint32_t g_link_msr_fail_pts_last = 0;
 volatile uint32_t g_link_msr_fail_pts_max = 0;
+volatile uint32_t g_link_peer_mep_offlink = 0;
+volatile uint32_t g_link_peer_mep_offlink_ip = 0;
+volatile uint32_t g_link_peer_mep_offlink_port = 0;
 char g_link_pong_fail_msg[64] = {0};
 
 static bool has_link_magic(const uint8_t* d, unsigned len)
@@ -427,6 +430,13 @@ extern "C" void wifi_link_msr_fail_pts(unsigned n)
 {
     g_link_msr_fail_pts_last = n;
     if (n > g_link_msr_fail_pts_max) g_link_msr_fail_pts_max = n;
+}
+
+extern "C" void wifi_link_peer_mep_offlink(unsigned ip, unsigned port)
+{
+    g_link_peer_mep_offlink = g_link_peer_mep_offlink + 1;
+    g_link_peer_mep_offlink_ip = ip;
+    g_link_peer_mep_offlink_port = port;
 }
 
 extern "C" void wifi_link_pong_fail(const char* what)

@@ -522,6 +522,9 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     extern volatile uint32_t g_link_msr_fail_pts_last;
     extern volatile uint32_t g_link_msr_fail_pts_max;
     extern char g_link_pong_fail_msg[64];
+    extern volatile uint32_t g_link_peer_mep_offlink;
+    extern volatile uint32_t g_link_peer_mep_offlink_ip;
+    extern volatile uint32_t g_link_peer_mep_offlink_port;
     static int64_t s_hookLogAt = 0;
     int64_t nowH = esp_timer_get_time();
     if (nowH - s_hookLogAt > 5000000) {
@@ -578,6 +581,11 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
                  (g_link_peer_mep_ip >> 24) & 0xff, (g_link_peer_mep_ip >> 16) & 0xff,
                  (g_link_peer_mep_ip >> 8) & 0xff, g_link_peer_mep_ip & 0xff,
                  g_link_peer_mep_port);
+        ESP_LOGI(TAG_LINK, "Link offlink: drop=%u last=%u.%u.%u.%u:%u",
+                 g_link_peer_mep_offlink,
+                 (g_link_peer_mep_offlink_ip >> 24) & 0xff, (g_link_peer_mep_offlink_ip >> 16) & 0xff,
+                 (g_link_peer_mep_offlink_ip >> 8) & 0xff, g_link_peer_mep_offlink_ip & 0xff,
+                 g_link_peer_mep_offlink_port);
     }
 
     QuantumInfo quantumInfo = detectQuantumBoundary(state, time);

@@ -23,6 +23,8 @@
 #include <ableton/util/Injected.hpp>
 #include <cassert>
 
+extern "C" void wifi_link_peer_mep_offlink(unsigned ip, unsigned port);
+
 namespace ableton
 {
 namespace link
@@ -188,9 +190,31 @@ private:
     {
     }
 
+    static bool isEndpointOnGatewayLink(
+      const asio::ip::udp::endpoint& ep, const asio::ip::address& gatewayAddr)
+    {
+      if (!ep.address().is_v4() || !gatewayAddr.is_v4())
+      {
+        return true;
+      }
+      const auto peerNet = ep.address().to_v4().to_uint() & 0xffffff00u;
+      const auto gatewayNet = gatewayAddr.to_v4().to_uint() & 0xffffff00u;
+      return peerNet == gatewayNet;
+    }
+
     void sawPeerOnGateway(PeerState peerState, asio::ip::address gatewayAddr)
     {
       using namespace std;
+
+      if (!isEndpointOnGatewayLink(peerState.endpoint(), gatewayAddr))
+      {
+        wifi_link_peer_mep_offlink(
+          peerState.endpoint().address().is_v4()
+            ? peerState.endpoint().address().to_v4().to_uint()
+            : 0u,
+          peerState.endpoint().port());
+        return;
+      }
 
       const auto peerSession = peerState.sessionId();
       const auto peerTimeline = peerState.timeline();
