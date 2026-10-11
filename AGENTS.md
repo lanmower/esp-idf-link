@@ -259,17 +259,15 @@ waits 8 s, not 5 s.
 
 ## Live state 2026-10-11 (`ac377d6` -> `df18c36`)
 
-- **The ENOMEM send failure did NOT reproduce.** 240 s soak: 8526 sends, `fail=0 giveup=0
-  errno=0`, heap flat. **600 s soak:** peers=1 for all 120 `Link diag` samples,
-  `gw(try=1 ok=1 fail=0)`, STA held 192.168.4.19, 59/59 `txprobe` samples all error counters 0
-  with `pb=1`, `t_gw` 2.2-2.7 ms, rssi -47..-52, and measurements COMPLETE (`fin=3 fail=2` vs
-  the earlier `fin=0 fail=14`); Metro fired 35241, worst 8309 us, mean ~350 us. One bounded
-  exception: ~6 s burst at t=218.9-223.9 s — nine `sendfail`, `err=12`, `fail=28 giveup=9`, heap
-  min 108192, **inside an IGMP re-join window** (re-join 217700); never recurred. The `0a8760c`
-  capture read `fail=1501 giveup=396 errno=12` over a comparable window. **Unreproduced, NOT
-  fixed; cause unknown.** Both `e_*=12`s in the 75 s probe were the probe's own bugs, not the
-  app's. Suspects measured clean: socket/netconn exhaustion, PBUF_POOL, heap. Remaining: the
-  IGMP re-join window.
+- **The ENOMEM send failure did NOT reproduce.** 240 s: 8526 sends, `fail=0 giveup=0 errno=0`.
+  **1500 s soak on `df18c36` (06:07:25Z -> 06:32:22Z): 298 `peers=1` samples, ZERO `peers=0`,
+  zero drops, zero `sendfail`, zero `IP lost`, 50 IGMP re-joins (30 s cadence), `fin=55 fail=0`,
+  `pingtx=3063 pingfail=0`, `pongerr` empty, send `ok=16307 okretry=0 fail=0 giveup=0 errno=0`;
+  heap 123284-136176 (min 114384), rssi -42..-56, `t_gw` 2065-19418 us.** The earlier 600 s run
+  had one ~6 s burst at t=218.9-223.9 s (`err=12`, `fail=28 giveup=9`, heap 108192) **inside an
+  IGMP re-join window**; it never recurred in 25 min. `0a8760c` read `fail=1501 giveup=396
+  errno=12` over a comparable window. Both `e_*=12`s in the 75 s probe were the probe's own bugs
+  (`99.168.4.1`, missing `IP_MULTICAST_IF`). **Unreproduced, NOT fixed; cause unknown.**
 - On `df18c36` the send-side failure is **absent**: `pingfail=0`, `pongerr=` empty, `fin=2
   fail=0`, vs `pingtx=341 pingfail=51`, `pongerr=send_to: Not enough space`, `fin=0 fail=14`.
   First run with completed measurements and zero ping failures — evidence, not proof.
