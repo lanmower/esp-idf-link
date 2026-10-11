@@ -69,9 +69,10 @@ shows even in STA role.
 
 - `captureAppSessionState()`/`commitAppSessionState()` off the audio thread; the
   `AudioSessionState` variants only on it. This tree uses the App variants.
-- **Start/stop sync is OFF on purpose: the mesh is clock-only** (`b94ac2d`). With sync
-  off `isPlaying()` reads true all session, so gear gets one Start and never a Stop.
-  Re-enabling needs BOTH trees in one change plus a flash here.
+- **Start/stop sync is OFF on purpose: the mesh is clock-only** (`b94ac2d`). Measured
+  with sync off: `isPlaying()` reads **false** all session, not true — transport here is
+  ESP-local and gear never sees a Link Start/Stop from us. Re-enabling needs BOTH trees
+  in one change plus a flash here.
 - The three notification callbacks run on a Link-managed thread, **Realtime-safe: no**
   — bounded logging / atomics only.
 - `setTempo` rewrites tempo for EVERY peer. This tree sets it only on an explicit LTMP
@@ -89,6 +90,18 @@ because `git submodule update` would clobber the patch with no compile error and
 silently kill ESP peer discovery. No root `.gitmodules`, so `Dockerfile`, `setup.sh`
 and `build.yml` do NOT init submodules. Do not re-add. Two nested ones survive,
 inert: upstream's own, and `components/link-esp/.gitmodules`.
+
+Two API facts that cost a CI failure each, because both compile on the host and only
+break on-device: the vendored standalone asio takes **flags AFTER the endpoint**
+(`send_to(buffer, to, 0, ec)`), the opposite of Boost's `(buffer, flags, to, ec)`; and
+`PeerState::endpoint` is a **data member**, while
+`MeasurementService`/`PingResponder`/`Socket::endpoint()` are methods — `peerState.endpoint()`
+does not exist.
+
+Link carries tempo on the wire as **int64 microseconds-per-beat**, truncated not rounded
+(`link/include/ableton/link/Tempo.hpp:52`), so a peer publishing 119.049 round-trips with
+~1e-5 bpm of error. Our status JSON prints `st.tempo()` with `%.3f` and quantizes nothing,
+so a round number there is the session's real tempo, not our display.
 
 The divergence is the relay hook: `link/include/ableton/platforms/asio/Socket.hpp`
 declares `extern "C" wifi_link_multicast_forward(...)` and calls it on every send,
@@ -218,6 +231,35 @@ All payloads little-endian `int64`.
 | 20812 | esp -> group ~10 Hz | `TTMP` + microsPerBeat + beatOrigin microbeats + timeOrigin micros | esp -> looper timeline |
 | 20812 | request/response | any datagram -> one-line JSON | status: peers/bpm/playing/beat/phase/quantum/ap/metro |
 
+- **aloop binds only `224.76.78.75:20808`** (Pi AF_PACKET capture, 2026-10-11), so 20810
+  and 20812 are dropped at its IP layer — `Udp: IgnoredMulti` climbs ~57/s while
+  `NoPorts` stays frozen, i.e. our phase/timeline stream lands nowhere there. Agreed
+  split: **20808 stays pure Link** (Link parses every datagram on it as `_asdp_v1`;
+  injecting LCLK/TTMP would pollute discovery on both sides), so a peer that wants our
+  phase must itself bind 20810/20812. That change is one-sided on the peer.
+- aloop's bcm4343 DOES deliver unicast (its capture shows our pings arriving and its
+  replies leaving from the same ports), so the "unicast-RX wall" is not reproduced
+  there; the lost ping/pong on 2026-10-11 is the ESP's own send failure, below.
+- **Live defect 2026-10-11 — every UDP send eventually returns ENOMEM.** The failure is
+  **global and progressive, not per-destination**: `log_tx_probe()` (supervisor, 10 s)
+  sends from a *fresh* socket to the gateway, to an unroutable `.99` host and to the
+  group, and over 75 s went `0,0,0` (x3) -> `e_group=12` at 40 s -> `e_unknown=12` at
+  60 s -> `12,12,12` at 70 s. Link's own giveups start ~20 s in and accelerate
+  (1,2,6,7,13,26,53,85,125,163,220 per 5 s) — roughly doubling, i.e. the failure feeds
+  itself. Heap stays healthy (~116 KB free, min 108684, blk 110592) and RSSI is fine
+  (-48..-56, ch 6), and **RX never stalls** (~14.6 datagrams/s sustained the whole
+  window), so it is not heap, not signal, and probably not PBUF_POOL (RX would starve
+  too). Disproved: `CONFIG_ESP32_WIFI_DYNAMIC_TX_BUFFER_NUM` 32->64 (`7635004`) changed
+  nothing. Leading suspects: tcpip mailbox backing up (`CONFIG_LWIP_TCPIP_RECVMBOX_SIZE`
+  is already 64) or an ERR_MEM from `socket()`/netconn exhaustion, which lwIP also
+  reports as ENOMEM. Instrumented to separate them: `txprobe:` now carries `e_sock`
+  (errno from `socket()` itself), `pb` (a throwaway `pbuf_alloc` succeeding = pool not
+  drained) and `t_gw` (sendto latency, which grows if the tcpip thread is behind);
+  `log_send_failure_probe()` fires at the first 12 giveups (min 250 ms apart) and logs
+  `sendfail:` with a retry of the same destination plus the group and the same three
+  numbers.
+- `uc` sends run ~15/s **even with `peers=0`**, and RX total is ~14.6/s — near parity, so
+  the unicast volume tracks what we receive, not any peer we registered.
 - **Every multicast send must iterate the netifs and set `IP_MULTICAST_IF` per
   interface** (`esp_netif_next_unsafe`): a raw socket with no `IP_MULTICAST_IF` exits
   the wrong interface on a dual-netif device — Link's own socket reached the peer while

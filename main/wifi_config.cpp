@@ -15,6 +15,8 @@
 #include <lwip/pbuf.h>
 #include <lwip/ip_addr.h>
 #include <lwip/tcpip.h>
+#include <errno.h>
+#include <esp_system.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -527,6 +529,8 @@ extern "C" void wifi_link_send_dst(unsigned dstip, unsigned port) {
     }
 }
 
+static void log_send_failure_probe();
+
 extern "C" void wifi_link_send_note(unsigned kind, unsigned err) {
     if (kind == 0) g_link_send_ok_first = g_link_send_ok_first + 1;
     else if (kind == 1) g_link_send_ok_retry = g_link_send_ok_retry + 1;
@@ -536,6 +540,7 @@ extern "C" void wifi_link_send_note(unsigned kind, unsigned err) {
     } else if (kind == 3) {
         g_link_send_giveup = g_link_send_giveup + 1;
         g_link_send_errno = err;
+        log_send_failure_probe();
     }
 }
 
@@ -747,9 +752,10 @@ static const int AP_SCAN_EVERY_TICKS = 4;
 static const int TX_PROBE_EVERY_TICKS = 5;
 static const uint16_t TX_PROBE_PORT = 34999;
 
-static int udp_sendto_errno(uint32_t addr_network_order, uint16_t port_network_order) {
+static int udp_sendto_errno(uint32_t addr_network_order, uint16_t port_network_order, int* sock_err) {
     const int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (fd < 0) return errno;
+    if (sock_err) *sock_err = (fd < 0) ? errno : 0;
+    if (fd < 0) return -1;
     struct sockaddr_in dst;
     memset(&dst, 0, sizeof(dst));
     dst.sin_family = AF_INET;
@@ -760,6 +766,32 @@ static int udp_sendto_errno(uint32_t addr_network_order, uint16_t port_network_o
     const int err = (rc < 0) ? errno : 0;
     close(fd);
     return err;
+}
+
+static void log_send_failure_probe() {
+    static int s_budget = 12;
+    static int64_t s_last_us = 0;
+    const int64_t now_us = esp_timer_get_time();
+    if (s_budget <= 0) return;
+    if (now_us - s_last_us < 250000) return;
+    s_last_us = now_us;
+    s_budget = s_budget - 1;
+
+    struct pbuf* pb = pbuf_alloc(PBUF_RAW, 1, PBUF_POOL);
+    const int have_pb = pb ? 1 : 0;
+    if (pb) pbuf_free(pb);
+
+    const uint16_t probe_port = htons(TX_PROBE_PORT);
+    const uint32_t dst = g_link_send_dst_ip;
+    int sock_err = 0;
+    const int same = udp_sendto_errno(dst, htons((uint16_t)g_link_send_dst_port), &sock_err);
+    const int group = udp_sendto_errno(LINK_DISCOVERY_MULTICAST_GROUP.addr, probe_port, NULL);
+
+    ESP_LOGI(TAG, "sendfail: dst=%u.%u.%u.%u:%u err=%u same=%d group=%d sock=%d pb=%d heap=%u min=%u",
+             (unsigned)(dst & 0xffu), (unsigned)((dst >> 8) & 0xffu),
+             (unsigned)((dst >> 16) & 0xffu), (unsigned)((dst >> 24) & 0xffu),
+             g_link_send_dst_port, g_link_send_errno, same, group, sock_err, have_pb,
+             esp_get_free_heap_size(), esp_get_minimum_free_heap_size());
 }
 
 static void log_netif_state() {
@@ -785,16 +817,24 @@ static void log_tx_probe() {
     if (g_sta_netif && esp_netif_get_ip_info(g_sta_netif, &info) == ESP_OK) gw = info.gw.addr;
 
     const uint16_t port = htons(TX_PROBE_PORT);
-    const int to_gw = gw ? udp_sendto_errno(gw, port) : -1;
-    const int to_unknown = gw ? udp_sendto_errno((gw & 0xffffff00u) | 99u, port) : -1;
-    const int to_group = udp_sendto_errno(LINK_DISCOVERY_MULTICAST_GROUP.addr, port);
+    struct pbuf* pb = pbuf_alloc(PBUF_RAW, 1, PBUF_POOL);
+    const int have_pb = pb ? 1 : 0;
+    if (pb) pbuf_free(pb);
+
+    int sock_err = 0;
+    const int64_t t0_us = esp_timer_get_time();
+    const int to_gw = gw ? udp_sendto_errno(gw, port, &sock_err) : -1;
+    const int t_gw_us = (int)(esp_timer_get_time() - t0_us);
+    const int to_unknown = gw ? udp_sendto_errno((gw & 0xffffff00u) | 99u, port, NULL) : -1;
+    const int to_group = udp_sendto_errno(LINK_DISCOVERY_MULTICAST_GROUP.addr, port, NULL);
 
     wifi_ap_record_t ap;
     const bool have_ap = esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
-    ESP_LOGI(TAG, "txprobe: gw=%u.%u.%u.%u e_gw=%d e_unknown=%d e_group=%d rssi=%d chan=%d heap=%u",
+    ESP_LOGI(TAG, "txprobe: gw=%u.%u.%u.%u e_gw=%d e_unknown=%d e_group=%d e_sock=%d pb=%d t_gw=%d rssi=%d chan=%d heap=%u",
              (unsigned)((gw >> 24) & 0xffu), (unsigned)((gw >> 16) & 0xffu),
              (unsigned)((gw >> 8) & 0xffu), (unsigned)(gw & 0xffu),
-             to_gw, to_unknown, to_group, have_ap ? ap.rssi : 0,
+             to_gw, to_unknown, to_group, sock_err, have_pb, t_gw_us,
+             have_ap ? ap.rssi : 0,
              have_ap ? (int)ap.primary : 0, esp_get_free_heap_size());
     log_netif_state();
 }
