@@ -282,6 +282,78 @@ volatile uint32_t g_link_gw_init_attempts = 0;
 volatile uint32_t g_link_gw_init_ok = 0;
 volatile uint32_t g_link_gw_init_fail = 0;
 
+volatile uint32_t g_link_rx_total = 0;
+volatile uint32_t g_link_rx_badmagic = 0;
+volatile uint32_t g_link_rx_last_ip = 0;
+volatile uint32_t g_link_rx_last_port = 0;
+volatile uint32_t g_link_rx_last_len = 0;
+volatile uint32_t g_link_rx_last_type = 0;
+volatile uint32_t g_link_rx_alive = 0;
+volatile uint32_t g_link_rx_alive_ip = 0;
+volatile uint32_t g_link_rx_alive_port = 0;
+volatile uint32_t g_link_rx_response = 0;
+volatile uint32_t g_link_rx_byebye = 0;
+volatile uint32_t g_link_rx_unknown = 0;
+volatile uint32_t g_link_rx_self = 0;
+volatile uint32_t g_link_rx_group = 0;
+volatile uint32_t g_link_rx_state_ok = 0;
+volatile uint32_t g_link_rx_state_fail = 0;
+char g_link_rx_fail_msg[64] = {0};
+
+static bool has_link_magic(const uint8_t* d, unsigned len)
+{
+    static const uint8_t kMagic[8] = {'_', 'a', 's', 'd', 'p', '_', 'v', 1};
+    if (len < 20) return false;
+    for (unsigned i = 0; i < 8; i++) {
+        if (d[i] != kMagic[i]) return false;
+    }
+    return true;
+}
+
+extern "C" void wifi_link_rx_datagram(unsigned srcip, unsigned srcport, unsigned len, const uint8_t* data)
+{
+    g_link_rx_total = g_link_rx_total + 1;
+    g_link_rx_last_ip = srcip;
+    g_link_rx_last_port = srcport;
+    g_link_rx_last_len = len;
+    if (!has_link_magic(data, len)) {
+        g_link_rx_badmagic = g_link_rx_badmagic + 1;
+        g_link_rx_last_type = 0xfffffffe;
+        return;
+    }
+    g_link_rx_last_type = (unsigned)data[8] | ((unsigned)data[9] << 8);
+}
+
+extern "C" void wifi_link_rx_note(unsigned kind, unsigned srcip, unsigned srcport)
+{
+    switch (kind) {
+    case 1:
+        g_link_rx_alive = g_link_rx_alive + 1;
+        g_link_rx_alive_ip = srcip;
+        g_link_rx_alive_port = srcport;
+        break;
+    case 2: g_link_rx_response = g_link_rx_response + 1; break;
+    case 3: g_link_rx_byebye = g_link_rx_byebye + 1; break;
+    case 4: g_link_rx_unknown = g_link_rx_unknown + 1; break;
+    case 5: g_link_rx_self = g_link_rx_self + 1; break;
+    case 6: g_link_rx_group = g_link_rx_group + 1; break;
+    case 7: g_link_rx_state_ok = g_link_rx_state_ok + 1; break;
+    default: break;
+    }
+}
+
+extern "C" void wifi_link_rx_fail(const char* what)
+{
+    g_link_rx_state_fail = g_link_rx_state_fail + 1;
+    if (!what) return;
+    unsigned i = 0;
+    while (i + 1 < sizeof(g_link_rx_fail_msg) && what[i] != 0) {
+        g_link_rx_fail_msg[i] = what[i];
+        i = i + 1;
+    }
+    g_link_rx_fail_msg[i] = 0;
+}
+
 static bool is_ipv4_multicast_dst(unsigned dstip) {
     const uint8_t first_octet = (dstip >> 24) & 0xff;
     return first_octet >= 224 && first_octet <= 239;
@@ -291,6 +363,31 @@ extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, u
     g_link_send_hook_calls = g_link_send_hook_calls + 1;
     g_link_send_last_dstip = dstip;
     g_link_send_last_dport = dport;
+
+    static int s_tx_dump = 0;
+    if (is_ipv4_multicast_dst(dstip) && s_tx_dump < 2 && len >= 20) {
+        s_tx_dump = s_tx_dump + 1;
+        uint64_t ident = 0;
+        for (unsigned i = 0; i < 8; i++) ident = (ident << 8) | (uint64_t)data[12 + i];
+        ESP_LOGI(TAG, "LINK tx announce type=%u ttl=%u group=%u ident=%08llx%08llx len=%u",
+                 (unsigned)data[8], (unsigned)data[9],
+                 ((unsigned)data[10] << 8) | (unsigned)data[11],
+                 (unsigned long long)((ident >> 32) & 0xffffffffu),
+                 (unsigned long long)(ident & 0xffffffffu), len);
+        unsigned off = 20;
+        while (off + 8 <= len) {
+            const uint32_t key = ((uint32_t)data[off] << 24) | ((uint32_t)data[off + 1] << 16) |
+                                 ((uint32_t)data[off + 2] << 8) | (uint32_t)data[off + 3];
+            const uint32_t esize = ((uint32_t)data[off + 4] << 24) |
+                                   ((uint32_t)data[off + 5] << 16) |
+                                   ((uint32_t)data[off + 6] << 8) | (uint32_t)data[off + 7];
+            ESP_LOGI(TAG, "LINK tx entry %c%c%c%c size=%u",
+                     (int)((key >> 24) & 0xff), (int)((key >> 16) & 0xff),
+                     (int)((key >> 8) & 0xff), (int)(key & 0xff), (unsigned)esize);
+            off = off + 8 + esize;
+        }
+    }
+
     if (!is_ipv4_multicast_dst(dstip)) return;
     if (!g_ap_active) return;
 

@@ -28,6 +28,7 @@
 // discovery datagram so the app can unicast-bridge it across the ESP32 SoftAP boundary,
 // which does not carry multicast between the host and its stations. No-op elsewhere.
 extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, unsigned dport, unsigned dstip);
+extern "C" void wifi_link_rx_datagram(unsigned srcip, unsigned srcport, unsigned len, const uint8_t* data);
 
 namespace ableton
 {
@@ -103,6 +104,9 @@ struct Socket
       if (!error && numBytes > 0 && numBytes <= MaxPacketSize)
       {
         const auto bufBegin = begin(mReceiveBuffer);
+        wifi_link_rx_datagram(
+          mSenderEndpoint.address().is_v4() ? mSenderEndpoint.address().to_v4().to_uint() : 0u,
+          mSenderEndpoint.port(), static_cast<unsigned>(numBytes), mReceiveBuffer.data());
         mHandler(mSenderEndpoint, bufBegin, bufBegin + static_cast<ptrdiff_t>(numBytes));
       }
     }

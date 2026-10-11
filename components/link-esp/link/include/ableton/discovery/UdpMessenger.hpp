@@ -28,6 +28,9 @@
 #include <algorithm>
 #include <memory>
 
+extern "C" void wifi_link_rx_note(unsigned kind, unsigned srcip, unsigned srcport);
+extern "C" void wifi_link_rx_fail(const char* what);
+
 namespace ableton
 {
 namespace discovery
@@ -247,29 +250,36 @@ private:
     {
       auto result = v1::parseMessageHeader<NodeId>(messageBegin, messageEnd);
 
+      const unsigned srcip = from.address().is_v4() ? from.address().to_v4().to_uint() : 0u;
+      const unsigned srcport = from.port();
+
       const auto& header = result.first;
       // Ignore messages from self and other groups
       if (header.ident != mState.ident() && header.groupId == 0)
       {
-        debug(mIo->log()) << "Received message type "
-                          << static_cast<int>(header.messageType) << " from peer "
-                          << header.ident;
-
         switch (header.messageType)
         {
         case v1::kAlive:
+          wifi_link_rx_note(1, srcip, srcport);
           sendResponse(from);
           receivePeerState(std::move(result.first), result.second, messageEnd);
           break;
         case v1::kResponse:
+          wifi_link_rx_note(2, srcip, srcport);
           receivePeerState(std::move(result.first), result.second, messageEnd);
           break;
         case v1::kByeBye:
+          wifi_link_rx_note(3, srcip, srcport);
           receiveByeBye(std::move(result.first.ident));
           break;
         default:
+          wifi_link_rx_note(4, srcip, srcport);
           info(mIo->log()) << "Unknown message received of type: " << header.messageType;
         }
+      }
+      else
+      {
+        wifi_link_rx_note(header.ident == mState.ident() ? 5 : 6, srcip, srcport);
       }
       listen(tag);
     }
@@ -282,6 +292,7 @@ private:
       {
         auto state = NodeState::fromPayload(
           std::move(header.ident), std::move(payloadBegin), std::move(payloadEnd));
+        wifi_link_rx_note(7, 0, 0);
 
         // Handlers must only be called once
         auto handler = std::move(mPeerStateHandler);
@@ -290,6 +301,7 @@ private:
       }
       catch (const std::runtime_error& err)
       {
+        wifi_link_rx_fail(err.what());
         info(mIo->log()) << "Ignoring peer state message: " << err.what();
       }
     }

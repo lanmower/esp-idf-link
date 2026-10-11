@@ -467,6 +467,23 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     extern volatile uint32_t g_link_gw_init_attempts;
     extern volatile uint32_t g_link_gw_init_ok;
     extern volatile uint32_t g_link_gw_init_fail;
+    extern volatile uint32_t g_link_rx_total;
+    extern volatile uint32_t g_link_rx_badmagic;
+    extern volatile uint32_t g_link_rx_alive;
+    extern volatile uint32_t g_link_rx_alive_ip;
+    extern volatile uint32_t g_link_rx_alive_port;
+    extern volatile uint32_t g_link_rx_response;
+    extern volatile uint32_t g_link_rx_byebye;
+    extern volatile uint32_t g_link_rx_unknown;
+    extern volatile uint32_t g_link_rx_self;
+    extern volatile uint32_t g_link_rx_group;
+    extern volatile uint32_t g_link_rx_state_ok;
+    extern volatile uint32_t g_link_rx_state_fail;
+    extern volatile uint32_t g_link_rx_last_ip;
+    extern volatile uint32_t g_link_rx_last_port;
+    extern volatile uint32_t g_link_rx_last_len;
+    extern volatile uint32_t g_link_rx_last_type;
+    extern char g_link_rx_fail_msg[64];
     static int64_t s_hookLogAt = 0;
     int64_t nowH = esp_timer_get_time();
     if (nowH - s_hookLogAt > 5000000) {
@@ -483,6 +500,17 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
         const MetroStats ms = metro_stats();
         ESP_LOGI(TAG_LINK, "Metro: fired=%u late last=%lldus worst=%lldus mean=%.0fus rms=%.0fus",
                  (unsigned)ms.fired, (long long)ms.last, (long long)ms.worst, ms.mean, ms.rms);
+        ESP_LOGI(TAG_LINK, "Link rx: total=%u bad=%u alive=%u resp=%u bye=%u unk=%u self=%u grp=%u ok=%u fail=%u",
+                 g_link_rx_total, g_link_rx_badmagic, g_link_rx_alive, g_link_rx_response,
+                 g_link_rx_byebye, g_link_rx_unknown, g_link_rx_self, g_link_rx_group,
+                 g_link_rx_state_ok, g_link_rx_state_fail);
+        ESP_LOGI(TAG_LINK, "Link rx last: %u.%u.%u.%u:%u len=%u type=0x%x alivesrc=%u.%u.%u.%u:%u err=%s",
+                 (g_link_rx_last_ip >> 24) & 0xff, (g_link_rx_last_ip >> 16) & 0xff,
+                 (g_link_rx_last_ip >> 8) & 0xff, g_link_rx_last_ip & 0xff,
+                 g_link_rx_last_port, g_link_rx_last_len, g_link_rx_last_type,
+                 (g_link_rx_alive_ip >> 24) & 0xff, (g_link_rx_alive_ip >> 16) & 0xff,
+                 (g_link_rx_alive_ip >> 8) & 0xff, g_link_rx_alive_ip & 0xff,
+                 g_link_rx_alive_port, g_link_rx_fail_msg);
     }
 
     QuantumInfo quantumInfo = detectQuantumBoundary(state, time);
