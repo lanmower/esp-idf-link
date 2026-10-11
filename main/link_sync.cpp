@@ -468,6 +468,7 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
 {
     static bool s_pending_realign = false;
     static bool s_transport_running = false;
+    static int64_t s_peer_lost_at_us = 0;
 
     broadcast_link_clock(time.count());
     broadcast_ticker_timeline(state, time.count());
@@ -648,6 +649,11 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     if (is_connected != was_connected) {
         ESP_LOGI(TAG_LINK, "Link peers changed: %d", g_link->numPeers());
         if (is_connected) {
+            if (s_peer_lost_at_us != 0) {
+                ESP_LOGI(TAG_LINK, "Link peer back after %lld ms",
+                         (long long)((esp_timer_get_time() - s_peer_lost_at_us) / 1000));
+                s_peer_lost_at_us = 0;
+            }
             ESP_LOGI(TAG_LINK, "Link connected -- beat=%.3f phase=%.3f quantum=%d phrase=%d",
                      quantumInfo.sessionBeat, quantumInfo.phaseWithinQuantum,
                      quantumInfo.currentQuantumNumber, quantumInfo.currentPhraseNumber);
@@ -658,6 +664,8 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
             send_midi_bytes(stop_msg, 1);
             send_all_notes_off_all_channels();
             s_transport_running = false;
+            s_peer_lost_at_us = esp_timer_get_time();
+            wifi_log_peer_loss_state();
             ESP_LOGI(TAG_LINK, "Link peer lost -- sent Stop + All Notes Off.");
         }
         was_connected = is_connected;

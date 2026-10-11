@@ -27,6 +27,9 @@ static const ip4_addr_t LINK_DISCOVERY_MULTICAST_GROUP = {
                                   LINK_MCAST_OCTET_C, LINK_MCAST_OCTET_D))
 };
 
+static uint32_t g_igmp_join_ok = 0;
+static uint32_t g_igmp_join_fail = 0;
+
 static void igmp_join_link(esp_netif_t* netif) {
     if (!netif) return;
     struct netif* lwip_netif = (struct netif*)esp_netif_get_netif_impl(netif);
@@ -34,7 +37,10 @@ static void igmp_join_link(esp_netif_t* netif) {
     LOCK_TCPIP_CORE();
     err_t err = igmp_joingroup_netif(lwip_netif, &LINK_DISCOVERY_MULTICAST_GROUP);
     UNLOCK_TCPIP_CORE();
-    ESP_LOGI("WIFI", "IGMP join " LINK_DISCOVERY_MULTICAST_ADDR ": %s", err == ERR_OK ? "ok" : "failed");
+    if (err == ERR_OK) g_igmp_join_ok++;
+    else               g_igmp_join_fail++;
+    ESP_LOGI("WIFI", "IGMP join " LINK_DISCOVERY_MULTICAST_ADDR ": %s (ok=%u fail=%u)",
+             err == ERR_OK ? "ok" : "failed", g_igmp_join_ok, g_igmp_join_fail);
 }
 
 static const char* TAG = "WIFI";
@@ -922,6 +928,22 @@ static void log_netif_state() {
             ESP_LOGI(TAG, "netif %s up=%d link=%d ip=none", name, (int)esp_netif_is_netif_up(n), link_up);
         }
     }
+}
+
+void wifi_log_peer_loss_state() {
+    wifi_ap_record_t ap;
+    const bool have_ap = esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
+    esp_netif_ip_info_t info;
+    uint32_t sta_ip = 0;
+    if (g_sta_netif && esp_netif_get_ip_info(g_sta_netif, &info) == ESP_OK) sta_ip = info.ip.addr;
+    ip4_addr_t sta_ip_addr;
+    sta_ip_addr.addr = sta_ip;
+    ESP_LOGI(TAG, "peerloss: flag=%d ap=%d ap_sta=%d ip=" IPSTR " rssi=%d chan=%d igmp(ok=%u fail=%u) heap=%u min=%u",
+             g_wifi_connected, g_ap_active, g_ap_client_count, IP2STR(&sta_ip_addr),
+             have_ap ? ap.rssi : 0, have_ap ? (int)ap.primary : 0,
+             g_igmp_join_ok, g_igmp_join_fail,
+             esp_get_free_heap_size(), esp_get_minimum_free_heap_size());
+    log_netif_state();
 }
 
 static void log_tx_probe() {

@@ -40,6 +40,7 @@ void      wifi_stop_link_relay();
 void      wifi_close_link_forward();
 bool      wifi_is_connected();
 bool      wifi_is_ap_active();
+void      wifi_log_peer_loss_state();
 void      wifi_get_sta_mac(uint8_t out_mac[kMacLen]);
 void      wifi_start_supervisor(const char* ssid);
 
