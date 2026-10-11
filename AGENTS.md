@@ -410,8 +410,9 @@ so its absolute times must be reconstructed — always log a wall clock ourside.
 
 ## Comment sweep (INVARIANT 3)
 
-`main/` and `tools/` are **comment-free** (41 files, 8809 lines, 0 comments; recount before
-quoting). Only false positive: the string `"/upload/*"` in `network_midi.cpp`.
+`main/` is **comment-free**: 42 files, 8811 lines, 0 hits for `^\s*(//|/\*)` and 0 for
+`\s(//|/\*)` (recount 2026-10-11). Only comment-looking string: `"/upload/*"` in
+`network_midi.cpp`. `tools/` is swept separately; recount before quoting either.
 
 ## gm usage gotchas
 
