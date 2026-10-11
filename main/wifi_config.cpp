@@ -9,6 +9,7 @@
 #include <lwip/netif.h>
 #include <esp_mac.h>
 #include <esp_timer.h>
+#include <esp_wifi.h>
 #include <lwip/sockets.h>
 #include <lwip/inet.h>
 #include <lwip/raw.h>
@@ -829,6 +830,9 @@ static void log_send_failure_probe() {
     linkmemerr = (unsigned)lwip_stats.link.memerr;
 #endif
 #endif
+
+    const uint32_t kAllWifiStatisModules = 0xffffffffu;
+    esp_wifi_statis_dump(kAllWifiStatisModules);
 
     ESP_LOGI(TAG, "sendfail: dst=%u.%u.%u.%u:%u err=%u same=%d group=%d sock=%d pb=%d stall=%dms/%d memerr=%u linkdrop=%u linkmemerr=%u heap=%u min=%u",
              (unsigned)(dst & 0xffu), (unsigned)((dst >> 8) & 0xffu),
