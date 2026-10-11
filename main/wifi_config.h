@@ -36,6 +36,8 @@ esp_err_t wifi_connect_sta(const char* ssid, const char* password);
 esp_err_t wifi_start_link_ap(const char* ssid);
 void      wifi_join_link_multicast();
 void      wifi_start_link_relay();
+void      wifi_stop_link_relay();
+void      wifi_close_link_forward();
 bool      wifi_is_connected();
 bool      wifi_is_ap_active();
 void      wifi_get_sta_mac(uint8_t out_mac[kMacLen]);

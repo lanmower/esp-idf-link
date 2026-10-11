@@ -57,8 +57,26 @@ static void remember_ap_sta_ip(uint32_t ip) {
 static esp_netif_t* g_sta_netif = NULL;
 static esp_netif_t* g_ap_netif = NULL;
 static SemaphoreHandle_t g_ap_netif_lock = NULL;
-static TaskHandle_t g_relay_task = NULL;
+static TaskHandle_t volatile g_relay_task = NULL;
 static volatile bool g_relay_stop = false;
+
+static int g_fwd_sock = -1;
+static SemaphoreHandle_t g_fwd_lock = NULL;
+
+static SemaphoreHandle_t fwd_sock_lock() {
+    if (!g_fwd_lock) g_fwd_lock = xSemaphoreCreateMutex();
+    return g_fwd_lock;
+}
+
+void wifi_close_link_forward() {
+    SemaphoreHandle_t lock = fwd_sock_lock();
+    xSemaphoreTake(lock, portMAX_DELAY);
+    if (g_fwd_sock >= 0) {
+        close(g_fwd_sock);
+        g_fwd_sock = -1;
+    }
+    xSemaphoreGive(lock);
+}
 
 static SemaphoreHandle_t ap_netif_lock() {
     if (!g_ap_netif_lock) g_ap_netif_lock = xSemaphoreCreateMutex();
@@ -67,6 +85,8 @@ static SemaphoreHandle_t ap_netif_lock() {
 
 static const int64_t STA_RECONNECT_MIN_INTERVAL_US = 1000000;
 static int64_t s_last_sta_reconnect_us = 0;
+
+static bool sta_has_ip();
 
 static void request_sta_reconnect(const char* why) {
     if (!g_sta_wanted) return;
@@ -115,6 +135,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t base,
 
 esp_err_t wifi_config_init() {
     ap_netif_lock();
+    fwd_sock_lock();
     esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                         wifi_event_handler, NULL, NULL);
     esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID,
@@ -241,7 +262,12 @@ esp_err_t wifi_start_link_ap(const char* ssid) {
     if (!g_ap_netif) {
         g_ap_netif = esp_netif_create_default_wifi_ap();
     }
+    esp_netif_t* ap = g_ap_netif;
     xSemaphoreGive(ap_lock);
+    if (!ap) {
+        ESP_LOGE(TAG, "AP netif unavailable -- not hosting");
+        return ESP_ERR_INVALID_STATE;
+    }
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
 
     wifi_config_t cfg = {};
@@ -263,18 +289,20 @@ esp_err_t wifi_start_link_ap(const char* ssid) {
     ip.ip.addr      = ipaddr_addr("192.168.4.1");
     ip.gw.addr      = ipaddr_addr("192.168.4.1");
     ip.netmask.addr = ipaddr_addr("255.255.255.0");
-    ESP_ERROR_CHECK(esp_netif_dhcps_stop(g_ap_netif));
-    ESP_ERROR_CHECK(esp_netif_set_ip_info(g_ap_netif, &ip));
-    ESP_ERROR_CHECK(esp_netif_dhcps_start(g_ap_netif));
+    ESP_ERROR_CHECK(esp_netif_dhcps_stop(ap));
+    ESP_ERROR_CHECK(esp_netif_set_ip_info(ap, &ip));
+    ESP_ERROR_CHECK(esp_netif_dhcps_start(ap));
 
     g_ap_active = true;
     g_ap_client_count = 0;
+    for (int i = 0; i < MAX_AP_STA_IPS; i++) g_ap_sta_ips[i] = AP_STA_IP_SLOT_EMPTY;
     ESP_LOGI(TAG, "Link AP '%s' on ch6, 192.168.4.1, max 8 clients", ssid);
-    igmp_join_link(g_ap_netif);
+    igmp_join_link(ap);
     return ESP_OK;
 }
 
 void wifi_join_link_multicast() {
+    if (!sta_has_ip()) return;
     igmp_join_link(g_sta_netif);
 }
 
@@ -608,10 +636,18 @@ extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, u
     if (!is_ipv4_multicast_dst(dstip)) return;
     if (!g_ap_active) return;
 
-    static int s_fwd_sock = -1;
-    if (s_fwd_sock < 0) {
-        s_fwd_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        if (s_fwd_sock < 0) return;
+    SemaphoreHandle_t fwd_lock = fwd_sock_lock();
+    xSemaphoreTake(fwd_lock, portMAX_DELAY);
+    if (!g_ap_active) {
+        xSemaphoreGive(fwd_lock);
+        return;
+    }
+    if (g_fwd_sock < 0) {
+        g_fwd_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (g_fwd_sock < 0) {
+            xSemaphoreGive(fwd_lock);
+            return;
+        }
     }
     struct sockaddr_in dst = {};
     dst.sin_family = AF_INET;
@@ -623,10 +659,11 @@ extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, u
         uint32_t ip = g_ap_sta_ips[i];
         if (ip == AP_STA_IP_SLOT_EMPTY) continue;
         dst.sin_addr.s_addr = ip;
-        sendto(s_fwd_sock, data, len, 0, (struct sockaddr*)&dst, sizeof(dst));
+        sendto(g_fwd_sock, data, len, 0, (struct sockaddr*)&dst, sizeof(dst));
         sent++;
     }
     if (s_fwd_log < 8) { ESP_LOGI(TAG, "LINK fwd(AP) %u bytes -> %d station(s)", len, sent); s_fwd_log++; }
+    xSemaphoreGive(fwd_lock);
 }
 
 static const uint32_t RELAY_RECV_TIMEOUT_MS = 20;
@@ -754,11 +791,26 @@ static void link_multicast_relay_task(void*) {
     link_relay_release(rs, rpcb);
 }
 
-void wifi_start_link_relay() {
-    if (g_relay_task) {
-        g_relay_stop = true;
-        while (g_relay_task) vTaskDelay(pdMS_TO_TICKS(RELAY_STOP_POLL_MS));
+static const int RELAY_STOP_MAX_POLLS = 100;
+
+void wifi_stop_link_relay() {
+    if (!g_relay_task) return;
+    g_relay_stop = true;
+    int polls = 0;
+    while (g_relay_task && polls < RELAY_STOP_MAX_POLLS) {
+        vTaskDelay(pdMS_TO_TICKS(RELAY_STOP_POLL_MS));
+        polls++;
     }
+    if (g_relay_task) {
+        ESP_LOGE(TAG, "relay did not stop after %d polls -- leaving it running", polls);
+        return;
+    }
+    g_relay_stop = false;
+}
+
+void wifi_start_link_relay() {
+    wifi_stop_link_relay();
+    if (g_relay_task) return;
     g_relay_stop = false;
     xTaskCreate(link_multicast_relay_task, "link_relay", 4096, NULL, 5, &g_relay_task);
 }
@@ -980,11 +1032,13 @@ static void wifi_supervisor_task(void* arg) {
                 ESP_LOGW(TAG, "Lost dual-host tie-break (lower BSSID seen) -- dropping AP, joining");
                 esp_wifi_stop();
                 g_wifi_started = false;
+                g_ap_active = false;
+                wifi_stop_link_relay();
+                wifi_close_link_forward();
                 SemaphoreHandle_t ap_lock = ap_netif_lock();
                 xSemaphoreTake(ap_lock, portMAX_DELAY);
                 if (g_ap_netif) { esp_netif_destroy(g_ap_netif); g_ap_netif = NULL; }
                 xSemaphoreGive(ap_lock);
-                g_ap_active = false;
                 ensure_sta_started();
                 wifi_connect_sta(ssid, "");
                 wifi_join_link_multicast();
