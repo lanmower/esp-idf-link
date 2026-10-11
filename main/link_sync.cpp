@@ -484,6 +484,32 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     extern volatile uint32_t g_link_rx_last_len;
     extern volatile uint32_t g_link_rx_last_type;
     extern char g_link_rx_fail_msg[64];
+    extern volatile uint32_t g_link_ping_rx;
+    extern volatile uint32_t g_link_ping_rx_ip;
+    extern volatile uint32_t g_link_ping_rx_port;
+    extern volatile uint32_t g_link_ping_rx_last_type;
+    extern volatile uint32_t g_link_ping_rx_last_len;
+    extern volatile uint32_t g_link_pong_tx;
+    extern volatile uint32_t g_link_pong_tx_fail;
+    extern volatile uint32_t g_link_pong_tx_ip;
+    extern volatile uint32_t g_link_pong_tx_port;
+    extern volatile uint32_t g_link_msr_rx;
+    extern volatile uint32_t g_link_msr_rx_last_type;
+    extern volatile uint32_t g_link_msr_rx_last_len;
+    extern volatile uint32_t g_link_msr_match;
+    extern volatile uint32_t g_link_msr_mismatch;
+    extern volatile uint32_t g_link_msr_parsefail;
+    extern volatile uint32_t g_link_msr_finish;
+    extern volatile uint32_t g_link_msr_fail;
+    extern volatile uint32_t g_link_msr_start;
+    extern volatile uint32_t g_link_msr_start_ip;
+    extern volatile uint32_t g_link_msr_start_port;
+    extern volatile uint32_t g_link_peer_mep_ip;
+    extern volatile uint32_t g_link_peer_mep_port;
+    extern volatile uint32_t g_link_peer_sess_lo;
+    extern volatile uint32_t g_link_peer_sess_hi;
+    extern volatile uint32_t g_link_self_sess_lo;
+    extern volatile uint32_t g_link_self_sess_hi;
     static int64_t s_hookLogAt = 0;
     int64_t nowH = esp_timer_get_time();
     if (nowH - s_hookLogAt > 5000000) {
@@ -511,6 +537,29 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
                  (g_link_rx_alive_ip >> 24) & 0xff, (g_link_rx_alive_ip >> 16) & 0xff,
                  (g_link_rx_alive_ip >> 8) & 0xff, g_link_rx_alive_ip & 0xff,
                  g_link_rx_alive_port, g_link_rx_fail_msg);
+        ESP_LOGI(TAG_LINK, "Link msr: start=%u to=%u.%u.%u.%u:%u rx=%u type=%u len=%u match=%u mism=%u parse=%u fin=%u fail=%u",
+                 g_link_msr_start,
+                 (g_link_msr_start_ip >> 24) & 0xff, (g_link_msr_start_ip >> 16) & 0xff,
+                 (g_link_msr_start_ip >> 8) & 0xff, g_link_msr_start_ip & 0xff,
+                 g_link_msr_start_port,
+                 g_link_msr_rx, g_link_msr_rx_last_type, g_link_msr_rx_last_len,
+                 g_link_msr_match, g_link_msr_mismatch, g_link_msr_parsefail,
+                 g_link_msr_finish, g_link_msr_fail);
+        ESP_LOGI(TAG_LINK, "Link ping: rx=%u last=%u.%u.%u.%u:%u type=%u len=%u pongtx=%u fail=%u to=%u.%u.%u.%u:%u",
+                 g_link_ping_rx,
+                 (g_link_ping_rx_ip >> 24) & 0xff, (g_link_ping_rx_ip >> 16) & 0xff,
+                 (g_link_ping_rx_ip >> 8) & 0xff, g_link_ping_rx_ip & 0xff,
+                 g_link_ping_rx_port, g_link_ping_rx_last_type, g_link_ping_rx_last_len,
+                 g_link_pong_tx, g_link_pong_tx_fail,
+                 (g_link_pong_tx_ip >> 24) & 0xff, (g_link_pong_tx_ip >> 16) & 0xff,
+                 (g_link_pong_tx_ip >> 8) & 0xff, g_link_pong_tx_ip & 0xff,
+                 g_link_pong_tx_port);
+        ESP_LOGI(TAG_LINK, "Link sess: self=%08x%08x peer=%08x%08x peer_mep=%u.%u.%u.%u:%u",
+                 (unsigned)g_link_self_sess_hi, (unsigned)g_link_self_sess_lo,
+                 (unsigned)g_link_peer_sess_hi, (unsigned)g_link_peer_sess_lo,
+                 (g_link_peer_mep_ip >> 24) & 0xff, (g_link_peer_mep_ip >> 16) & 0xff,
+                 (g_link_peer_mep_ip >> 8) & 0xff, g_link_peer_mep_ip & 0xff,
+                 g_link_peer_mep_port);
     }
 
     QuantumInfo quantumInfo = detectQuantumBoundary(state, time);

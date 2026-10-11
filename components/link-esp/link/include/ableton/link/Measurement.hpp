@@ -29,6 +29,10 @@
 #include <chrono>
 #include <memory>
 
+extern "C" void wifi_link_msr_rx(unsigned mtype, unsigned len);
+extern "C" void wifi_link_msr_note(unsigned kind);
+extern "C" void wifi_link_msr_start(unsigned ip, unsigned port);
+
 namespace ableton
 {
 namespace link
@@ -83,6 +87,9 @@ struct Measurement
       , mLog(channel(io->log(), "Measurement on gateway@" + address.to_string()))
       , mSuccess(false)
     {
+      wifi_link_msr_start(
+        state.endpoint.address().is_v4() ? state.endpoint.address().to_v4().to_uint() : 0u,
+        state.endpoint.port());
       const auto ht = HostTime{mClock.micros()};
       sendPing(mEndpoint, discovery::makePayload(ht));
       resetTimer();
@@ -125,6 +132,9 @@ struct Measurement
       const auto& header = result.first;
       const auto payloadBegin = result.second;
 
+      wifi_link_msr_rx(header.messageType,
+        static_cast<unsigned>(std::distance(messageBegin, messageEnd)));
+
       if (header.messageType == v1::kPong)
       {
         debug(mLog) << "Received Pong message from " << from;
@@ -147,12 +157,14 @@ struct Measurement
         catch (const std::runtime_error& err)
         {
           warning(mLog) << "Failed parsing payload, caught exception: " << err.what();
+          wifi_link_msr_note(3);
           listen();
           return;
         }
 
         if (mSessionId == sessionId)
         {
+          wifi_link_msr_note(1);
           const auto hostTime = mClock.micros();
 
           const auto payload =
@@ -181,6 +193,7 @@ struct Measurement
         }
         else
         {
+          wifi_link_msr_note(2);
           fail();
         }
       }
@@ -214,6 +227,7 @@ struct Measurement
     {
       mTimer.cancel();
       mSuccess = true;
+      wifi_link_msr_note(4);
       debug(mLog) << "Measuring " << mEndpoint << " done.";
       mCallback(mData);
     }
@@ -221,6 +235,7 @@ struct Measurement
     void fail()
     {
       mData.clear();
+      wifi_link_msr_note(5);
       debug(mLog) << "Measuring " << mEndpoint << " failed.";
       mCallback(mData);
     }

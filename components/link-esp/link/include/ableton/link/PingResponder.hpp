@@ -28,6 +28,9 @@
 #include <chrono>
 #include <memory>
 
+extern "C" void wifi_link_ping_rx(unsigned srcip, unsigned srcport, unsigned mtype, unsigned len);
+extern "C" void wifi_link_pong_tx(unsigned ok, unsigned dstip, unsigned dstport);
+
 namespace ableton
 {
 namespace link
@@ -111,6 +114,10 @@ private:
       const auto& header = result.first;
       const auto payloadBegin = result.second;
 
+      wifi_link_ping_rx(from.address().is_v4() ? from.address().to_v4().to_uint() : 0u,
+        from.port(), header.messageType,
+        static_cast<unsigned>(std::distance(begin, end)));
+
       // Check Payload size
       const auto payloadSize = static_cast<std::size_t>(std::distance(payloadBegin, end));
       const auto maxPayloadSize =
@@ -122,9 +129,13 @@ private:
         try
         {
           reply(std::move(payloadBegin), std::move(end), from);
+          wifi_link_pong_tx(1,
+            from.address().is_v4() ? from.address().to_v4().to_uint() : 0u, from.port());
         }
         catch (const std::runtime_error& err)
         {
+          wifi_link_pong_tx(0,
+            from.address().is_v4() ? from.address().to_v4().to_uint() : 0u, from.port());
           info(mLog) << " Failed to send pong to " << from << ". Reason: " << err.what();
         }
       }

@@ -300,6 +300,33 @@ volatile uint32_t g_link_rx_state_ok = 0;
 volatile uint32_t g_link_rx_state_fail = 0;
 char g_link_rx_fail_msg[64] = {0};
 
+volatile uint32_t g_link_ping_rx = 0;
+volatile uint32_t g_link_ping_rx_ip = 0;
+volatile uint32_t g_link_ping_rx_port = 0;
+volatile uint32_t g_link_ping_rx_last_type = 0;
+volatile uint32_t g_link_ping_rx_last_len = 0;
+volatile uint32_t g_link_pong_tx = 0;
+volatile uint32_t g_link_pong_tx_fail = 0;
+volatile uint32_t g_link_pong_tx_ip = 0;
+volatile uint32_t g_link_pong_tx_port = 0;
+volatile uint32_t g_link_msr_rx = 0;
+volatile uint32_t g_link_msr_rx_last_type = 0;
+volatile uint32_t g_link_msr_rx_last_len = 0;
+volatile uint32_t g_link_msr_match = 0;
+volatile uint32_t g_link_msr_mismatch = 0;
+volatile uint32_t g_link_msr_parsefail = 0;
+volatile uint32_t g_link_msr_finish = 0;
+volatile uint32_t g_link_msr_fail = 0;
+volatile uint32_t g_link_msr_start = 0;
+volatile uint32_t g_link_msr_start_ip = 0;
+volatile uint32_t g_link_msr_start_port = 0;
+volatile uint32_t g_link_peer_mep_ip = 0;
+volatile uint32_t g_link_peer_mep_port = 0;
+volatile uint32_t g_link_peer_sess_lo = 0;
+volatile uint32_t g_link_peer_sess_hi = 0;
+volatile uint32_t g_link_self_sess_lo = 0;
+volatile uint32_t g_link_self_sess_hi = 0;
+
 static bool has_link_magic(const uint8_t* d, unsigned len)
 {
     static const uint8_t kMagic[8] = {'_', 'a', 's', 'd', 'p', '_', 'v', 1};
@@ -308,6 +335,73 @@ static bool has_link_magic(const uint8_t* d, unsigned len)
         if (d[i] != kMagic[i]) return false;
     }
     return true;
+}
+
+static void capture_announce_fields(const uint8_t* d, unsigned len)
+{
+    unsigned off = 20;
+    while (off + 8 <= len) {
+        const uint32_t key = ((uint32_t)d[off] << 24) | ((uint32_t)d[off + 1] << 16) |
+                             ((uint32_t)d[off + 2] << 8) | (uint32_t)d[off + 3];
+        const uint32_t esize = ((uint32_t)d[off + 4] << 24) | ((uint32_t)d[off + 5] << 16) |
+                               ((uint32_t)d[off + 6] << 8) | (uint32_t)d[off + 7];
+        if (off + 8 + esize > len) return;
+        const uint8_t* v = d + off + 8;
+        if (key == 0x73657373u && esize >= 8) {
+            g_link_peer_sess_hi = ((uint32_t)v[0] << 24) | ((uint32_t)v[1] << 16) |
+                                  ((uint32_t)v[2] << 8) | (uint32_t)v[3];
+            g_link_peer_sess_lo = ((uint32_t)v[4] << 24) | ((uint32_t)v[5] << 16) |
+                                  ((uint32_t)v[6] << 8) | (uint32_t)v[7];
+        } else if (key == 0x6d657034u && esize >= 6) {
+            g_link_peer_mep_ip = ((uint32_t)v[0] << 24) | ((uint32_t)v[1] << 16) |
+                                 ((uint32_t)v[2] << 8) | (uint32_t)v[3];
+            g_link_peer_mep_port = ((uint32_t)v[4] << 8) | (uint32_t)v[5];
+        }
+        off = off + 8 + esize;
+    }
+}
+
+extern "C" void wifi_link_ping_rx(unsigned srcip, unsigned srcport, unsigned mtype, unsigned len)
+{
+    g_link_ping_rx = g_link_ping_rx + 1;
+    g_link_ping_rx_ip = srcip;
+    g_link_ping_rx_port = srcport;
+    g_link_ping_rx_last_type = mtype;
+    g_link_ping_rx_last_len = len;
+}
+
+extern "C" void wifi_link_pong_tx(unsigned ok, unsigned dstip, unsigned dstport)
+{
+    if (ok) g_link_pong_tx = g_link_pong_tx + 1;
+    else g_link_pong_tx_fail = g_link_pong_tx_fail + 1;
+    g_link_pong_tx_ip = dstip;
+    g_link_pong_tx_port = dstport;
+}
+
+extern "C" void wifi_link_msr_rx(unsigned mtype, unsigned len)
+{
+    g_link_msr_rx = g_link_msr_rx + 1;
+    g_link_msr_rx_last_type = mtype;
+    g_link_msr_rx_last_len = len;
+}
+
+extern "C" void wifi_link_msr_note(unsigned kind)
+{
+    switch (kind) {
+    case 1: g_link_msr_match = g_link_msr_match + 1; break;
+    case 2: g_link_msr_mismatch = g_link_msr_mismatch + 1; break;
+    case 3: g_link_msr_parsefail = g_link_msr_parsefail + 1; break;
+    case 4: g_link_msr_finish = g_link_msr_finish + 1; break;
+    case 5: g_link_msr_fail = g_link_msr_fail + 1; break;
+    default: break;
+    }
+}
+
+extern "C" void wifi_link_msr_start(unsigned ip, unsigned port)
+{
+    g_link_msr_start = g_link_msr_start + 1;
+    g_link_msr_start_ip = ip;
+    g_link_msr_start_port = port;
 }
 
 extern "C" void wifi_link_rx_datagram(unsigned srcip, unsigned srcport, unsigned len, const uint8_t* data)
@@ -322,6 +416,7 @@ extern "C" void wifi_link_rx_datagram(unsigned srcip, unsigned srcport, unsigned
         return;
     }
     g_link_rx_last_type = (unsigned)data[8] | ((unsigned)data[9] << 8);
+    capture_announce_fields(data, len);
 }
 
 extern "C" void wifi_link_rx_note(unsigned kind, unsigned srcip, unsigned srcport)
@@ -365,6 +460,19 @@ extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, u
     g_link_send_last_dport = dport;
 
     static int s_tx_dump = 0;
+    if (is_ipv4_multicast_dst(dstip) && len >= 20 && has_link_magic(data, len) && data[8] == 1) {
+        const uint32_t keep_lo = g_link_self_sess_lo;
+        const uint32_t keep_hi = g_link_self_sess_hi;
+        const uint32_t keep_mep_ip = g_link_peer_mep_ip;
+        const uint32_t keep_mep_port = g_link_peer_mep_port;
+        capture_announce_fields(data, len);
+        g_link_self_sess_lo = g_link_peer_sess_lo;
+        g_link_self_sess_hi = g_link_peer_sess_hi;
+        g_link_peer_sess_lo = keep_lo;
+        g_link_peer_sess_hi = keep_hi;
+        g_link_peer_mep_ip = keep_mep_ip;
+        g_link_peer_mep_port = keep_mep_port;
+    }
     if (is_ipv4_multicast_dst(dstip) && s_tx_dump < 2 && len >= 20) {
         s_tx_dump = s_tx_dump + 1;
         uint64_t ident = 0;
