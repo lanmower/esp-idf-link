@@ -252,11 +252,16 @@ MIDI emission — one path, no per-device clock code; bytes are constants in `ma
 peer loss (CC123 keeps RC-505 MK2 loops from sticking). SPP counts MIDI beats (sixteenths): 1 Link
 beat = 4 units, 14-bit LSB first. Start deferred to the next phrase boundary; `s_transport_running`
 records what gear was last TOLD, not `isPlaying()`; force-start waits 8 s. NRPN sequence, note-off
-velocity 0, UART TX ring buffer, `syncToBpm` and the per-target table are in `CLAUDE.md` / the top
-of `link_sync.cpp`.
+velocity 0, UART TX ring buffer and `syncToBpm` are in `CLAUDE.md`. **No per-target compatibility
+table exists in `link_sync.cpp`** — `CLAUDE.md:28` points at one that is not there; the KO2 /
+RC-505 / MicroKorg per-target facts survive only as those two CC caveats.
 
 ## Live state 2026-10-11
 
+- **Flashed 08:01:00Z..08:01:50Z** from CI binaries `51aded2` (source `eec4578` = `f0fc252` + docs):
+  50 s, app 20.9 s @500.7 kbit/s, hash verified, `boot:0x13`. Cold boot scanned 1 `ticker` AP
+  (`e4:5f:01:53:f0:f1`), joined STA `192.168.4.19`, IGMP ok, `txprobe e_gw=0 e_unknown=0 e_group=0
+  e_sock=0`. First image carrying `dc9add9` + `f0fc252`; mc-420 re-soaking.
 - **The ENOMEM send failure did NOT reproduce; cause unknown.** 1500 s soak on `df18c36`
   (06:07:25Z..06:32:22Z): 298 `peers=1`, zero `peers=0`/drops/`sendfail`/`IP lost`; `fin=55 fail=0`,
   `pingtx=3063 pingfail=0`, `ok=16307 fail=0 giveup=0 errno=0`; heap 123284-136176, rssi -42..-56.
@@ -405,7 +410,8 @@ so its absolute times must be reconstructed — always log a wall clock ourside.
 
 ## Comment sweep (INVARIANT 3)
 
-`main/` is **comment-free** (39 source files, 7882 lines, 0 `^\s*(//|/\*)`; recount before quoting).
+`main/` and `tools/` are **comment-free** (41 files, 8809 lines, 0 comments; recount before
+quoting). Only false positive: the string `"/upload/*"` in `network_midi.cpp`.
 
 ## gm usage gotchas
 
