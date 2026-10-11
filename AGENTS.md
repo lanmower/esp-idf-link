@@ -44,7 +44,7 @@ Supervisor (`wifi_config.cpp`, 2 s cadence, forever):
 - **Self-BSSID guard reads the interface** (`esp_wifi_get_mac(WIFI_IF_AP)`), never an inferred MAC —
   `esp_read_mac()` reads eFuse and may differ; without it the box flaps AP->STA->AP every tick.
 - IGMP re-joined on yield, not only at boot; since `579d4ef` also in **AP role** (was STA-only,
-  one-shot at AP start). Lease proof: `WIFI: IP: 192.168.4.x`.
+  one-shot at AP start). Lease proof: `WIFI: IP: 192.168.4.x`. IGMP joins run under `LOCK_TCPIP_CORE()`; order stays ap_lock -> tcpip, same as the relay.
 - **Hosting scan pinned to the mesh channel**: the election scan needs `ensure_sta_started()` ->
   `WIFI_MODE_APSTA`, and an all-channel scan dwells off-channel, interrupting SoftAP beaconing, so a
   station associating inside a scan window never finishes DHCP. Supervisor passes `kTickerChannel`;

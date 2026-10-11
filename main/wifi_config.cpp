@@ -31,7 +31,9 @@ static void igmp_join_link(esp_netif_t* netif) {
     if (!netif) return;
     struct netif* lwip_netif = (struct netif*)esp_netif_get_netif_impl(netif);
     if (!lwip_netif) return;
+    LOCK_TCPIP_CORE();
     err_t err = igmp_joingroup_netif(lwip_netif, &LINK_DISCOVERY_MULTICAST_GROUP);
+    UNLOCK_TCPIP_CORE();
     ESP_LOGI("WIFI", "IGMP join " LINK_DISCOVERY_MULTICAST_ADDR ": %s", err == ERR_OK ? "ok" : "failed");
 }
 
