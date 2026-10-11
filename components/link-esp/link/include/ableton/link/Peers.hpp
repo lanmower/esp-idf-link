@@ -213,7 +213,6 @@ private:
             ? peerState.endpoint().address().to_v4().to_uint()
             : 0u,
           peerState.endpoint().port());
-        return;
       }
 
       const auto peerSession = peerState.sessionId();

@@ -281,6 +281,16 @@ volatile uint32_t g_link_scan_last_count = 0;
 volatile uint32_t g_link_gw_init_attempts = 0;
 volatile uint32_t g_link_gw_init_ok = 0;
 volatile uint32_t g_link_gw_init_fail = 0;
+volatile uint32_t g_link_send_mc = 0;
+volatile uint32_t g_link_send_mc_20808 = 0;
+volatile uint32_t g_link_send_uc = 0;
+volatile uint32_t g_link_send_dst_ip = 0;
+volatile uint32_t g_link_send_dst_port = 0;
+volatile uint32_t g_link_send_ok_first = 0;
+volatile uint32_t g_link_send_ok_retry = 0;
+volatile uint32_t g_link_send_fail_attempt = 0;
+volatile uint32_t g_link_send_giveup = 0;
+volatile uint32_t g_link_send_errno = 0;
 
 volatile uint32_t g_link_rx_total = 0;
 volatile uint32_t g_link_rx_badmagic = 0;
@@ -504,6 +514,33 @@ extern "C" void wifi_link_rx_fail(const char* what)
 static bool is_ipv4_multicast_dst(unsigned dstip) {
     const uint8_t first_octet = (dstip >> 24) & 0xff;
     return first_octet >= 224 && first_octet <= 239;
+}
+
+extern "C" void wifi_link_send_dst(unsigned dstip, unsigned port) {
+    g_link_send_dst_ip = dstip;
+    g_link_send_dst_port = port;
+    if (is_ipv4_multicast_dst(dstip)) {
+        g_link_send_mc = g_link_send_mc + 1;
+        if (port == 20808) g_link_send_mc_20808 = g_link_send_mc_20808 + 1;
+    } else {
+        g_link_send_uc = g_link_send_uc + 1;
+    }
+}
+
+extern "C" void wifi_link_send_note(unsigned kind, unsigned err) {
+    if (kind == 0) g_link_send_ok_first = g_link_send_ok_first + 1;
+    else if (kind == 1) g_link_send_ok_retry = g_link_send_ok_retry + 1;
+    else if (kind == 2) {
+        g_link_send_fail_attempt = g_link_send_fail_attempt + 1;
+        g_link_send_errno = err;
+    } else if (kind == 3) {
+        g_link_send_giveup = g_link_send_giveup + 1;
+        g_link_send_errno = err;
+    }
+}
+
+extern "C" void wifi_link_send_backoff() {
+    vTaskDelay(1);
 }
 
 extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, unsigned dport, unsigned dstip) {

@@ -8,6 +8,8 @@
 #include <lwip/sockets.h>
 #include <lwip/inet.h>
 #include "esp_netif.h"
+#include "esp_heap_caps.h"
+#include "esp_system.h"
 #include "wifi_config.h"
 
 extern const uint8_t MIDI_USER_CHANNEL_MIN;
@@ -525,6 +527,16 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     extern volatile uint32_t g_link_peer_mep_offlink;
     extern volatile uint32_t g_link_peer_mep_offlink_ip;
     extern volatile uint32_t g_link_peer_mep_offlink_port;
+    extern volatile uint32_t g_link_send_mc;
+    extern volatile uint32_t g_link_send_mc_20808;
+    extern volatile uint32_t g_link_send_uc;
+    extern volatile uint32_t g_link_send_dst_ip;
+    extern volatile uint32_t g_link_send_dst_port;
+    extern volatile uint32_t g_link_send_ok_first;
+    extern volatile uint32_t g_link_send_ok_retry;
+    extern volatile uint32_t g_link_send_fail_attempt;
+    extern volatile uint32_t g_link_send_giveup;
+    extern volatile uint32_t g_link_send_errno;
     static int64_t s_hookLogAt = 0;
     int64_t nowH = esp_timer_get_time();
     if (nowH - s_hookLogAt > 5000000) {
@@ -586,6 +598,15 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
                  (g_link_peer_mep_offlink_ip >> 24) & 0xff, (g_link_peer_mep_offlink_ip >> 16) & 0xff,
                  (g_link_peer_mep_offlink_ip >> 8) & 0xff, g_link_peer_mep_offlink_ip & 0xff,
                  g_link_peer_mep_offlink_port);
+        ESP_LOGI(TAG_LINK, "Link send: last=%u.%u.%u.%u:%u mc=%u mc20808=%u uc=%u ok=%u okretry=%u fail=%u giveup=%u errno=%u heap=%u min=%u blk=%u",
+                 (g_link_send_dst_ip >> 24) & 0xff, (g_link_send_dst_ip >> 16) & 0xff,
+                 (g_link_send_dst_ip >> 8) & 0xff, g_link_send_dst_ip & 0xff,
+                 g_link_send_dst_port,
+                 g_link_send_mc, g_link_send_mc_20808, g_link_send_uc,
+                 g_link_send_ok_first, g_link_send_ok_retry, g_link_send_fail_attempt,
+                 g_link_send_giveup, g_link_send_errno,
+                 (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     }
 
     QuantumInfo quantumInfo = detectQuantumBoundary(state, time);

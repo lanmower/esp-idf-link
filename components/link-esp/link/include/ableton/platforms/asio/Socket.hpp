@@ -23,12 +23,19 @@
 #include <ableton/util/SafeAsyncHandler.hpp>
 #include <array>
 #include <cassert>
+#include <stdexcept>
+#include <string>
 
 // Provided by the application (main/wifi_config.cpp). Called for every multicast Link
 // discovery datagram so the app can unicast-bridge it across the ESP32 SoftAP boundary,
 // which does not carry multicast between the host and its stations. No-op elsewhere.
 extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, unsigned dport, unsigned dstip);
 extern "C" void wifi_link_rx_datagram(unsigned srcip, unsigned srcport, unsigned len, const uint8_t* data);
+extern "C" void wifi_link_send_dst(unsigned dstip, unsigned port);
+extern "C" void wifi_link_send_note(unsigned kind, unsigned err);
+#if defined(ESP_PLATFORM)
+extern "C" void wifi_link_send_backoff();
+#endif
 
 namespace ableton
 {
@@ -58,13 +65,31 @@ struct Socket
     const ::asio::ip::udp::endpoint& to)
   {
     assert(numBytes < MaxPacketSize);
-    const std::size_t sent = mpImpl->mSocket.send_to(::asio::buffer(pData, numBytes), to);
-    // Bridge Link traffic across the ESP32 SoftAP (which drops host<->station multicast).
-    // Forward to the app hook, which decides delivery by role. Pass the destination IP so
-    // the hook can distinguish multicast discovery from unicast measurement and only
-    // bridge what needs bridging. is_multicast() alone proved unreliable, so hand the
-    // hook the raw destination and let it filter.
     const unsigned dstip = to.address().is_v4() ? to.address().to_v4().to_uint() : 0u;
+    wifi_link_send_dst(dstip, to.port());
+
+    const unsigned kSendAttempts = 3;
+    std::size_t sent = 0;
+    for (unsigned attempt = 0; attempt < kSendAttempts; ++attempt)
+    {
+      ::asio::error_code ec;
+      sent = mpImpl->mSocket.send_to(::asio::buffer(pData, numBytes), 0, to, ec);
+      if (!ec)
+      {
+        wifi_link_send_note(attempt == 0 ? 0u : 1u, 0u);
+        break;
+      }
+      wifi_link_send_note(2u, static_cast<unsigned>(ec.value()));
+      if (attempt + 1 == kSendAttempts)
+      {
+        wifi_link_send_note(3u, static_cast<unsigned>(ec.value()));
+        throw std::runtime_error{"send_to: " + ec.message()};
+      }
+#if defined(ESP_PLATFORM)
+      wifi_link_send_backoff();
+#endif
+    }
+
     wifi_link_multicast_forward(pData, static_cast<unsigned>(numBytes), to.port(), dstip);
     return sent;
   }
