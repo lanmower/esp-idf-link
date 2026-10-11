@@ -13,6 +13,7 @@ class UsbipPort(Ch341):
     def __init__(self, timeout=1.0):
         Ch341.__init__(self)
         self.rxbuf = bytearray()
+        self._min_timeout = 2.0
         self.timeout = timeout
         self.write_timeout = None
         self.baudrate = 115200
@@ -69,6 +70,14 @@ class UsbipPort(Ch341):
     @property
     def in_waiting(self):
         return self.inWaiting()
+
+    @property
+    def timeout(self):
+        return self._timeout
+
+    @timeout.setter
+    def timeout(self, value):
+        self._timeout = value if value and value > self._min_timeout else self._min_timeout
 
     def flushInput(self):
         self.rxbuf.clear()

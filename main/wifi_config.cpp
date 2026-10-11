@@ -762,6 +762,8 @@ void wifi_start_link_relay() {
 static const int AP_SCAN_EVERY_TICKS = 4;
 static const int TX_PROBE_EVERY_TICKS = 5;
 static const uint16_t TX_PROBE_PORT = 34999;
+static const uint8_t TX_PROBE_SILENT_HOST_LAST_OCTET = 99;
+static const unsigned TX_PROBE_LAST_OCTET_SHIFT = 24;
 
 static int udp_sendto_errno(uint32_t addr_network_order, uint16_t port_network_order, int* sock_err) {
     const int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -873,14 +875,17 @@ static void log_tx_probe() {
     const int64_t t0_us = esp_timer_get_time();
     const int to_gw = gw ? udp_sendto_errno(gw, port, &sock_err) : -1;
     const int t_gw_us = (int)(esp_timer_get_time() - t0_us);
-    const int to_unknown = gw ? udp_sendto_errno((gw & 0xffffff00u) | 99u, port, NULL) : -1;
+    const uint32_t same_subnet_silent_host =
+        (gw & 0x00ffffffu) | ((uint32_t)TX_PROBE_SILENT_HOST_LAST_OCTET << TX_PROBE_LAST_OCTET_SHIFT);
+    const int to_unknown = gw ? udp_sendto_errno(same_subnet_silent_host, port, NULL) : -1;
     const int to_group = udp_sendto_errno(LINK_DISCOVERY_MULTICAST_GROUP.addr, port, NULL);
 
+    ip4_addr_t gw_ip;
+    gw_ip.addr = gw;
     wifi_ap_record_t ap;
     const bool have_ap = esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
-    ESP_LOGI(TAG, "txprobe: gw=%u.%u.%u.%u e_gw=%d e_unknown=%d e_group=%d e_sock=%d pb=%d t_gw=%d rssi=%d chan=%d heap=%u",
-             (unsigned)((gw >> 24) & 0xffu), (unsigned)((gw >> 16) & 0xffu),
-             (unsigned)((gw >> 8) & 0xffu), (unsigned)(gw & 0xffu),
+    ESP_LOGI(TAG, "txprobe: gw=" IPSTR " e_gw=%d e_unknown=%d e_group=%d e_sock=%d pb=%d t_gw=%d rssi=%d chan=%d heap=%u",
+             IP2STR(&gw_ip),
              to_gw, to_unknown, to_group, sock_err, have_pb, t_gw_us,
              have_ap ? ap.rssi : 0,
              have_ap ? (int)ap.primary : 0, esp_get_free_heap_size());

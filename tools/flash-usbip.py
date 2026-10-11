@@ -18,6 +18,7 @@ SYNC_BODY = (struct.pack("<BBHI", SLIP_REQUEST, CMD_SYNC, len(SYNC_PAYLOAD), 0)
              + SYNC_PAYLOAD)
 OFF_BOOTLOADER, OFF_PARTITIONS = "0x1000", "0x8000"
 ROM_BAUD = 115200
+FLASH_ATTEMPTS = 6
 PARTITION_MAGIC, PARTITION_ENTRY_SIZE, PARTITION_TYPE_APP = 0x50AA, 32, 0
 
 
@@ -157,7 +158,11 @@ def main():
     esp = enter_and_sync(port, ROM_BAUD)
     print("  sync ok  chip=esp32  mac=%s" %
           ":".join("%02X" % b for b in esp.read_mac()), flush=True)
-    print("  flash id=0x%06x" % esp.flash_id(), flush=True)
+    try:
+        print("  flash id=0x%06x" % esp.flash_id(), flush=True)
+    except BaseException as e:
+        print("  flash id unreadable (%s: %s) -- benign in download mode, continuing"
+              % (type(e).__name__, e), flush=True)
 
     if args.dry:
         print("=== dry run: booting back into the app ===", flush=True)
@@ -186,12 +191,23 @@ def main():
         argv += [off, path]
     print("=== flashing: %s ===" % " ".join(argv[6:]), flush=True)
     import esptool
-    flashed = True
-    try:
-        esptool.main(argv, esp=esp)
-    except BaseException as e:
-        flashed = False
-        print("  esptool raised %s: %s" % (type(e).__name__, e), flush=True)
+    flashed = False
+    for attempt in range(1, FLASH_ATTEMPTS + 1):
+        try:
+            esptool.main(argv, esp=esp)
+            flashed = True
+            break
+        except BaseException as e:
+            print("  attempt %d/%d: esptool raised %s: %s"
+                  % (attempt, FLASH_ATTEMPTS, type(e).__name__, e), flush=True)
+            if attempt >= FLASH_ATTEMPTS:
+                break
+            print("  re-entering download mode and re-syncing", flush=True)
+            try:
+                esp = enter_and_sync(port, ROM_BAUD)
+            except BaseException as e2:
+                print("  re-sync failed: %s: %s" % (type(e2).__name__, e2), flush=True)
+                break
 
     print("=== booting the new firmware (EN pulse, IO0 high) ===", flush=True)
     if not flashed:
