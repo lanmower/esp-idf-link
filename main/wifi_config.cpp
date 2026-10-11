@@ -812,7 +812,12 @@ void wifi_start_link_relay() {
     wifi_stop_link_relay();
     if (g_relay_task) return;
     g_relay_stop = false;
-    xTaskCreate(link_multicast_relay_task, "link_relay", 4096, NULL, 5, &g_relay_task);
+    TaskHandle_t relay_task = NULL;
+    if (xTaskCreate(link_multicast_relay_task, "link_relay", 4096, NULL, 5, &relay_task) != pdPASS) {
+        ESP_LOGE(TAG, "relay task create failed");
+        return;
+    }
+    g_relay_task = relay_task;
 }
 
 static const int AP_SCAN_EVERY_TICKS = 4;
