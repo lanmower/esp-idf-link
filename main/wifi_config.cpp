@@ -531,6 +531,14 @@ extern "C" void wifi_link_send_dst(unsigned dstip, unsigned port) {
 
 static void log_send_failure_probe();
 
+static constexpr uint32_t SEND_BACKOFF_MAX_TICKS = 8;
+static uint32_t s_send_fail_streak = 0;
+
+static void note_send_result(bool ok) {
+    if (ok) s_send_fail_streak = 0;
+    else if (s_send_fail_streak < 8) s_send_fail_streak = s_send_fail_streak + 1;
+}
+
 extern "C" void wifi_link_send_note(unsigned kind, unsigned err) {
     if (kind == 0) g_link_send_ok_first = g_link_send_ok_first + 1;
     else if (kind == 1) g_link_send_ok_retry = g_link_send_ok_retry + 1;
@@ -542,10 +550,12 @@ extern "C" void wifi_link_send_note(unsigned kind, unsigned err) {
         g_link_send_errno = err;
         log_send_failure_probe();
     }
+    note_send_result(kind == 0 || kind == 1);
 }
 
 extern "C" void wifi_link_send_backoff() {
-    vTaskDelay(1);
+    const uint32_t ticks = (s_send_fail_streak == 0) ? 1u : (1u << s_send_fail_streak);
+    vTaskDelay(ticks > SEND_BACKOFF_MAX_TICKS ? SEND_BACKOFF_MAX_TICKS : ticks);
 }
 
 extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, unsigned dport, unsigned dstip) {
@@ -756,6 +766,14 @@ static int udp_sendto_errno(uint32_t addr_network_order, uint16_t port_network_o
     const int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock_err) *sock_err = (fd < 0) ? errno : 0;
     if (fd < 0) return -1;
+    if (is_ipv4_multicast_dst(addr_network_order)) {
+        esp_netif_ip_info_t ipinfo;
+        if (g_sta_netif && esp_netif_get_ip_info(g_sta_netif, &ipinfo) == ESP_OK && ipinfo.ip.addr != 0) {
+            struct in_addr ifaddr;
+            ifaddr.s_addr = ipinfo.ip.addr;
+            setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &ifaddr, sizeof ifaddr);
+        }
+    }
     struct sockaddr_in dst;
     memset(&dst, 0, sizeof(dst));
     dst.sin_family = AF_INET;

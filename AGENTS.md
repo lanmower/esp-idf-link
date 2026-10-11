@@ -240,26 +240,34 @@ All payloads little-endian `int64`.
 - aloop's bcm4343 DOES deliver unicast (its capture shows our pings arriving and its
   replies leaving from the same ports), so the "unicast-RX wall" is not reproduced
   there; the lost ping/pong on 2026-10-11 is the ESP's own send failure, below.
-- **Live defect 2026-10-11 — every UDP send eventually returns ENOMEM.** The failure is
-  **global and progressive, not per-destination**: `log_tx_probe()` (supervisor, 10 s)
-  sends from a *fresh* socket to the gateway, to an unroutable `.99` host and to the
-  group, and over 75 s went `0,0,0` (x3) -> `e_group=12` at 40 s -> `e_unknown=12` at
-  60 s -> `12,12,12` at 70 s. Link's own giveups start ~20 s in and accelerate
-  (1,2,6,7,13,26,53,85,125,163,220 per 5 s) — roughly doubling, i.e. the failure feeds
-  itself. Heap stays healthy (~116 KB free, min 108684, blk 110592) and RSSI is fine
-  (-48..-56, ch 6), and **RX never stalls** (~14.6 datagrams/s sustained the whole
-  window), so it is not heap, not signal, and probably not PBUF_POOL (RX would starve
-  too). Disproved: `CONFIG_ESP32_WIFI_DYNAMIC_TX_BUFFER_NUM` 32->64 (`7635004`) changed
-  nothing. Leading suspects: tcpip mailbox backing up (`CONFIG_LWIP_TCPIP_RECVMBOX_SIZE`
-  is already 64) or an ERR_MEM from `socket()`/netconn exhaustion, which lwIP also
-  reports as ENOMEM. Instrumented to separate them: `txprobe:` now carries `e_sock`
-  (errno from `socket()` itself), `pb` (a throwaway `pbuf_alloc` succeeding = pool not
-  drained) and `t_gw` (sendto latency, which grows if the tcpip thread is behind);
-  `log_send_failure_probe()` fires at the first 12 giveups (min 250 ms apart) and logs
-  `sendfail:` with a retry of the same destination plus the group and the same three
-  numbers.
-- `uc` sends run ~15/s **even with `peers=0`**, and RX total is ~14.6/s — near parity, so
-  the unicast volume tracks what we receive, not any peer we registered.
+- **Live defect 2026-10-11 — UDP sends intermittently fail with ENOMEM/ENOBUFS.** The
+  failure is **transient and oscillating, not monotonic**: `txprobe` at 10 s cadence
+  over 75 s read `e_unknown=12 e_group=12` at t≈30 s and t≈40 s and `0` at
+  9/19/49/59/69 s, while **`e_gw=0`, `e_sock=0`, `pb=1` at all 7 samples** — so socket
+  /netconn exhaustion, PBUF_POOL exhaustion and heap (~117 KB free) are **ruled out**,
+  and RX never stalls. Periodic scanning is out too: `WIFI: Scan` fires once, at boot
+  (`AP_SCAN_EVERY_TICKS` only resets inside the AP-role branch). `e_unknown=12` is an
+  ARP-pending artifact of the unroutable `.99` probe, and `e_group=12` was one of the
+  probe socket's (it had no `IP_MULTICAST_IF`); both are now non-events. Heap/RSSI are
+  fine throughout (115-164 KB, -52..-57, ch 6). `t_gw` (sendto latency) is a steady
+  2.1-3.0 ms and does NOT grow, so the tcpip thread is not falling behind.
+- **Why `peers=0`: the measurement never finishes.** `Link msr: start=15
+  to=192.168.4.1:54920 rx=148 match=148 mism=0 parse=0 fin=0 fail=14` — 148 pongs
+  received and matched, zero completed. Link's own error string is `pongerr=send_to:
+  Not enough space` (ENOBUFS), `pingtx=341 pingfail=51`, and the measurement RTT
+  degrades 5 ms -> `last=40297us max=249414us`. So RX is healthy and the handshake
+  dies on the **send** side. `54920` is the `mep4` port parsed out of the Pi's own
+  announce TLVs, and the Pi's `NoPorts +9.5/s` + rate-limited ICMP unreachables say
+  nothing is bound there — a Pi-side half of this defect, not ours.
+- **`uc` sends run ~15/s even with `peers=0`**, against ~14.6/s RX — near parity, so the
+  unicast volume tracks what we receive, not any peer we registered.
+- **LCLK/TTMP are subscriber-driven** (`link_sync.cpp`): without a hit on 20812
+  (status) or 20811 (LTMP) in the last `SUBSCRIBER_HOLD_US` (15 s), the clock drops
+  50 Hz -> 1 Hz and the timeline 10 Hz -> 0.2 Hz. Before this, ~45/s of multicast went
+  out to a group nobody was bound to, which is the leading candidate for the send-path
+  ERR_MEM. Send failures now also back off exponentially (1..8 ticks, reset on any
+  success) instead of the old flat `vTaskDelay(1)`, which let the retry storm feed
+  itself (giveups 1,2,6,7,13,26,53,85,125,163,220 per 5 s).
 - **Every multicast send must iterate the netifs and set `IP_MULTICAST_IF` per
   interface** (`esp_netif_next_unsafe`): a raw socket with no `IP_MULTICAST_IF` exits
   the wrong interface on a dual-netif device — Link's own socket reached the peer while

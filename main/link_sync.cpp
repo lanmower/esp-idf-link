@@ -29,6 +29,9 @@ static constexpr double  MICROBEATS_PER_BEAT          = 1e6;
 static constexpr int     MULTICAST_TTL                = 2;
 static constexpr int64_t CLOCK_BROADCAST_MIN_INTERVAL_US    = 20000;
 static constexpr int64_t TIMELINE_BROADCAST_MIN_INTERVAL_US = 100000;
+static constexpr int64_t CLOCK_BROADCAST_IDLE_INTERVAL_US    = 1000000;
+static constexpr int64_t TIMELINE_BROADCAST_IDLE_INTERVAL_US = 5000000;
+static constexpr int64_t SUBSCRIBER_HOLD_US                  = 15000000;
 static constexpr int64_t FORCE_START_AFTER_NO_PEERS_US      = 8000000;
 static constexpr int     MAX_CATCHUP_PULSES_PER_SCHEDULE    = 1024;
 static constexpr int     WATCHDOG_MISSED_PULSES       = 3;
@@ -37,10 +40,22 @@ static constexpr int64_t WATCHDOG_GRACE_US            = 5000;
 #define LINK_PHASE_PORT 20810
 static int s_clk_sock = -1;
 
+static volatile int64_t s_subscriber_until_us = 0;
+
+static void note_telemetry_subscriber() {
+    s_subscriber_until_us = esp_timer_get_time() + SUBSCRIBER_HOLD_US;
+}
+
+static bool telemetry_subscribed() {
+    return esp_timer_get_time() < s_subscriber_until_us;
+}
+
 static void broadcast_link_clock(int64_t linkMicros) {
     static int64_t s_lastSend = 0;
     int64_t nowUs = esp_timer_get_time();
-    if (nowUs - s_lastSend < CLOCK_BROADCAST_MIN_INTERVAL_US) return;
+    const int64_t minInterval = telemetry_subscribed() ? CLOCK_BROADCAST_MIN_INTERVAL_US
+                                                       : CLOCK_BROADCAST_IDLE_INTERVAL_US;
+    if (nowUs - s_lastSend < minInterval) return;
     s_lastSend = nowUs;
     if (s_clk_sock < 0) {
         s_clk_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -71,7 +86,9 @@ static int s_ttmp_sock = -1;
 static void broadcast_ticker_timeline(const ableton::Link::SessionState& state,
                                       int64_t linkMicros) {
     static int64_t s_lastSend = 0;
-    if (linkMicros - s_lastSend < TIMELINE_BROADCAST_MIN_INTERVAL_US) return;
+    const int64_t minInterval = telemetry_subscribed() ? TIMELINE_BROADCAST_MIN_INTERVAL_US
+                                                       : TIMELINE_BROADCAST_IDLE_INTERVAL_US;
+    if (linkMicros - s_lastSend < minInterval) return;
     s_lastSend = linkMicros;
     if (s_ttmp_sock < 0) {
         s_ttmp_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -134,6 +151,7 @@ static void status_responder_task(void*) {
         socklen_t sl = sizeof src;
         int n = recvfrom(rs, req, sizeof req, 0, (struct sockaddr*)&src, &sl);
         if (n < 0) continue;
+        note_telemetry_subscriber();
         if (!g_link) {
             int len = snprintf(reply, sizeof reply, "{\"link\":false}\n");
             sendto(rs, reply, len, 0, (struct sockaddr*)&src, sl);
@@ -177,6 +195,8 @@ static void tempo_listener_task(void*) {
     uint8_t buf[64];
     for (;;) {
         int n = recvfrom(rs, buf, sizeof buf, 0, NULL, NULL);
+        if (n < 0) continue;
+        note_telemetry_subscriber();
         if (n >= 12 && memcmp(buf, "LTMP", 4) == 0) {
             int64_t mpb;
             memcpy(&mpb, buf + 4, 8);
