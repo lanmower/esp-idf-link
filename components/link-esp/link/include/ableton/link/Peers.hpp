@@ -206,13 +206,13 @@ private:
     {
       using namespace std;
 
-      if (!isEndpointOnGatewayLink(peerState.endpoint(), gatewayAddr))
+      if (!isEndpointOnGatewayLink(peerState.endpoint, gatewayAddr))
       {
         wifi_link_peer_mep_offlink(
-          peerState.endpoint().address().is_v4()
-            ? peerState.endpoint().address().to_v4().to_uint()
+          peerState.endpoint.address().is_v4()
+            ? peerState.endpoint.address().to_v4().to_uint()
             : 0u,
-          peerState.endpoint().port());
+          peerState.endpoint.port());
       }
 
       const auto peerSession = peerState.sessionId();
