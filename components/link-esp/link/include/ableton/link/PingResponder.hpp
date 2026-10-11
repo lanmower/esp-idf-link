@@ -30,6 +30,7 @@
 
 extern "C" void wifi_link_ping_rx(unsigned srcip, unsigned srcport, unsigned mtype, unsigned len);
 extern "C" void wifi_link_pong_tx(unsigned ok, unsigned dstip, unsigned dstport);
+extern "C" void wifi_link_pong_fail(const char* what);
 
 namespace ableton
 {
@@ -136,6 +137,7 @@ private:
         {
           wifi_link_pong_tx(0,
             from.address().is_v4() ? from.address().to_v4().to_uint() : 0u, from.port());
+          wifi_link_pong_fail(err.what());
           info(mLog) << " Failed to send pong to " << from << ". Reason: " << err.what();
         }
       }

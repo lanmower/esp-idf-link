@@ -452,9 +452,11 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     }
 
     bool is_connected = g_link->numPeers() > 0;
-    if (!is_connected && !force_start && (esp_timer_get_time() - start_wait_time >= FORCE_START_AFTER_NO_PEERS_US)) {
+    if (!force_start && (esp_timer_get_time() - start_wait_time >= FORCE_START_AFTER_NO_PEERS_US)
+        && (!is_connected || !g_link->captureAppSessionState().isPlaying())) {
         force_start = true;
-        ESP_LOGW(TAG_LINK, "No Link peers found for 8s, forcing start.");
+        ESP_LOGW(TAG_LINK, "No Link transport for 8s (peers=%d), running local clock.",
+                 g_link->numPeers());
     }
 
     extern volatile uint32_t g_link_send_hook_calls;
@@ -510,6 +512,16 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     extern volatile uint32_t g_link_peer_sess_hi;
     extern volatile uint32_t g_link_self_sess_lo;
     extern volatile uint32_t g_link_self_sess_hi;
+    extern volatile uint32_t g_link_msr_pings;
+    extern volatile uint32_t g_link_msr_ping_fail;
+    extern volatile uint32_t g_link_msr_rtt_last;
+    extern volatile uint32_t g_link_msr_rtt_max;
+    extern volatile uint32_t g_link_msr_rtt_count;
+    extern volatile uint32_t g_link_msr_datapoints;
+    extern volatile uint32_t g_link_msr_nodata;
+    extern volatile uint32_t g_link_msr_fail_pts_last;
+    extern volatile uint32_t g_link_msr_fail_pts_max;
+    extern char g_link_pong_fail_msg[64];
     static int64_t s_hookLogAt = 0;
     int64_t nowH = esp_timer_get_time();
     if (nowH - s_hookLogAt > 5000000) {
@@ -554,6 +566,12 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
                  (g_link_pong_tx_ip >> 24) & 0xff, (g_link_pong_tx_ip >> 16) & 0xff,
                  (g_link_pong_tx_ip >> 8) & 0xff, g_link_pong_tx_ip & 0xff,
                  g_link_pong_tx_port);
+        ESP_LOGI(TAG_LINK, "Link msr2: pingtx=%u pingfail=%u rtt(n=%u last=%uus max=%uus) pts=%u nodata=%u failpts(last=%u max=%u) pongerr=%s",
+                 g_link_msr_pings, g_link_msr_ping_fail,
+                 g_link_msr_rtt_count, g_link_msr_rtt_last, g_link_msr_rtt_max,
+                 g_link_msr_datapoints, g_link_msr_nodata,
+                 g_link_msr_fail_pts_last, g_link_msr_fail_pts_max,
+                 g_link_pong_fail_msg);
         ESP_LOGI(TAG_LINK, "Link sess: self=%08x%08x peer=%08x%08x peer_mep=%u.%u.%u.%u:%u",
                  (unsigned)g_link_self_sess_hi, (unsigned)g_link_self_sess_lo,
                  (unsigned)g_link_peer_sess_hi, (unsigned)g_link_peer_sess_lo,

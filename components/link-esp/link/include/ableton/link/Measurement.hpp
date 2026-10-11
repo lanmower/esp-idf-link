@@ -32,6 +32,9 @@
 extern "C" void wifi_link_msr_rx(unsigned mtype, unsigned len);
 extern "C" void wifi_link_msr_note(unsigned kind);
 extern "C" void wifi_link_msr_start(unsigned ip, unsigned port);
+extern "C" void wifi_link_msr_rtt(unsigned micros);
+extern "C" void wifi_link_msr_ping(unsigned len);
+extern "C" void wifi_link_msr_fail_pts(unsigned n);
 
 namespace ableton
 {
@@ -46,7 +49,7 @@ struct Measurement
   using Micros = std::chrono::microseconds;
 
   static const std::size_t kNumberDataPoints = 100;
-  static const std::size_t kNumberMeasurements = 5;
+  static const std::size_t kNumberMeasurements = 12;
 
   Measurement(const PeerState& state,
     Callback callback,
@@ -84,6 +87,7 @@ struct Measurement
       , mClock(std::move(clock))
       , mTimer(io->makeTimer())
       , mMeasurementsStarted(0)
+      , mLastPingSent(0)
       , mLog(channel(io->log(), "Measurement on gateway@" + address.to_string()))
       , mSuccess(false)
     {
@@ -98,7 +102,7 @@ struct Measurement
     void resetTimer()
     {
       mTimer.cancel();
-      mTimer.expires_from_now(std::chrono::milliseconds(50));
+      mTimer.expires_from_now(std::chrono::milliseconds(250));
       mTimer.async_wait([this](const typename Timer::ErrorCode e) {
         if (!e)
         {
@@ -167,6 +171,11 @@ struct Measurement
           wifi_link_msr_note(1);
           const auto hostTime = mClock.micros();
 
+          const auto rttUs = (hostTime - mLastPingSent).count();
+          wifi_link_msr_rtt(rttUs <= 0
+            ? 0u
+            : (rttUs > 0xffffffffLL ? 0xffffffffu : static_cast<unsigned>(rttUs)));
+
           const auto payload =
             discovery::makePayload(HostTime{hostTime}, PrevGHostTime{ghostTime});
 
@@ -175,11 +184,16 @@ struct Measurement
 
           if (prevGHostTime != Micros{0})
           {
+            wifi_link_msr_note(7);
             mData.push_back(
               std::make_pair(static_cast<double>((hostTime + prevHostTime).count()) * 0.5,
                 static_cast<double>(ghostTime.count())));
             mData.push_back(std::make_pair(static_cast<double>(prevHostTime.count()),
               static_cast<double>((ghostTime + prevGHostTime).count()) * 0.5));
+          }
+          else
+          {
+            wifi_link_msr_note(8);
           }
 
           if (mData.size() > kNumberDataPoints)
@@ -212,6 +226,9 @@ struct Measurement
       const auto msgEnd = v1::pingMessage(payload, msgBegin);
       const auto numBytes = static_cast<size_t>(std::distance(msgBegin, msgEnd));
 
+      mLastPingSent = mClock.micros();
+      wifi_link_msr_ping(static_cast<unsigned>(numBytes));
+
       try
       {
         mSocket.send(buffer.data(), numBytes, to);
@@ -220,6 +237,7 @@ struct Measurement
       {
         info(mLog) << "Failed to send Ping to " << to.address().to_string() << ": "
                    << err.what();
+        wifi_link_msr_note(6);
       }
     }
 
@@ -234,6 +252,7 @@ struct Measurement
 
     void fail()
     {
+      wifi_link_msr_fail_pts(static_cast<unsigned>(mData.size()));
       mData.clear();
       wifi_link_msr_note(5);
       debug(mLog) << "Measuring " << mEndpoint << " failed.";
@@ -248,6 +267,7 @@ struct Measurement
     Clock mClock;
     Timer mTimer;
     std::size_t mMeasurementsStarted;
+    Micros mLastPingSent;
     Log mLog;
     bool mSuccess;
   };

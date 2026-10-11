@@ -326,6 +326,16 @@ volatile uint32_t g_link_peer_sess_lo = 0;
 volatile uint32_t g_link_peer_sess_hi = 0;
 volatile uint32_t g_link_self_sess_lo = 0;
 volatile uint32_t g_link_self_sess_hi = 0;
+volatile uint32_t g_link_msr_pings = 0;
+volatile uint32_t g_link_msr_ping_fail = 0;
+volatile uint32_t g_link_msr_rtt_last = 0;
+volatile uint32_t g_link_msr_rtt_max = 0;
+volatile uint32_t g_link_msr_rtt_count = 0;
+volatile uint32_t g_link_msr_datapoints = 0;
+volatile uint32_t g_link_msr_nodata = 0;
+volatile uint32_t g_link_msr_fail_pts_last = 0;
+volatile uint32_t g_link_msr_fail_pts_max = 0;
+char g_link_pong_fail_msg[64] = {0};
 
 static bool has_link_magic(const uint8_t* d, unsigned len)
 {
@@ -393,8 +403,40 @@ extern "C" void wifi_link_msr_note(unsigned kind)
     case 3: g_link_msr_parsefail = g_link_msr_parsefail + 1; break;
     case 4: g_link_msr_finish = g_link_msr_finish + 1; break;
     case 5: g_link_msr_fail = g_link_msr_fail + 1; break;
+    case 6: g_link_msr_ping_fail = g_link_msr_ping_fail + 1; break;
+    case 7: g_link_msr_datapoints = g_link_msr_datapoints + 1; break;
+    case 8: g_link_msr_nodata = g_link_msr_nodata + 1; break;
     default: break;
     }
+}
+
+extern "C" void wifi_link_msr_rtt(unsigned micros)
+{
+    g_link_msr_rtt_last = micros;
+    g_link_msr_rtt_count = g_link_msr_rtt_count + 1;
+    if (micros > g_link_msr_rtt_max) g_link_msr_rtt_max = micros;
+}
+
+extern "C" void wifi_link_msr_ping(unsigned len)
+{
+    (void)len;
+    g_link_msr_pings = g_link_msr_pings + 1;
+}
+
+extern "C" void wifi_link_msr_fail_pts(unsigned n)
+{
+    g_link_msr_fail_pts_last = n;
+    if (n > g_link_msr_fail_pts_max) g_link_msr_fail_pts_max = n;
+}
+
+extern "C" void wifi_link_pong_fail(const char* what)
+{
+    unsigned i = 0;
+    if (!what) what = "";
+    for (; i < sizeof(g_link_pong_fail_msg) - 1 && what[i]; i++) {
+        g_link_pong_fail_msg[i] = what[i];
+    }
+    g_link_pong_fail_msg[i] = 0;
 }
 
 extern "C" void wifi_link_msr_start(unsigned ip, unsigned port)
