@@ -1,7 +1,7 @@
 # esp-idf-link — agent notes
 
 `CLAUDE.md` `@`-includes this file; durable facts live here, not in code. Do not extend it by
-editing `CLAUDE.md`. Compacted 2026-10-11 from 33866 bytes; git log through `ac377d6` folded in.
+editing `CLAUDE.md`. Compacted 2026-10-11 (33866 -> this); git log through `579d4ef` folded in.
 
 ## Mesh with `../aloopprime`: paired invariants (change BOTH or the mesh splits)
 
@@ -29,6 +29,16 @@ in own STA MAC (`mac_rank * HOLD_MAX_MS >> 24`), rescan 1/s, stagger `mac[5] * 1
 
 Supervisor (`wifi_config.cpp`, 2 s cadence, forever):
 - STA: dropped link reconnects up to 30 times (~60 s) before re-hosting.
+- **STA is "up" only when it has an IP, not when the flag says so** (`579d4ef323`):
+  `g_wifi_connected` was cleared only by `WIFI_EVENT_STA_DISCONNECTED`, set only by
+  `IP_EVENT_STA_GOT_IP`, and had **no `IP_EVENT_STA_LOST_IP` handler at all** — so an association
+  surviving while the IP went away left the flag true forever and the supervisor sat on its
+  connected branch doing nothing: no reconnect, no IGMP re-assert, no re-host, no log line.
+  Link's interface scan drops a netif whose address is 0, `PeerGateways` erases the gateway, and
+  with zero gateways Link neither sends nor receives — **peers 1->0 while still associated with
+  no Wi-Fi event**. Now LOST_IP clears the flag and requests a reconnect, the gate is
+  `g_wifi_connected && sta_has_ip()`, both flags `volatile`. Best match for mc-420's silent
+  deaths; unproven.
 - AP: re-scans; yields to a strictly-lower `ticker` BSSID and drops its AP — **only while it has
   ZERO stations** (`ap_has_associated_stations()`); a host that ever accepts a station is sticky.
 - **Comparison MAC is the STA MAC** (`wifi_get_sta_mac()`, `e4:65:b8:77:0d:14`), not the SoftAP
@@ -37,6 +47,8 @@ Supervisor (`wifi_config.cpp`, 2 s cadence, forever):
   MAC — `esp_read_mac()` reads eFuse and may differ; without it the box flaps AP->STA->AP every
   tick (`5faf01a`).
 - IGMP re-joined on yield, not only at boot (`d1b7f9a`). Lease proof: `WIFI: IP: 192.168.4.x`.
+  Since `579d4ef` it also re-asserts in **AP role** (was STA-only, one-shot at AP start), so a
+  long-lived SoftAP cannot age its own join out.
 - **Hosting scan pinned to the mesh channel** (`2c2d39c`): the election scan needs
   `ensure_sta_started()` -> `WIFI_MODE_APSTA`, and an all-channel scan dwells off-channel,
   interrupting SoftAP beaconing, so a station associating inside a scan window never finishes
@@ -45,7 +57,11 @@ Supervisor (`wifi_config.cpp`, 2 s cadence, forever):
 
 **Reading `peers=0`:** `gw(ok=1)` = gateway up; `dst=` on a high port (`192.168.4.1:54146`) means
 the announcement arrived and Link is unicast-pinging — the failure is the ping/pong, NOT
-multicast. `dst` is recorded before the role gate, so it shows even in STA role.
+multicast. `dst` is recorded before the role gate, so it shows even in STA role. **`dst` is HOST
+order** — `wifi_link_send_dst` gets asio's `to_v4().to_uint()` (`Socket.hpp:63`) while
+`ip4_addr_t::addr` is network order, so `htonl` before `IP2STR`. Pre-`579d4ef` images printed it
+reversed: `75.78.76.224` was 224.76.78.75, `1.4.168.192` was 192.168.4.1 — same trap as
+`99.168.4.1`. Do not read a reversed `dst=` as a destination.
 
 ### By-the-book Link checklist (both trees)
 
@@ -81,10 +97,9 @@ does not exist.
 
 **Compiled asio is `components/espressif__asio` 1.32.0, not vendored
 `link/modules/asio-standalone` 1.17.0**: `link-esp` REQUIRES `asio`, so the component's
-`INCLUDE_DIRS` win as `-I` over the vendored tree's `-isystem` — the vendored copy is shadowed.
-Corollary: `asio/error.hpp` maps only `no_buffer_space = ENOBUFS`, yet the send failure prints
-`send_to: Not enough space` — the toolchain's `strerror_r` for **errno 12 / ENOMEM**, what our
-instrumentation records. Do not call it ENOBUFS.
+`INCLUDE_DIRS` win as `-I` over the vendored tree's `-isystem`. Corollary: `asio/error.hpp` maps
+only `no_buffer_space = ENOBUFS`, yet the send failure prints `send_to: Not enough space` — the
+toolchain's `strerror_r` for **errno 12 / ENOMEM**, which is what our instrumentation records.
 
 Tempo rides the wire as **int64 microseconds-per-beat, truncated not rounded**
 (`link/include/ableton/link/Tempo.hpp:52`): a peer publishing 119.049 round-trips with ~1e-5 bpm
@@ -105,9 +120,9 @@ ESP32 SoftAP does not carry Link multicast between host and stations, hence
 to every associated station, preserving the source IP (Link needs it for direct peer connect).
 aloopprime's `brcmfmac` sharing the gap is UNVERIFIED (`ap_isolate=0` may suffice) — do not port
 the relay by assumption. **The relay is a singleton, `g_ap_netif` mutex-guarded** (`0bffe4c`) —
-it now signals the running task (20 ms `SO_RCVTIMEO`) and waits for exit, and
-`link_relay_release()` frees socket + raw pcb on every path. `ap_netif_lock()` covers `g_ap_netif` writes and the relay's read-and-send, `LOCK_TCPIP_CORE`
-inside on both sides so lock order cannot invert.
+it signals the running task (20 ms `SO_RCVTIMEO`) and waits for exit, and `link_relay_release()`
+frees socket + raw pcb on every path. `ap_netif_lock()` covers `g_ap_netif` writes and the
+relay's read-and-send, `LOCK_TCPIP_CORE` inside on both sides so lock order cannot invert.
 
 ## Clock is hardware-scheduled, never tick-emitted
 
@@ -128,12 +143,11 @@ beat only after it passed; raising the tick rate cannot tighten the click.
 **`sdkconfig.defaults` is load-bearing, not tuning.** `CONFIG_LWIP_MAX_SOCKETS=16` (16 is the
 max): the default 10 is exhausted by the app's own sockets (Link relay, LCLK/TTMP broadcast,
 tempo listener, discovery forward, 4 for HTTP), leaving too few for Link's per-interface
-discovery gateway -> EMFILE -> peers never discover. Also `LWIP_TCPIP_RECVMBOX_SIZE=64`
-(32->64) — ENOMEM from `sendto` means EITHER pool drained OR mailbox full;
-`LWIP_UDP_RECVMBOX_SIZE=6`, `ESP32_WIFI_DYNAMIC_TX_BUFFER_NUM=64`, `LWIP_STATS=y` (read
-`mem.err`/`link.drop`/`link.memerr`) — all `cfddf6d`. **`CONFIG_LWIP_PBUF_POOL_SIZE` is NOT a
-Kconfig symbol in IDF v6.1** and has been removed from `sdkconfig.defaults`; do not re-add it.
-The rest is tuning.
+discovery gateway -> EMFILE -> peers never discover. Also `LWIP_TCPIP_RECVMBOX_SIZE=64` (32->64)
+— ENOMEM from `sendto` means EITHER pool drained OR mailbox full; `LWIP_UDP_RECVMBOX_SIZE=6`,
+`ESP32_WIFI_DYNAMIC_TX_BUFFER_NUM=64`, `LWIP_STATS=y` (read `mem.err`/`link.drop`/`link.memerr`)
+— all `cfddf6d`. **`CONFIG_LWIP_PBUF_POOL_SIZE` is NOT a v6.1 symbol** and is removed; do not
+re-add. The rest is tuning.
 
 ## Firmware reaches the ticker over USB only
 
@@ -151,9 +165,9 @@ The rest is tuning.
   type(1) subtype(1) offset(4) size(4) label(16), app type == 0. **Never parse
   `partitions_large.csv`** — every offset but nvs's is blank, so parsing yields `int('')`.
 - esptool 5.x: `write-flash` is hyphenated; **`--verify` was dropped** (it always verifies).
-  SPIFFS `storage` is flashed separately: `flash_midi_data.sh` builds a `0x19000` image from
-  `./data` at **`0x317000`** (derivable: nvs 0x011000, phy_init 0x017000, app0 0x020000, app1
-  0x1A0000, storage 0x317000; app partitions round up to 0x10000).
+  SPIFFS `storage` flashes separately: `flash_midi_data.sh` builds a `0x19000` image from `./data`
+  at **`0x317000`** (derivable: nvs 0x011000, phy_init 0x017000, app0 0x020000, app1 0x1A0000,
+  storage 0x317000; app partitions round up to 0x10000).
 
 ### Hands-free flash: `python tools/flash-usbip.py`
 
@@ -180,24 +194,22 @@ never loads (WSL2/CH340 setup is in `CLAUDE.md`). Measured: exit 0, ~49 s, app i
 Also: **`--after no-reset-stub`, never `--after no-reset`**, and guard `esptool.main()` with
 `except BaseException` (`09da1052`) — `no-reset` soft-resets at the flash baud while the ROM
 speaks 115200 -> `FatalError: No more data to read` AFTER all three images verified, and
-`FatalError` is not `SystemExit`. **That guard is now a bounded retry loop**
-(`FLASH_ATTEMPTS = 6`), not a single attempt: on failure it re-enters download mode at
-`ROM_BAUD`, re-syncs and retries, because each retry visibly got further (one died only at
-"Unable to verify flash chip connection" after "Staying in flasher stub"). Two more hazards it
-absorbs: **`esp.flash_id()` reads `0xFFFFFF` in download mode** -> "Failed to communicate with
-the flash chip"; that call is wrapped and non-fatal (erase/program still go through the ROM).
-**`UsbipPort.timeout` has a 2.0 s floor** (`_min_timeout`, enforced in the setter): esptool
-lowers `timeout` below that, and a CH341 reply that arrives late was then read as a dead stream
--> "Serial data stream stopped" / "Unable to verify flash chip connection". Do not let the port
-read deadline drop under 2 s. The ROM only speaks 115200 (`ROM_BAUD`); `--baud` applies only
-after the RAM stub re-times it: USB/IP 115200 -> 72.2 s vs 460800 -> 19.4 s; 921600 dies after
-"Changed." — `--dry` recovers it, and it is UNMEASURED on
+`FatalError` is not `SystemExit`. **That guard is a bounded retry loop** (`FLASH_ATTEMPTS = 6`):
+on failure it re-enters download mode at `ROM_BAUD`, re-syncs and retries, because each retry
+visibly got further. Measured 2026-10-11: attempts 1 and 2 both died with `FatalError: Serial
+data stream stopped` **immediately after "Connected to ESP32"**, attempt 3 wrote and verified
+all three — that error right after connect is transient. **`esp.read_mac()` and `flash_id()` are
+wrapped and non-fatal** (`579d4ef`): a `FatalError` from either aborted **after download-mode
+entry**, stranding the board at `boot:0x3` with the app never rebooted. **Nothing between sync
+and `boot_app()` may raise.** **`UsbipPort.timeout` has a 2.0 s floor** (`_min_timeout`):
+esptool lowers `timeout` below that and a late CH341 reply reads as a dead stream. The ROM only
+speaks 115200 (`ROM_BAUD`); `--baud` applies only after the RAM stub re-times it: USB/IP 115200
+-> 72.2 s vs 460800 -> 19.4 s; 921600 dies after "Changed." — `--dry` recovers it, UNMEASURED on
 `flash-ticker.js` (PRD `flash-ticker-js-921600-unmeasured`). esptool leaves the port at the flash
 baud, so `boot_app()` resets to `ROM_BAUD` before pulsing EN. Serial read: `UsbipPort()` from
-`tools/usbip-port.py` MUST have `.init()` called after construction (else 4096 zero bytes per
-bulk IN floods the output); `hs(HOLD_EN)` -> short drain -> `hs(RELEASE_BOTH)` resets the board,
-`drain(seconds)` returns the boot log; import the hyphenated filename via
-`importlib.util.spec_from_file_location`.
+`tools/usbip-port.py` MUST have `.init()` called (else 4096 zero bytes per bulk IN floods the
+output); `hs(HOLD_EN)` -> short drain -> `hs(RELEASE_BOTH)` resets the board; import the
+hyphenated filename via `importlib.util.spec_from_file_location`.
 
 ## Mesh UDP protocol and MIDI emission
 
@@ -216,26 +228,14 @@ Payloads little-endian `int64`; ports are `#define`s in `link_sync.cpp`: `LINK_P
   are dropped at its IP layer — `Udp: IgnoredMulti` ~57/s while `NoPorts` is frozen. **20808
   stays pure Link** (Link parses every datagram on it as `_asdp_v1`), so a peer wanting our phase
   must itself bind 20810/20812.
-- **Live defect 2026-10-11 — UDP sends intermittently failed with ENOMEM (12)** (re-test in
-  `## Live state`; ENOMEM not ENOBUFS despite the `Not enough space` string). `txprobe` (10 s
-  cadence, 75 s): `e_unknown=12 e_group=12` at ~30 s and ~40 s, `0` at 9/19/49/59/69 s;
-  `e_gw=0 e_sock=0 pb=1` at all 7 — socket/netconn exhaustion, PBUF_POOL and heap (~117 KB)
-  **ruled out**; RX never stalls; `t_gw` 2.1-3.0 ms, not growing. **Both 12s were the probe's own
-  bugs, not the app's**: `ip4_addr_t::addr` is network-order, so the first octet is the LOW byte
-  and `(gw & 0xffffff00) | 99` built **99.168.4.1** (wire `0x63A80401`, matching a Pi capture)
-  -> ARP on a public 99.x; and the probe socket had no `IP_MULTICAST_IF`. Both fixed; the same
-  byte-order slip had `txprobe: gw=` printing the gateway reversed. **Still unreproduced.** **Why `peers=0` then: the measurement never finished** — `Link msr: start=15
-  to=192.168.4.1:54920 rx=148 match=148 mism=0 parse=0 fin=0 fail=14`, `pongerr=send_to: Not
-  enough space`, `pingtx=341 pingfail=51`, RTT 5 ms -> `last=40297us max=249414us`; RX healthy,
-  the handshake died on the **send** side.
 - **Every multicast send must iterate the netifs and set `IP_MULTICAST_IF` per interface**
   (`esp_netif_next_unsafe`): a raw socket without it exits the wrong interface on a dual-netif
   device — Link's own socket reached the peer while ours did not.
 - **LCLK/TTMP are subscriber-driven** (`0a8760c`): without a hit on 20812 (status) or 20811
   (LTMP) within `SUBSCRIBER_HOLD_US` (15000000 = 15 s), clock drops 50 Hz -> 1 Hz, timeline 10 Hz
-  -> 0.2 Hz. Clock is rate-limited to one packet per 20 ms (timeline 100 ms): a 4 kHz flood
-  saturates the Pi's radio-RX drain. `uc` sends run ~15/s even with `peers=0` against ~14.6/s RX
-  — volume tracks what we receive, not any registered peer.
+  -> 0.2 Hz. Clock rate-limited to one packet per 20 ms (timeline 100 ms): a 4 kHz flood
+  saturates the Pi's radio-RX drain. `uc` sends ~15/s even with `peers=0` against ~14.6/s RX —
+  volume tracks what we receive, not any registered peer.
 - **The looper sits behind a unicast-RX wall**: its bcm4343 delivers multicast but not
   unicast-to-self, so Link's ping/pong never completes there; LCLK gives it phase, TTMP carries
   tempo back.
@@ -245,38 +245,48 @@ Payloads little-endian `int64`; ports are `#define`s in `link_sync.cpp`: `LINK_P
 - Status is request/response, not broadcast: cannot pollute the Link group. The dev PC is not on
   192.168.4.0/24, so probe it from a mesh station. `MetroStats`
   (`fired`/`last`/`worst`/`mean`/`rms`) rides in it as `metro` — only evidence of click lateness.
+- NRPN sequence, note-off velocity 0, UART TX ring buffer, `syncToBpm` and the per-target table
+  are in `CLAUDE.md` / the top of `link_sync.cpp`.
 
-MIDI emission — one path, no per-device clock code; bytes are named constants in `main.h` (`0xF8`
-clock, `0xFA` start, `0xFC` stop, `0xFB` continue, `0xF2` SPP, CC123 all-notes-off).
-`MIDI_PULSES_PER_QUARTER_NOTE = 24` and `MIDI_SPP_UNITS_PER_BEAT = 4` live in `link_sync.cpp`,
-NOT `main.h`. NRPN sequence, note-off velocity 0, UART TX ring buffer, `syncToBpm` and the
-per-target behaviour table are in `CLAUDE.md` / the top of `link_sync.cpp`. SPP + Start/Continue ONLY at the 16-bar boundary; Stop + CC123 on all 16 channels on
-transport stop and peer loss (CC123 keeps RC-505 MK2 loops from sticking). SPP counts MIDI beats
-(sixteenths): 1 Link beat = 4 units, 14-bit LSB first. Start is deferred to the next phrase
+MIDI emission — one path, no per-device clock code; bytes are constants in `main.h` (`0xF8`
+clock, `0xFA` start, `0xFC` stop, `0xFB` continue, `0xF2` SPP, CC123 all-notes-off);
+`MIDI_PULSES_PER_QUARTER_NOTE = 24` and `MIDI_SPP_UNITS_PER_BEAT = 4` live in `link_sync.cpp`.
+SPP + Start/Continue ONLY at the 16-bar boundary; Stop + CC123 on all 16 channels on transport
+stop and peer loss (CC123 keeps RC-505 MK2 loops from sticking). SPP counts MIDI beats
+(sixteenths): 1 Link beat = 4 units, 14-bit LSB first. Start deferred to the next phrase
 boundary; `s_transport_running` records what gear was last TOLD, not `isPlaying()`; force-start
-waits 8 s, not 5 s (co-booting devices discover each other before either free-runs).
+waits 8 s, not 5 s.
 
-## Live state 2026-10-11 (firmware ac377d6)
+## Live state 2026-10-11 (`ac377d6` -> `df18c36`)
 
-- **The ENOMEM send failure did NOT reproduce**: a 240 s listen-only soak at ~14.5 min uptime saw
-  8526 successful sends, `fail=0 giveup=0 errno=0`, heap flat (133956 -> 133096, min 116456); the
-  `0a8760c` capture read `fail=1501 giveup=396 errno=12` over a comparable window. **Unreproduced,
-  NOT fixed; cause unknown.** Needs a longer soak before any claim; the difference may be the
-  Pi/AP side (mc-420 reported its own peers=1 recovery).
-- peers=1 reached 2.1 s after Link init and held; bpm settled to 118.53 (the Pi's tempo); session
-  ids converged on the peer's.
+- **The ENOMEM send failure did NOT reproduce.** 240 s soak: 8526 sends, `fail=0 giveup=0
+  errno=0`, heap flat. **600 s soak:** peers=1 for all 120 `Link diag` samples,
+  `gw(try=1 ok=1 fail=0)`, STA held 192.168.4.19, 59/59 `txprobe` samples all error counters 0
+  with `pb=1`, `t_gw` 2.2-2.7 ms, rssi -47..-52, and measurements COMPLETE (`fin=3 fail=2` vs
+  the earlier `fin=0 fail=14`); Metro fired 35241, worst 8309 us, mean ~350 us. One bounded
+  exception: ~6 s burst at t=218.9-223.9 s — nine `sendfail`, `err=12`, `fail=28 giveup=9`, heap
+  min 108192, **inside an IGMP re-join window** (re-join 217700); never recurred. The `0a8760c`
+  capture read `fail=1501 giveup=396 errno=12` over a comparable window. **Unreproduced, NOT
+  fixed; cause unknown.** Both `e_*=12`s in the 75 s probe were the probe's own bugs, not the
+  app's. Suspects measured clean: socket/netconn exhaustion, PBUF_POOL, heap. Remaining: the
+  IGMP re-join window.
+- On `df18c36` the send-side failure is **absent**: `pingfail=0`, `pongerr=` empty, `fin=2
+  fail=0`, vs `pingtx=341 pingfail=51`, `pongerr=send_to: Not enough space`, `fin=0 fail=14`.
+  First run with completed measurements and zero ping failures — evidence, not proof.
+- peers=1 reached 2.1 s after Link init and held; bpm settled to 118.63 (the Pi's 118.500);
+  session ids converge on the peer's (`self` == `peer`).
 - **Session bounce**: `enable(false)`/`enable(true)` from `tickTask` drops peers to 0 and re-joins
-  in **2540 ms**, adopting the peer's session id; beat stays monotonic (76.20 -> 81.242), no
-  tempo break. Start/stop sync stayed off, so no Link Start/Stop is emitted; the Stop+CC123 seen
-  is our own peer-loss handler. **The per-boot auto bounce was removed; only the on-demand `LRST`
-  to `192.168.4.19:20811` remains** — `LINK_AUTO_BOUNCE_AT_US` was a diagnostic witness only.
-- **`bad` (badmagic) is benign**: it is Link's own `_link_v1` measurement traffic on Link's
-  socket, 1:1 with `Link msr: rx` (368 vs 368), not a third-party source.
-- Open: ping/pong RTT ~120 ms with `pingfail=0`; heap drifted 164 KB -> 122 KB over 90 s.
-- **Wi-Fi buffer stats**: `esp_wifi_statis_dump(uint32_t modules)` is public in `esp_wifi.h`
-  (v6.1) and is the only Wi-Fi buffer-statistics observation API; there is no public enum for its
-  module bitmask, so dump all modules with `0xffffffff`. AMPDU has **no runtime control** — only
-  `wifi_init_config_t.ampdu_tx_enable` at init (`3d703ce`).
+  in **2540 ms**, adopting the peer's session id; beat monotonic, no tempo break; no Link
+  Start/Stop (sync off) — the Stop+CC123 seen is our own peer-loss handler. **The per-boot auto
+  bounce was removed; only the on-demand `LRST` to `192.168.4.19:20811` (or `224.76.78.75:20811`)
+  remains** — `LINK_AUTO_BOUNCE_AT_US` was a diagnostic witness only. `LRST` = `enable(false);
+  enable(true); enableStartStopSync(false)`, no Wi-Fi teardown.
+- **`bad` (badmagic) is benign**: Link's own `_link_v1` measurement traffic on Link's socket, 1:1
+  with `Link msr: rx`, not a third-party source.
+- `esp_wifi_statis_dump(uint32_t modules)` is the only Wi-Fi buffer-statistics observation API
+  (public in `esp_wifi.h` v6.1); no public enum for its bitmask, so dump all with `0xffffffff`.
+  AMPDU has **no runtime control** — only `wifi_init_config_t.ampdu_tx_enable` at init
+  (`3d703ce`). Open: ping/pong RTT ~120 ms with `pingfail=0`; heap 164 KB -> 122 KB over 90 s.
 
 ## Bass generator: 8 approaches, per-bar shaping
 
@@ -400,6 +410,12 @@ git identity): `git_finalize` there commits and gm refuses the push with
 `push_disabled_by_config`; a merging `git_pull` dies with `git_identity_required`. Local-only
 commits are the intended end state; do not "fix" it.
 
+**mc-420** (the Pi-side peer agent): its inbound pipe works, outbound `SendMessage` is
+**permanently refused** ("No agent named 'mc-420' is reachable"), so every reply is a file drop
+in `C:\dev\mc-420\.gm\`. Do not retry SendMessage. Its `reassoc-watch.js` logs only
+`Date.now()` deltas, so its absolute times must be reconstructed — always log a wall clock
+ourside.
+
 ## ESP-IDF 6.x breaks already absorbed
 
 Historical — none visible in current source, each silently re-breaks on a bump:
@@ -414,10 +430,9 @@ Historical — none visible in current source, each silently re-breaks on a bump
 ## gm usage gotchas
 
 - `codesearch` is the canonical search verb; `{"help":true}` lists every field. Exhaustive modes
-  (`literal`/`regex`/`filename`) REFUSE unknown fields; `dual` ignores them. `mode:"comments"`
-  (or `{"comments":true}`) needs no query.
-- `git_finalize` takes `message`/`paths`/`files`/`allow_whole_index`/`recover_remote_moved`/
-  `source_ref`/`rev` — `body` or top level, `body` wins. `git_show` takes `rev`/`stat`/`path`
-  (no `stat_only`); `git_log` takes `limit`/`range`/`path` (no `skip`) — page with `range`.
-- `prd-add` derives an `id` from any text field when none is given; `bash`/`exec_js` take their
-  script in `body` (`script`/`command`/`code`/`text`) or `raw_body`, and need `session_id`.
+  (`literal`/`regex`/`filename`) REFUSE unknown fields; `dual` ignores them; `mode:"comments"` (or
+  `{"comments":true}`) needs no query. `git_finalize` takes `message`/`paths`/`files`/
+  `allow_whole_index`/`recover_remote_moved`/`source_ref`/`rev` — `body` or top level, `body` wins.
+  `git_show` takes `rev`/`stat`/`path`; `git_log` takes `limit`/`range`/`path` (page with `range`).
+  `prd-add` derives an `id` from any text field; `bash`/`exec_js` take their script in `body`
+  (`script`/`command`/`code`/`text`) or `raw_body`, and need `session_id`.
