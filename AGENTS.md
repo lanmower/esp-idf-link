@@ -38,9 +38,9 @@ every 10 s):
   receives — **peers 1->0 while still associated, no Wi-Fi event**. Gate is now
   `g_wifi_connected && sta_has_ip()`. Best match for mc-420's silent deaths; **unproven**.
 - AP: re-scans; yields to a strictly-lower `ticker` BSSID **only while it has ZERO stations**
-  (`ap_has_associated_stations()`). **Comparison MAC is the STA MAC** (`e4:65:b8:77:0d:14`), not the
-  SoftAP MAC (`...:15`); Pi `e4:5f:01:53:f0:f1` is lower, so this box yields. **Self-BSSID guard reads
-  the interface** (`esp_wifi_get_mac(WIFI_IF_AP)`, never `esp_read_mac()`, which reads eFuse) or the
+  (`ap_has_associated_stations()`). **Comparison MAC is the STA MAC** (`e4:65:b8:76:cf:c4` — 2nd unit,
+  in service 2026-10-11; the first was `e4:65:b8:77:0d:14`), not the SoftAP MAC (`...:c5`); Pi
+  `e4:5f:01:53:f0:f1` is lower, so this box yields. **Self-BSSID guard reads the interface** (`esp_wifi_get_mac(WIFI_IF_AP)`, never `esp_read_mac()`, which reads eFuse) or the
   box flaps AP->STA->AP every tick (`5faf01a`).
 - IGMP re-joined on yield, not only at boot (`d1b7f9a`), and since `579d4ef` also in **AP role**, so a
   long-lived SoftAP can't age its join out. Lease proof: `WIFI: IP: 192.168.4.x`.
@@ -246,7 +246,7 @@ to the next phrase boundary; `s_transport_running` records what gear was last TO
 ## Observing the running mesh (2026-10-11)
 
 1. **Pi shell** (`node C:/dev/mc-420/.gm/exec-ssh.js "<cmd>"`, root@192.168.137.100) then
-   `printf 'PING' | timeout 3 nc -u -w1 192.168.4.19 20812`. Only way to reach 192.168.4.x; also how
+   `printf 'PING' | timeout 3 nc -u -w1 192.168.4.10 20812`. Only way to reach 192.168.4.x; also how
    `LRST` is fired. Every datagram is a subscriber hit (above).
 2. **aloop telemetry, straight from the PC**: UDP `status` -> `192.168.137.100:4445` -> JSON in ~190
    ms — one hop (the PC is on the ICS subnet), no Pi shell, and it costs the ESP nothing.
@@ -273,7 +273,7 @@ to the next phrase boundary; `s_transport_running` records what gear was last TO
   the 75 s probe's own bugs (`99.168.4.1`, no `IP_MULTICAST_IF`).
 - **Session bounce**: `enable(false)`/`enable(true)` drops peers to 0 and re-joins in **2540 ms**,
   adopting the peer's session id; beat monotonic, no tempo break. **The per-boot auto bounce was
-  removed; only on-demand `LRST` to `192.168.4.19:20811` (or `224.76.78.75:20811`) remains.**
+  removed; only on-demand `LRST` to `192.168.4.10:20811` (or `224.76.78.75:20811`) remains.**
 - **`bad` (badmagic) is benign**: Link's own `_link_v1` measurement traffic, 1:1 with `Link msr: rx`.
 - Peer-loss instrumentation (`44ce414964`, on `main`, not yet flashed): `peerloss: flag= ap= ap_sta=
   ip= rssi= chan= igmp(ok= fail=) heap= min=` at the 1->0 transition + `Link peer back after N ms`;
