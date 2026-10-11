@@ -156,8 +156,11 @@ def main():
 
     print("=== enter download mode: 0x40 -> 0x20 ===", flush=True)
     esp = enter_and_sync(port, ROM_BAUD)
-    print("  sync ok  chip=esp32  mac=%s" %
-          ":".join("%02X" % b for b in esp.read_mac()), flush=True)
+    try:
+        print("  mac=%s" % ":".join("%02X" % b for b in esp.read_mac()), flush=True)
+    except BaseException as e:
+        print("  mac unreadable (%s: %s) -- diagnostic only, continuing"
+              % (type(e).__name__, e), flush=True)
     try:
         print("  flash id=0x%06x" % esp.flash_id(), flush=True)
     except BaseException as e:

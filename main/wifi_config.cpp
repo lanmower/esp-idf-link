@@ -36,8 +36,8 @@ static void igmp_join_link(esp_netif_t* netif) {
 }
 
 static const char* TAG = "WIFI";
-static bool g_wifi_connected = false;
-static bool g_ap_active = false;
+static volatile bool g_wifi_connected = false;
+static volatile bool g_ap_active = false;
 static volatile bool g_sta_wanted = false;
 static volatile int g_ap_client_count = 0;
 
@@ -88,6 +88,10 @@ static void wifi_event_handler(void* arg, esp_event_base_t base,
         ip_event_got_ip_t* ev = (ip_event_got_ip_t*)data;
         ESP_LOGI(TAG, "IP: " IPSTR, IP2STR(&ev->ip_info.ip));
         g_wifi_connected = true;
+    } else if (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP) {
+        g_wifi_connected = false;
+        ESP_LOGW(TAG, "IP lost -- STA still associated, treating as down");
+        request_sta_reconnect("lost ip");
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_START) {
         ESP_LOGI(TAG, "AP started");
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STACONNECTED) {
@@ -803,7 +807,9 @@ static void log_send_failure_probe() {
     if (pb) pbuf_free(pb);
 
     const uint16_t probe_port = htons(TX_PROBE_PORT);
-    const uint32_t dst = g_link_send_dst_ip;
+    ip4_addr_t dst_addr;
+    dst_addr.addr = htonl(g_link_send_dst_ip);
+    const uint32_t dst = dst_addr.addr;
     int sock_err = 0;
     const int same = udp_sendto_errno(dst, htons((uint16_t)g_link_send_dst_port), &sock_err);
     const int group = udp_sendto_errno(LINK_DISCOVERY_MULTICAST_GROUP.addr, probe_port, NULL);
@@ -836,10 +842,8 @@ static void log_send_failure_probe() {
     const uint32_t kAllWifiStatisModules = 0xffffffffu;
     esp_wifi_statis_dump(kAllWifiStatisModules);
 
-    ESP_LOGI(TAG, "sendfail: dst=%u.%u.%u.%u:%u err=%u same=%d group=%d sock=%d pb=%d stall=%dms/%d memerr=%u linkdrop=%u linkmemerr=%u heap=%u min=%u",
-             (unsigned)(dst & 0xffu), (unsigned)((dst >> 8) & 0xffu),
-             (unsigned)((dst >> 16) & 0xffu), (unsigned)((dst >> 24) & 0xffu),
-             g_link_send_dst_port, g_link_send_errno, same, group, sock_err, have_pb,
+    ESP_LOGI(TAG, "sendfail: dst=" IPSTR ":%u err=%u same=%d group=%d sock=%d pb=%d stall=%dms/%d memerr=%u linkdrop=%u linkmemerr=%u heap=%u min=%u",
+             IP2STR(&dst_addr), g_link_send_dst_port, g_link_send_errno, same, group, sock_err, have_pb,
              stall_ms, stall_tries, memerr, linkdrop, linkmemerr,
              esp_get_free_heap_size(), esp_get_minimum_free_heap_size());
 }
@@ -892,6 +896,13 @@ static void log_tx_probe() {
     log_netif_state();
 }
 
+static bool sta_has_ip() {
+    if (!g_sta_netif) return false;
+    esp_netif_ip_info_t info;
+    if (esp_netif_get_ip_info(g_sta_netif, &info) != ESP_OK) return false;
+    return info.ip.addr != 0;
+}
+
 static void wifi_supervisor_task(void* arg) {
     const char* ssid = (const char*)arg;
     const int RECONNECT_TRIES = 30;
@@ -907,7 +918,9 @@ static void wifi_supervisor_task(void* arg) {
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(2000));
 
-        if (!g_ap_active && g_wifi_connected) {
+        const bool sta_up = g_wifi_connected && sta_has_ip();
+
+        if (!g_ap_active && sta_up) {
             if (tx_probe_countdown <= 0) {
                 log_tx_probe();
                 tx_probe_countdown = TX_PROBE_EVERY_TICKS;
@@ -916,7 +929,7 @@ static void wifi_supervisor_task(void* arg) {
         }
 
         if (!g_ap_active) {
-            if (g_wifi_connected) {
+            if (sta_up) {
                 sta_down_count = 0;
                 if (igmp_reassert_countdown <= 0) {
                     igmp_join_link(g_sta_netif);
@@ -942,6 +955,14 @@ static void wifi_supervisor_task(void* arg) {
                 sta_down_count = 0;
             }
         } else {
+            if (igmp_reassert_countdown <= 0) {
+                SemaphoreHandle_t igmp_lock = ap_netif_lock();
+                xSemaphoreTake(igmp_lock, portMAX_DELAY);
+                igmp_join_link(g_ap_netif);
+                xSemaphoreGive(igmp_lock);
+                igmp_reassert_countdown = IGMP_REASSERT_PERIOD_TICKS;
+            }
+            igmp_reassert_countdown--;
             if (ap_has_associated_stations()) {
                 ap_scan_countdown = 0;
                 continue;
