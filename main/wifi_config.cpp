@@ -744,6 +744,60 @@ void wifi_start_link_relay() {
 }
 
 static const int AP_SCAN_EVERY_TICKS = 4;
+static const int TX_PROBE_EVERY_TICKS = 5;
+static const uint16_t TX_PROBE_PORT = 34999;
+
+static int udp_sendto_errno(uint32_t addr_network_order, uint16_t port_network_order) {
+    const int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (fd < 0) return errno;
+    struct sockaddr_in dst;
+    memset(&dst, 0, sizeof(dst));
+    dst.sin_family = AF_INET;
+    dst.sin_addr.s_addr = addr_network_order;
+    dst.sin_port = port_network_order;
+    const char payload = 0;
+    const int rc = sendto(fd, &payload, 1, 0, (struct sockaddr*)&dst, sizeof(dst));
+    const int err = (rc < 0) ? errno : 0;
+    close(fd);
+    return err;
+}
+
+static void log_netif_state() {
+    for (esp_netif_t* n = esp_netif_next_unsafe(NULL); n != NULL; n = esp_netif_next_unsafe(n)) {
+        const char* key = esp_netif_get_ifkey(n);
+        const char* name = key ? key : "unkeyed";
+        struct netif* lwip_netif = (struct netif*)esp_netif_get_netif_impl(n);
+        const int link_up = lwip_netif ? (int)netif_is_link_up(lwip_netif) : -1;
+        esp_netif_ip_info_t info;
+        if (esp_netif_get_ip_info(n, &info) == ESP_OK) {
+            ESP_LOGI(TAG, "netif %s up=%d link=%d ip=" IPSTR " gw=" IPSTR " mask=" IPSTR,
+                     name, (int)esp_netif_is_netif_up(n), link_up,
+                     IP2STR(&info.ip), IP2STR(&info.gw), IP2STR(&info.netmask));
+        } else {
+            ESP_LOGI(TAG, "netif %s up=%d link=%d ip=none", name, (int)esp_netif_is_netif_up(n), link_up);
+        }
+    }
+}
+
+static void log_tx_probe() {
+    esp_netif_ip_info_t info;
+    uint32_t gw = 0;
+    if (g_sta_netif && esp_netif_get_ip_info(g_sta_netif, &info) == ESP_OK) gw = info.gw.addr;
+
+    const uint16_t port = htons(TX_PROBE_PORT);
+    const int to_gw = gw ? udp_sendto_errno(gw, port) : -1;
+    const int to_unknown = gw ? udp_sendto_errno((gw & 0xffffff00u) | 99u, port) : -1;
+    const int to_group = udp_sendto_errno(LINK_DISCOVERY_MULTICAST_GROUP.addr, port);
+
+    wifi_ap_record_t ap;
+    const bool have_ap = esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
+    ESP_LOGI(TAG, "txprobe: gw=%u.%u.%u.%u e_gw=%d e_unknown=%d e_group=%d rssi=%d chan=%d heap=%u",
+             (unsigned)((gw >> 24) & 0xffu), (unsigned)((gw >> 16) & 0xffu),
+             (unsigned)((gw >> 8) & 0xffu), (unsigned)(gw & 0xffu),
+             to_gw, to_unknown, to_group, have_ap ? ap.rssi : 0,
+             have_ap ? (int)ap.primary : 0, esp_get_free_heap_size());
+    log_netif_state();
+}
 
 static void wifi_supervisor_task(void* arg) {
     const char* ssid = (const char*)arg;
@@ -755,9 +809,18 @@ static void wifi_supervisor_task(void* arg) {
     int sta_down_count = 0;
     int igmp_reassert_countdown = 0;
     int ap_scan_countdown = 0;
+    int tx_probe_countdown = 0;
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(2000));
+
+        if (!g_ap_active && g_wifi_connected) {
+            if (tx_probe_countdown <= 0) {
+                log_tx_probe();
+                tx_probe_countdown = TX_PROBE_EVERY_TICKS;
+            }
+            tx_probe_countdown--;
+        }
 
         if (!g_ap_active) {
             if (g_wifi_connected) {
