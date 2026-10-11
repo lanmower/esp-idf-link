@@ -178,6 +178,16 @@ static void status_responder_task(void*) {
     }
 }
 
+static volatile bool s_linkResetPending = false;
+
+void link_request_session_reset() { s_linkResetPending = true; }
+
+bool link_consume_session_reset() {
+    if (!s_linkResetPending) return false;
+    s_linkResetPending = false;
+    return true;
+}
+
 static void tempo_listener_task(void*) {
     int rs = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (rs < 0) { vTaskDelete(NULL); return; }
@@ -197,6 +207,10 @@ static void tempo_listener_task(void*) {
         int n = recvfrom(rs, buf, sizeof buf, 0, NULL, NULL);
         if (n < 0) continue;
         note_telemetry_subscriber();
+        if (n >= 4 && memcmp(buf, "LRST", 4) == 0) {
+            link_request_session_reset();
+            continue;
+        }
         if (n >= 12 && memcmp(buf, "LTMP", 4) == 0) {
             int64_t mpb;
             memcpy(&mpb, buf + 4, 8);

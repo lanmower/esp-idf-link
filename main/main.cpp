@@ -45,6 +45,17 @@ void tickTask(void *userParam) {
 
     ESP_LOGI(TAG, "Link init complete");
 
+    const int64_t link_init_us = esp_timer_get_time();
+    static const int64_t LINK_AUTO_BOUNCE_AT_US = 40000000;
+    bool auto_bounce_done = false;
+    auto bounce_link_session = [&](const char* why) {
+        g_link->enable(false);
+        g_link->enable(true);
+        g_link->enableStartStopSync(false);
+        ESP_LOGW(TAG, "Link session bounce (%s) at %lld ms", why,
+                 (long long)((esp_timer_get_time() - link_init_us) / 1000));
+    };
+
     bool was_connected = false;
     int64_t start_wait_time = esp_timer_get_time();
     bool force_start = false;
@@ -55,6 +66,14 @@ void tickTask(void *userParam) {
     while (true) {
         if (xTaskNotifyWait(0, ULONG_MAX, &ulNotifiedValue, pdMS_TO_TICKS(20)) != pdTRUE)
             continue;
+
+        const int64_t now_us = esp_timer_get_time();
+        if (!auto_bounce_done && (now_us - link_init_us) >= LINK_AUTO_BOUNCE_AT_US) {
+            auto_bounce_done = true;
+            bounce_link_session("auto");
+        }
+        if (link_consume_session_reset())
+            bounce_link_session("LRST");
 
         const auto time = g_link->clock().micros();
         const auto state = g_link->captureAppSessionState();

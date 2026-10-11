@@ -97,6 +97,9 @@ extern SynthType g_synth_type;
 
 extern std::unique_ptr<ableton::Link> g_link;
 
+void link_request_session_reset();
+bool link_consume_session_reset();
+
 extern const uint64_t DOUBLE_TAP_TIME_MS;
 extern const uint64_t HOLD_TIME_MS;
 

@@ -13,8 +13,8 @@
 #include <lwip/inet.h>
 #include <lwip/raw.h>
 #include <lwip/pbuf.h>
-#include <lwip/ip_addr.h>
 #include <lwip/tcpip.h>
+#include <lwip/stats.h>
 #include <errno.h>
 #include <esp_system.h>
 #include "freertos/FreeRTOS.h"
@@ -805,10 +805,36 @@ static void log_send_failure_probe() {
     const int same = udp_sendto_errno(dst, htons((uint16_t)g_link_send_dst_port), &sock_err);
     const int group = udp_sendto_errno(LINK_DISCOVERY_MULTICAST_GROUP.addr, probe_port, NULL);
 
-    ESP_LOGI(TAG, "sendfail: dst=%u.%u.%u.%u:%u err=%u same=%d group=%d sock=%d pb=%d heap=%u min=%u",
+    int stall_ms = -1;
+    int stall_tries = 0;
+    if (same != 0) {
+        const int64_t t0 = esp_timer_get_time();
+        for (int i = 0; i < 40; i++) {
+            stall_tries = i + 1;
+            if (udp_sendto_errno(dst, htons((uint16_t)g_link_send_dst_port), NULL) == 0) {
+                stall_ms = (int)((esp_timer_get_time() - t0) / 1000);
+                break;
+            }
+            vTaskDelay(1);
+        }
+    }
+
+    unsigned memerr = 0, linkdrop = 0, linkmemerr = 0;
+#if LWIP_STATS
+#if MEM_STATS
+    memerr = (unsigned)lwip_stats.mem.err;
+#endif
+#if LINK_STATS
+    linkdrop   = (unsigned)lwip_stats.link.drop;
+    linkmemerr = (unsigned)lwip_stats.link.memerr;
+#endif
+#endif
+
+    ESP_LOGI(TAG, "sendfail: dst=%u.%u.%u.%u:%u err=%u same=%d group=%d sock=%d pb=%d stall=%dms/%d memerr=%u linkdrop=%u linkmemerr=%u heap=%u min=%u",
              (unsigned)(dst & 0xffu), (unsigned)((dst >> 8) & 0xffu),
              (unsigned)((dst >> 16) & 0xffu), (unsigned)((dst >> 24) & 0xffu),
              g_link_send_dst_port, g_link_send_errno, same, group, sock_err, have_pb,
+             stall_ms, stall_tries, memerr, linkdrop, linkmemerr,
              esp_get_free_heap_size(), esp_get_minimum_free_heap_size());
 }
 
