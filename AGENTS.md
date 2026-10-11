@@ -411,8 +411,8 @@ so its absolute times must be reconstructed — always log a wall clock ourside.
 ## Comment sweep (INVARIANT 3)
 
 `main/` is **comment-free**: 42 files, 8811 lines, 0 hits for `^\s*(//|/\*)` and 0 for
-`\s(//|/\*)` (recount 2026-10-11). Only comment-looking string: `"/upload/*"` in
-`network_midi.cpp`. `tools/` is swept separately; recount before quoting either.
+`\s(//|/\*)` (2026-10-11). `tools/`: 5 .py, 673 lines, 0 comments. False positives:
+`"/upload/*"` in `network_midi.cpp`, `//` floor division at `tools/flash-usbip.py:26`.
 
 ## gm usage gotchas
 
