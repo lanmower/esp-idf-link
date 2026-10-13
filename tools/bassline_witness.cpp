@@ -178,12 +178,21 @@ void runApproach(int approach, const char* name, bool showGrid, const char* midP
             if (silRun > worstSil) worstSil = silRun;
         } else silRun = 0;
     }
-    size_t notes = 0;
-    for (const Ev& e : g_events) if (e.kind == 0) notes++;
-    printf("  %-7s notes=%4zu  perBar=%4.1f  register=%+d..+%d (%2d st)  distinctBars=%2d/64"
-           "  longestHold=%d  emptyBars=%2d longestSilence=%d\n",
-           name, notes, (double)notes / kBars, lo, hi, hi - lo, (int)uniq.size(), best,
-           empty, worstSil);
+    // The grid keeps one note per 16th (last write wins), so it hides every note that shares a
+    // cell. The true count and the kick-share come from the raw events, never from the grid.
+    size_t notes = 0, onKick = 0;
+    for (const Ev& e : g_events) {
+        if (e.kind != 0) continue;
+        notes++;
+        const double pos = (double)e.tick / (double)kTpq * 4.0;
+        const long long s16 = (long long)std::floor(pos + 0.5) % kStepsBar;
+        if (s16 % 4 == 0) onKick++;
+    }
+    const size_t collided = notes - (size_t)filled;
+    printf("  %-7s notes=%4zu  perBar=%4.1f  kickShare=%4.1f%%  collided=%4zu  register=%+d..+%d (%2d st)"
+           "  distinctBars=%2d/64  longestHold=%d  emptyBars=%2d longestSilence=%d\n",
+           name, notes, (double)notes / kBars, notes ? 100.0 * (double)onKick / (double)notes : 0.0,
+           collided, lo, hi, hi - lo, (int)uniq.size(), best, empty, worstSil);
 
     if (midPath && writeMidi(midPath, g_events))
         printf("  wrote %s (%zu events, %.0f bpm, %d bars)\n", midPath, g_events.size(), kBpm, kBars);
