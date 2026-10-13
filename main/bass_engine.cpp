@@ -601,8 +601,16 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
         const int  figureKey  = (bar / sh.repeatBars) * 2 + (isDropBar ? 1 : 0);
         if (figureKey != figureKeyHeld) {
             shapeBar(heldFigure, motif, bar, kRootNoteE2, m_scaleIdx);
-            figureKeyHeld = figureKey;
             memcpy(barMotif, heldFigure, sizeof(barMotif));
+            // A rest is never held. restBarProb silences the shape it lands on, and holding that
+            // turns a one-bar breath into repeatBars bars of dead air — STAB opened with 8 silent
+            // bars before this. Leaving the key unheld re-shapes every bar until a real figure
+            // appears, which is the pre-hold behaviour.
+            bool anyNote = false;
+            for (int i = 0; i < bli::kStepsPerBar; i++) {
+                if (heldFigure[i].note >= 0) { anyNote = true; break; }
+            }
+            figureKeyHeld = anyNote ? figureKey : -1;
         } else {
             memcpy(barMotif, heldFigure, sizeof(barMotif));
             varyRepeat(barMotif, bar, sh);

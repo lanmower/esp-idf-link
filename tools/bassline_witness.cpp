@@ -169,11 +169,21 @@ void runApproach(int approach, const char* name, bool showGrid, const char* midP
     for (int b = 1; b < kBars; b++) {
         if (rows[b] == rows[b - 1]) { run++; best = std::max(best, run); } else run = 1;
     }
+    // Dead air is the failure this catches: a held rest silenced a whole repeatBars group, so STAB
+    // opened with 8 silent bars. Nothing else in the metrics sees it.
+    int empty = 0, silRun = 0, worstSil = 0;
+    for (int b = 0; b < kBars; b++) {
+        if (rows[b].find_first_not_of('.') == std::string::npos) {
+            empty++; silRun++;
+            if (silRun > worstSil) worstSil = silRun;
+        } else silRun = 0;
+    }
     size_t notes = 0;
     for (const Ev& e : g_events) if (e.kind == 0) notes++;
     printf("  %-7s notes=%4zu  perBar=%4.1f  register=%+d..+%d (%2d st)  distinctBars=%2d/64"
-           "  longestHold=%d\n",
-           name, notes, (double)notes / kBars, lo, hi, hi - lo, (int)uniq.size(), best);
+           "  longestHold=%d  emptyBars=%2d longestSilence=%d\n",
+           name, notes, (double)notes / kBars, lo, hi, hi - lo, (int)uniq.size(), best,
+           empty, worstSil);
 
     if (midPath && writeMidi(midPath, g_events))
         printf("  wrote %s (%zu events, %.0f bpm, %d bars)\n", midPath, g_events.size(), kBpm, kBars);

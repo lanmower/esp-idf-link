@@ -354,7 +354,9 @@ pitches) and **all 8 of 8 consecutive bars differed** — a wandering jam, not a
 - **`ApproachShape::repeatBars`** = bars one shaped figure is HELD: ROLL 4, ACID 2, FUNK 2, GLITCH 1, STAB 4,
   DRIFT 8, PEDAL 8, BREAK 2. GLITCH=1 is deliberate (the one non-repeating voice). Copy-then-`varyRepeat`
   (vel +-4, CC74 +-6, occasional ghost) stops a hold sounding sampled. Setting it to 1 restores "every bar
-  different" — that is the regression to watch for.
+  different" — that is the regression to watch for. **A rest is never held**: when the shaped figure is
+  empty, `figureKeyHeld` is left at -1 so the next bar re-shapes. Otherwise `restBarProb` silences a whole
+  `repeatBars` group and STAB opens with 8 dead bars. Witness reports `emptyBars`/`longestSilence` for it.
 - **Register**: the chord offset is added AFTER `clampRange` bounded the motif, so the sum escaped the bass
   (+15 motif, +11 chord). Now octave-folded into `kBassLowNote 33`..`kBassHighNote 52`.
 - **Syncopation capped** at `kSyncTargetCap 0.45`: driving notes onto odd 16ths is a funk/breakbeat device;
