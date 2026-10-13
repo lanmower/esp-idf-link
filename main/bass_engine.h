@@ -98,6 +98,7 @@ private:
         float   ghostProb;
         float   restBarProb;
         int     cellBars;
+        int     repeatBars;
         int     phaseShiftBars;
         float   voiceOffsetSteps;
         uint16_t accentMask;
@@ -107,6 +108,7 @@ private:
     bli::Dials dialsForApproach() const;
     void shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPerBar],
                   int bar, int root, int scIdx);
+    void varyRepeat(MS m[bli::kStepsPerBar], int bar, const ApproachShape& sh);
     static float syncopationFraction(const MS m[bli::kStepsPerBar]);
     static void rotateMotif(const MS src[bli::kStepsPerBar], MS dst[bli::kStepsPerBar],
                             int shiftSteps);

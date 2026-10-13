@@ -10,6 +10,11 @@
 static const char* TAG = "BASS";
 
 static constexpr int   kRootNoteE2             = 40;
+// The chord offset is added AFTER clampRange has bounded the motif, so the sum can leave the bass
+// register entirely (root+15 motif + root+11 chord = +26). Fold the result back into a bass window
+// by octaves: it keeps the scale degree and the contour, and keeps the line under the kick.
+static constexpr int   kBassLowNote           = kRootNoteE2 - 7;
+static constexpr int   kBassHighNote          = kRootNoteE2 + 12;
 static constexpr int   kStepsPerBeat           = 4;
 static constexpr int   kBarsPerPhrase          = 64;
 static constexpr int   kStepsPerPhrase         = kBarsPerPhrase * bli::kStepsPerBar;
@@ -214,31 +219,35 @@ void BassEngine::turnInterpreted(int base, int scIdx, const bli::Dials& dials) {
 }
 
 const BassEngine::ApproachShape& BassEngine::shapeFor(int approach) {
+    // repeatBars: how many bars one shaped figure is HELD before a new one is generated.
+    // This is the hypnosis knob -- without it every bar is a fresh random line, which reads as a
+    // wandering jam rather than a loop a dancer can lock into. Psytrance holds a 1-2 bar
+    // ostinato for 4-8 bars while the chord cells move underneath it.
     static const ApproachShape kShapes[APP_COUNT] = {
         {1.00f, 0.50f, 0.10f, 0.00f, 0.35f,  6.f, 18.f, 0.02f, true,  false, false,
          0.22f,  0.44f,  0.19f, -0.05f, -0.05f,  0.06f,
-         0.00f, 0.02f, 2, 0,  0.00f, 0x1111, 0.00f},
+         0.00f, 0.02f, 2, 4, 0,  0.00f, 0x1111, 0.00f},
         {0.72f, 0.80f, 0.08f, 0.15f, 0.50f, 22.f, 55.f, 0.00f, false, false, false,
          0.20f,  0.00f,  0.44f,  0.04f, -0.05f, -0.04f,
-         0.05f, 0.04f, 4, 0, -0.04f, 0x4448, 0.08f},
+         0.05f, 0.04f, 4, 2, 0, -0.04f, 0x4448, 0.08f},
         {0.50f, 0.55f, 0.12f, 0.38f, 0.60f, 30.f, 25.f, 0.05f, false, true,  true,
          0.30f,  0.33f,  0.06f,  0.19f,  0.15f,  0.28f,
-         0.35f, 0.03f, 4, 0, -0.12f, 0x4441, 0.26f},
+         0.35f, 0.03f, 4, 2, 0, -0.12f, 0x4441, 0.26f},
         {0.32f, 0.70f, 0.18f, 0.45f, 0.75f, 34.f, 30.f, 0.09f, false, true,  true,
          0.20f,  0.11f,  0.31f, -0.16f, -0.25f,  0.40f,
-         0.10f, 0.12f, 3, 4, -0.08f, 0x1224, 0.14f},
+         0.10f, 0.12f, 3, 1, 4, -0.08f, 0x1224, 0.14f},
         {0.25f, 0.22f, 0.35f, 0.50f, 0.25f, 12.f, 15.f, 0.045f, false, false, false,
-         0.20f, -0.11f, -0.44f, -0.06f, -0.30f, -0.26f,
-         0.00f, 0.18f, 2, 0,  0.00f, 0x4444, 0.00f},
+         0.20f, -0.30f, -0.44f, -0.06f, -0.30f, -0.26f,
+         0.00f, 0.18f, 2, 4, 0,  0.00f, 0x4444, 0.00f},
         {0.40f, 1.60f, 0.14f, 0.10f, 0.30f, 10.f, 45.f, 0.03f, false, false, false,
          0.70f, -0.33f, -0.31f, -0.26f,  0.55f, -0.15f,
-         0.00f, 0.10f, 2, 0,  0.00f, 0x0009, 0.05f},
+         0.00f, 0.10f, 2, 8, 0,  0.00f, 0x0009, 0.05f},
         {0.20f, 2.50f, 0.15f, 0.20f, 0.15f,  8.f, 35.f, 0.00f, false, false, false,
          1.10f, -0.44f, -0.44f, -0.36f,  0.60f, -0.26f,
-         0.00f, 0.06f, 8, 0,  0.00f, 0x0001, 0.00f},
+         0.00f, 0.06f, 8, 8, 0,  0.00f, 0x0001, 0.00f},
         {0.55f, 0.35f, 0.22f, 0.50f, 0.85f, 36.f, 40.f, 0.06f, false, true,  true,
          0.24f,  0.22f, -0.06f,  0.09f, -0.10f,  0.17f,
-         0.05f, 0.22f, 4, 6, -0.10f, 0x0812, 0.20f},
+         0.05f, 0.22f, 4, 2, 6, -0.10f, 0x0812, 0.20f},
     };
     if (approach < APP_ROLL || approach >= APP_COUNT) approach = APP_ROLL;
     return kShapes[approach];
@@ -306,6 +315,7 @@ void BassEngine::shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPer
     static constexpr int   kSyncBoundaryBars   = 4;
     static constexpr float kSyncBoundaryGain   = 1.6f;
     static constexpr float kSyncBodyScale      = 0.70f;
+    static constexpr float kSyncTargetCap      = 0.45f;
     static constexpr float kOctaveJumpStepProb = 0.35f;
     static constexpr float kPickupProb         = 0.35f;
     static constexpr float kPickupLengthSteps  = 0.25f;
@@ -356,7 +366,9 @@ void BassEngine::shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPer
     }
 
     const int barInSection = bar % kBarsPerSection;
-    const float syncTarget = std::min(1.0f, sh.syncTarget *
+    // Capped: driving notes onto odd 16ths is a funk/breakbeat device. A full-on or psygressive
+    // bass is metrically straight -- its energy comes from the roll, not from syncopation.
+    const float syncTarget = std::min(kSyncTargetCap, sh.syncTarget *
         (barInSection >= kBarsPerSection - kSyncBoundaryBars ? kSyncBoundaryGain : kSyncBodyScale));
 
     if (syncTarget > 0.f) {
@@ -446,6 +458,37 @@ void BassEngine::shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPer
     clampRange(out, root);
 }
 
+// A held figure must not be a frozen one: the loop stays recognisable while the velocity and
+// cutoff breathe under it, so a 4-bar hold still feels played rather than sampled.
+void BassEngine::varyRepeat(MS m[bli::kStepsPerBar], int bar, const ApproachShape& sh) {
+    static constexpr float kTwoPiLocal   = 6.28318530717958647692f;
+    static constexpr float kQuarterLocal = 1.57079632679489661923f;
+
+    const float phase    = (float)(bar % 8) / 8.f;
+    const int   velNudge = (int)(std::sin(kTwoPiLocal * phase) * 4.f);
+    const int   fccNudge = (int)(std::sin(kTwoPiLocal * phase + kQuarterLocal) * 6.f);
+
+    for (int i = 0; i < bli::kStepsPerBar; i++) {
+        if (m[i].note < 0) continue;
+        m[i].vel = std::max(1, std::min(127, m[i].vel + velNudge));
+        m[i].fcc = std::max(0, std::min(127, m[i].fcc + fccNudge));
+    }
+
+    if (sh.ghostProb > 0.f && randChance(0.25f)) {
+        const int last = bli::kStepsPerBar - 1;
+        if (m[last].note < 0) {
+            for (int i = last - 1; i >= 0; i--) {
+                if (m[i].note >= 0) {
+                    m[last] = m[i];
+                    m[last].vel = kGhostVelocity;
+                    m[last].len = kGhostLengthSteps;
+                    break;
+                }
+            }
+        }
+    }
+}
+
 void BassEngine::regeneratePhrase(bool advanceArc) {
     if (advanceArc) m_phraseCount++;
     m_phrase.clear();
@@ -516,6 +559,9 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
     uint32_t barHash[kBarsPerPhrase] = {};
     int seenCount = 0;
 
+    MS heldFigure[bli::kStepsPerBar] = {};
+    int figureKeyHeld = -1;
+
     for (int bar = 0; bar < kBarsPerPhrase; bar++) {
         int sec       = bar / kBarsPerSection;
         int cellIdx   = (bar / cellBars) % kBarsPerChordCell;
@@ -544,7 +590,16 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
         }
 
         MS barMotif[bli::kStepsPerBar];
-        shapeBar(barMotif, motif, bar, kRootNoteE2, m_scaleIdx);
+        const bool isDropBar  = (bar % kDropBarPeriod == kDropBarIndex);
+        const int  figureKey  = (bar / sh.repeatBars) * 2 + (isDropBar ? 1 : 0);
+        if (figureKey != figureKeyHeld) {
+            shapeBar(heldFigure, motif, bar, kRootNoteE2, m_scaleIdx);
+            figureKeyHeld = figureKey;
+            memcpy(barMotif, heldFigure, sizeof(barMotif));
+        } else {
+            memcpy(barMotif, heldFigure, sizeof(barMotif));
+            varyRepeat(barMotif, bar, sh);
+        }
 
         uint32_t h = 2166136261u;
         for (int i = 0; i < bli::kStepsPerBar; i++) {
@@ -560,6 +615,8 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
         for (int i = 0; i < bli::kStepsPerBar; i++) {
             if (barMotif[i].note < 0) continue;
             int note = barMotif[i].note + rootSemitoneOffset;
+            while (note > kBassHighNote) note -= kOctaveSemitones;
+            while (note < kBassLowNote)  note += kOctaveSemitones;
             note = std::max(0, std::min(127, note));
             noteMin = std::min(noteMin, note);
             noteMax = std::max(noteMax, note);
@@ -611,16 +668,17 @@ void BassEngine::playNote(const NoteSlot& n, double bpm) {
 
     send_midi_cc(1, kMidiCCFilter, (uint8_t)fcc);
 
+    int raw = kPitchBendCentreRaw;
     if (n.pitchBendSemitones != 0.f) {
-        int raw = kPitchBendCentreRaw + (int)(n.pitchBendSemitones / kPitchBendSemitoneSpan
-                                              * kPitchBendHalfRange);
+        raw = kPitchBendCentreRaw + (int)(n.pitchBendSemitones / kPitchBendSemitoneSpan
+                                          * kPitchBendHalfRange);
         raw = std::max(0, std::min(kPitchBendRawMax, raw));
-        uint8_t pb[3] = {kMidiPitchBend, (uint8_t)(raw & 0x7F), (uint8_t)(raw >> 7)};
+    }
+    static int s_last_pitch_bend_raw = -1;
+    if (raw != s_last_pitch_bend_raw) {
+        const uint8_t pb[3] = {kMidiPitchBend, (uint8_t)(raw & 0x7F), (uint8_t)((raw >> 7) & 0x7F)};
         send_midi_message(pb, 3);
-    } else {
-        uint8_t pb[3] = {kMidiPitchBend, (uint8_t)(kPitchBendCentreRaw & 0x7F),
-                         (uint8_t)(kPitchBendCentreRaw >> 7)};
-        send_midi_message(pb, 3);
+        s_last_pitch_bend_raw = raw;
     }
 
     double offPosInSteps = n.posInSteps + n.lengthInSteps;

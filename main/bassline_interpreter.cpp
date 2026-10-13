@@ -82,16 +82,23 @@ void Dials::set(int bank, int dialIdx, float v01) {
 }
 
 struct Groove { const char* name; float w[kStepsPerBar]; };
+// Psytrance-first vocabulary. The bass is a RHYTHM instrument here: a full-on/psygressive
+// line is a 16th-note roll, not a syncopated funk figure, so the templates that survive are the
+// sparse intros (minimal, deep), the rolls (psy_*, techno_roll), acid, and one syncopated
+// character voice. house_bump / garage_2step / dembow / four_floor were not basslines of this
+// genre: four_floor is the KICK pattern, and the bass is what fills between its quarters.
 static const Groove kGrooves[] = {
     {"minimal",      {1, 0, 0, 0,  0, 0, .3f, 0,   .5f, 0, 0, 0,   0, 0, .3f, 0}},
-    {"deep",         {1, 0, 0, 0,  0, 0, .36f, 0,  .6f, 0, 0, 0,   0, 0, .3f, 0}},
-    {"house_bump",   {.92f, 0, .78f, .06f, .22f, 0, .78f, .06f, .58f, 0, .78f, .06f, .22f, 0, .78f, .16f}},
-    {"four_floor",   {1, 0, .1f, .16f, .9f, 0, .1f, .16f, .95f, 0, .1f, .16f, .9f, 0, .16f, .32f}},
+    {"deep",         {1, 0, 0, 0,  0, 0, .36f, 0,  .6f, 0, .34f, 0, 0, 0, .3f, 0}},
+    {"psy_offbeat",  {.72f, 1.f, .88f, 1.f, .72f, 1.f, .88f, 1.f, .72f, 1.f, .88f, 1.f, .72f, 1.f, .9f, 1.f}},
+    {"psy_gallop",   {1, .46f, .9f, .95f, .58f, .9f, .95f, .58f, 1, .46f, .9f, .95f, .58f, .9f, .95f, .7f}},
     {"acid_303",     {1, .36f, .7f, .4f, .6f, .46f, .76f, .36f, .86f, .4f, .7f, .46f, .6f, .4f, .8f, .56f}},
-    {"garage_2step", {1, 0, .16f, .56f, .1f, .2f, .8f, .16f, .36f, 0, .7f, .2f, .16f, .56f, .36f, .5f}},
-    {"dembow",       {1, 0, 0, .86f, 0, 0, .9f, 0,  .36f, 0, 0, .86f, 0, 0, .76f, .2f}},
+    {"psy_ratchet",  {1, .95f, .42f, .9f, .95f, .38f, .9f, .85f, 1, .95f, .42f, .9f, .95f, .38f, .9f, .8f}},
     {"funk_synco",   {1, 0, .36f, .7f, .2f, .46f, .16f, .6f, .56f, .2f, .5f, .36f, .3f, .6f, .4f, .56f}},
     {"techno_roll",  {1, .6f, .66f, .6f, .8f, .6f, .66f, .6f, .9f, .6f, .66f, .6f, .8f, .6f, .7f, .66f}},
+    // Index 8 is the top energy band, so it is the full 16th-note roll -- the only pattern that
+    // is unambiguously full-on. Keep a roll here or the densest voice stops rolling.
+    {"psy_roll",     {1, .93f, .9f, .93f, 1, .93f, .9f, .93f, 1, .93f, .9f, .93f, 1, .93f, .9f, .96f}},
 };
 static constexpr int kNumGrooves = sizeof(kGrooves) / sizeof(kGrooves[0]);
 
@@ -122,12 +129,12 @@ static int buildOnsets(const Dials& dials, RngSource& rng, int outSteps[kStepsPe
 
     int gIdx = Dials::bandIndex(energy, kNumGrooves);
     const float* tmpl = kGrooves[gIdx].w;
-    float density = 0.25f + energy * 0.65f;
+    float density = 0.32f + energy * 0.62f;
 
     int n = 0;
     for (int i = 0; i < kStepsPerBar; i++) {
         float w = tmpl[i];
-        w = w * (1.f - sync * kMetric[i] * 0.7f) + sync * (1.f - kMetric[i]) * 0.6f;
+        w = w * (1.f - sync * kMetric[i] * 0.7f) + sync * (1.f - kMetric[i]) * 0.4f;
         float p = w * (0.4f + 1.55f * density) - (1.f - density) * 0.16f;
         p = std::max(0.f, std::min(1.f, p));
         if (rng.next01() < p) outSteps[n++] = i;
@@ -152,15 +159,19 @@ static float harmonicCost(int m, int root, const int chordTones[4], float tensio
     if (pc == chordTones[kChordFifth] % 12) return 0.09f;
     if (pc == chordTones[kChordThird] % 12) return 0.14f;
     if (pc == chordTones[kChordSeventh] % 12) return 0.21f;
-    return 0.52f * (1.f - 0.75f * tension);
+    return 0.95f * (1.f - 0.75f * tension);
 }
 
+// Bass grammar, in descending order of cheapness: REPEAT the last note (that repetition IS the
+// hypnosis), displace by an OCTAVE (the idiomatic full-on move), step a little, and pay heavily
+// for anything wider. A psytrance bass is rhythmic, not melodic -- a smooth 7+ semitone climb
+// reads as an arpeggio run and takes the line straight out of the genre.
 static float transCost(int a, int b, int leap, float octAppetite, float repeat) {
     int d = std::abs(a - b);
-    if (d == 0) return (1.f - repeat) * 0.75f;
-    if (d == 12) return 0.42f * (1.f - octAppetite) + 0.05f;
-    float c = 0.12f + (d / 12.f) * 0.6f;
-    if (d > leap) c += (d - leap) * 0.32f;
+    if (d == 0)  return (1.f - repeat) * 0.18f;
+    if (d == 12) return 0.30f * (1.f - octAppetite) + 0.04f;
+    float c = 0.14f + (d / 12.f) * 0.45f;
+    if (d > leap) c += (d - leap) * 0.30f;
     if (d == 1 || d == 2) c *= 0.72f;
     return c;
 }
@@ -176,10 +187,10 @@ static void buildPitches(const int onsets[], int n, int root, int scaleIdx,
     chordToneIntervals(scaleIdx, chordTones);
     float gravity = dials.harmonyGravity;
     float tension = 1.f - dials.harmonyColor;
-    float depth = 0.4f + dials.motionVariation * 0.3f;
-    float variationTemp = dials.motionVariation * 0.85f;
-    int leap = 3 + static_cast<int>(dials.motionVariation * 9.f);
-    float octAppetite = dials.motionVariation * 0.5f;
+    float depth = 0.18f + dials.motionVariation * 0.28f;
+    float variationTemp = dials.motionVariation * 0.45f;
+    int leap = 7 + static_cast<int>(dials.motionVariation * 6.f);
+    float octAppetite = 0.35f + dials.motionVariation * 0.5f;
     float repeat = 1.f - dials.motionVariation * 0.6f;
 
     int contourShape = Dials::bandIndex(dials.motionContour, CT_COUNT);
@@ -209,7 +220,7 @@ static void buildPitches(const int onsets[], int n, int root, int scaleIdx,
             float e = harmonicCost(pool[k], root, chordTones, tension) * (0.3f + 0.7f * m * gravity * 1.35f);
             float dev = std::fabs(pool[k] - targets[t]) / float(kRegisterSpan);
             e += depth * dev * dev * 2.2f;
-            e += variationTemp * gumbelNoise(rng) * 0.5f;
+            e += variationTemp * gumbelNoise(rng) * 0.35f;
             emit[t][k] = e;
         }
     }
