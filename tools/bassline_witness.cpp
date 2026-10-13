@@ -120,8 +120,13 @@ void runApproach(int approach, const char* name, bool showGrid, const char* midP
 
     ableton::Link::SessionState st;
     st.m_bpm = kBpm;
-    const long long stepUs = (long long)(0.25 * 60.0 / kBpm * 1e6);
-    for (int s = 0; s < kBars * kStepsBar; s++) {
+    // Simulate at 1/64 notes, not 1/16: a note scheduled at step 2.053 only fires once the phrase
+    // position passes it, so at 1/16 resolution it is emitted during the step-3 call and lands in
+    // the wrong grid cell (and collides with the note genuinely at step 3). That under-reported
+    // density as ~13/16 when the motif really carries all 16.
+    constexpr int kSub = 4;
+    const long long stepUs = (long long)(0.25 / kSub * 60.0 / kBpm * 1e6);
+    for (int s = 0; s < kBars * kStepsBar * kSub; s++) {
         const auto time = std::chrono::microseconds(s * stepUs);
         g_nowBeat = st.beatAtTime(time, 16.0);
         engine.process(st, time);

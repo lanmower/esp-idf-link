@@ -343,7 +343,7 @@ masked `(raw >> 7) & 0x7F`; `kPitchBendHalfRange 8191`, `kPitchBendRawMax 16383`
 bar x 16th grid + metrics; `--mid <file>` writes a playable MIDI file so a change is AUDITIONED, not argued
 about. Witnessed BEFORE: ROLL emitted a 13-semitone melodic *sweep* (`0 1 3 5 7 10 12 13 ...`, 8 unique
 pitches) and **all 8 of 8 consecutive bars differed** — a wandering jam, not a loop. AFTER: `0 0 0 0 12 12 12
-12 ...`, register +0..+12, 13 notes/bar, 4-bar holds. Five invariants hold the genre:
+12 ...`, register +0..+12, 13 notes/bar, 4-bar holds. Six invariants hold the genre:
 - **Rhythm, not melody.** `kGrooves` is psytrance-first (`psy_offbeat`, `psy_roll`, `psy_gallop`,
   `psy_ratchet`, + minimal, deep, `acid_303`, `techno_roll`, `funk_synco`). `house_bump`/`garage_2step`/
   `dembow`/`four_floor` removed: four_floor is the *kick* pattern and the bass fills between its quarters.
@@ -359,6 +359,11 @@ pitches) and **all 8 of 8 consecutive bars differed** — a wandering jam, not a
   (+15 motif, +11 chord). Now octave-folded into `kBassLowNote 33`..`kBassHighNote 52`.
 - **Syncopation capped** at `kSyncTargetCap 0.45`: driving notes onto odd 16ths is a funk/breakbeat device;
   full-on is metrically straight.
+- **Ghost drop is 25, not 45** (a bass is not a drum): at vel 10-40 a ghost vanishes and holes the roll.
+  **Filter floor rises per section** `kSectionFilterRise {0,8,18,5}` — the per-section sine only breathes
+  within a section; this is what opens the line across the phrase.
+- **Witness resolution matters**: simulate at 1/64 notes, not 1/16. At 1/16 a note scheduled at step 2.053 is
+  emitted during the step-3 call and lands in the wrong cell, under-reporting density.
 
 ## HTTP clip server (8080) and SPIFFS
 

@@ -314,6 +314,11 @@ void BassEngine::shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPer
     static constexpr float kSyncTolerance      = 0.02f;
     static constexpr int   kSyncBoundaryBars   = 4;
     static constexpr float kSyncBoundaryGain   = 1.6f;
+    // Filter floor per section of the phrase. The per-section sine below only breathes within a
+    // section; this is what makes the line actually OPEN across the phrase (first -> bridge ->
+    // peak) and settle back for the last section, which is the arrangement device the genre runs
+    // on. Without it every section sits at the same average cutoff.
+    static constexpr float kSectionFilterRise[kSectionsPerPhrase] = {0.f, 8.f, 18.f, 5.f};
     static constexpr float kSyncBodyScale      = 0.70f;
     static constexpr float kSyncTargetCap      = 0.45f;
     static constexpr float kOctaveJumpStepProb = 0.35f;
@@ -366,6 +371,7 @@ void BassEngine::shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPer
     }
 
     const int barInSection = bar % kBarsPerSection;
+    const int secInPhrase  = bar / kBarsPerSection;
     // Capped: driving notes onto odd 16ths is a funk/breakbeat device. A full-on or psygressive
     // bass is metrically straight -- its energy comes from the roll, not from syncopation.
     const float syncTarget = std::min(kSyncTargetCap, sh.syncTarget *
@@ -448,7 +454,8 @@ void BassEngine::shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPer
         out[i].vel = std::max(1, std::min(127,
             out[i].vel + (int)(velLfo * sh.velDrift) + (randBelow(kVelocityWobble * 2 + 1) - kVelocityWobble)
             + ((sh.accentMask >> i) & 1 ? kAccentVelocityBoost : -kAccentVelocityDrop)));
-        out[i].fcc = std::max(0, std::min(127, out[i].fcc + (int)(filtLfo * sh.filtSweepDepth)));
+        out[i].fcc = std::max(0, std::min(127,
+            out[i].fcc + (int)(filtLfo * sh.filtSweepDepth) + (int)kSectionFilterRise[secInPhrase]));
         out[i].tsBeats += (bli::microOffsetForStep(i) * microDepth + sh.voiceOffsetSteps)
                           / (float)kStepsPerBeat;
     }

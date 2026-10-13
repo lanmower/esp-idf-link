@@ -274,7 +274,9 @@ static void buildArticulation(const int onsets[], const int pitches[], int n,
         bool ghost = (!accent) && (rng.next01() < ghostP * (1.15f - mw));
         bool slide = (gap <= 3) && (i + 1 < n) && (rng.next01() < slideP);
 
-        int vel = static_cast<int>((0.55f + mw * 0.3f) * 100.f + (accent ? 25 : 0) - (ghost ? 45 : 0));
+        // Ghost drop is 25, not 45: on a bass (unlike on drums) a ghost at velocity 10-40 is a note
+    // that effectively disappears, which punches holes in a roll that is supposed to be continuous.
+    int vel = static_cast<int>((0.55f + mw * 0.3f) * 100.f + (accent ? 25 : 0) - (ghost ? 25 : 0));
         vel = std::max(1, std::min(127, vel));
 
         float x = s / float(kStepsPerBar);
