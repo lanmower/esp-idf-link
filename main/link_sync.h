@@ -24,6 +24,8 @@ QuantumInfo detectQuantumBoundary(const ableton::Link::SessionState& state,
 
 void init_link_timer(TaskHandle_t task_handle);
 
+void link_sync_send_boot_panic();
+
 void link_start_tempo_listener();
 
 void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force_start,

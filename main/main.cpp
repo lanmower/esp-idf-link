@@ -27,6 +27,7 @@ std::unique_ptr<ableton::Link> g_link;
 
 void tickTask(void *userParam) {
     init_uart_midi();
+    link_sync_send_boot_panic();
     init_adc();
     init_hall_sensor();
     init_touch_pads();

@@ -382,6 +382,12 @@ static void send_all_notes_off_all_channels() {
     }
 }
 
+void link_sync_send_boot_panic() {
+    const uint8_t stop_msg = MIDI_STOP;
+    send_midi_bytes(&stop_msg, 1);
+    send_all_notes_off_all_channels();
+}
+
 static void send_song_position(double sessionBeat) {
     uint16_t spp_units = static_cast<uint16_t>(sessionBeat * MIDI_SPP_UNITS_PER_BEAT) & MIDI_SPP_UNITS_MASK;
     const uint8_t spp[] = { MIDI_SONG_POSITION_POINTER,
@@ -415,12 +421,18 @@ static void schedule_next_event(const ableton::Link::SessionState& state) {
     const int64_t nowLink = g_link->clock().micros().count();
     const double beatNow = state.beatAtTime(std::chrono::microseconds(nowLink), LINK_QUANTUM);
     const int64_t dueNow = static_cast<int64_t>(std::floor(beatNow * MIDI_PULSES_PER_QUARTER_NOTE)) + 1;
-    if (!s_next_pulse_valid || s_next_pulse < dueNow) {
-        if (s_next_pulse_valid && dueNow - s_next_pulse > MIDI_CLOCK_RESYNC_THRESHOLD)
+    if (!s_next_pulse_valid) {
+        s_next_pulse = dueNow;
+        s_next_pulse_valid = true;
+    } else if (s_next_pulse < dueNow) {
+        if (dueNow - s_next_pulse > MIDI_CLOCK_RESYNC_THRESHOLD)
             ESP_LOGW(TAG_LINK, "clock %lld pulse(s) behind -- resyncing to beat %.2f (no burst)",
                      (long long)(dueNow - s_next_pulse), beatNow);
         s_next_pulse = dueNow;
-        s_next_pulse_valid = true;
+    } else if (s_next_pulse - dueNow > MIDI_CLOCK_RESYNC_THRESHOLD) {
+        ESP_LOGW(TAG_LINK, "clock %lld pulse(s) ahead of the timeline -- re-anchoring to beat %.2f",
+                 (long long)(s_next_pulse - dueNow), beatNow);
+        s_next_pulse = dueNow;
     }
     int64_t due = state.timeAtBeat((double)s_next_pulse / MIDI_PULSES_PER_QUARTER_NOTE, LINK_QUANTUM).count();
     for (int guard = 0; due < nowLink && guard < MAX_CATCHUP_PULSES_PER_SCHEDULE; guard++) {
@@ -474,6 +486,7 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     broadcast_ticker_timeline(state, time.count());
 
     if ((s_tempoReqPending || s_phaseReqPending) && g_link) {
+        bool phaseApplied = false;
         auto ss = g_link->captureAppSessionState();
         if (s_tempoReqPending) {
             s_tempoReqPending = false;
@@ -483,9 +496,15 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
         if (s_phaseReqPending) {
             s_phaseReqPending = false;
             ss.forceBeatAtTime(0.0, std::chrono::microseconds(s_phaseReqBeat0us), s_phaseReqQuantum);
+            phaseApplied = true;
             ESP_LOGI(TAG_LINK, "Phase forced to loop downbeat (q=%.2f)", s_phaseReqQuantum);
         }
         g_link->commitAppSessionState(ss);
+        if (phaseApplied && s_evt_enabled) {
+            s_next_pulse_valid = false;
+            s_pending_realign  = true;
+            schedule_next_event(g_link->captureAppSessionState());
+        }
     }
 
     bool is_connected = g_link->numPeers() > 0;
@@ -680,6 +699,7 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
         s_next_pulse_valid = false;
         s_evt_armed = false;
         if (clockEnabled) {
+            s_pending_realign = true;
             metronome_accent_for_beat(std::floor(sessionBeat) + 1.0, s_next_click_freq, s_next_click_ms);
             prime_buzzer_freq(s_next_click_freq);
             schedule_next_event(state);
