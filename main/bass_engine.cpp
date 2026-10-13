@@ -231,7 +231,7 @@ const BassEngine::ApproachShape& BassEngine::shapeFor(int approach) {
          0.20f,  0.00f,  0.44f,  0.04f, -0.05f, -0.04f,
          0.05f, 0.04f, 4, 2, 0, -0.04f, 0x4448, 0.08f},
         {0.50f, 0.55f, 0.12f, 0.38f, 0.60f, 30.f, 25.f, 0.05f, false, true,  true,
-         0.30f,  0.33f,  0.06f,  0.19f,  0.15f,  0.28f,
+         0.30f,  0.33f,  0.06f,  0.19f,  0.15f,  0.14f,
          0.35f, 0.03f, 4, 2, 0, -0.12f, 0x4441, 0.26f},
         {0.32f, 0.70f, 0.18f, 0.45f, 0.75f, 34.f, 30.f, 0.09f, false, true,  true,
          0.20f,  0.11f,  0.31f, -0.16f, -0.25f,  0.40f,
