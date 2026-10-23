@@ -686,6 +686,9 @@ extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, u
 
 static const uint32_t RELAY_RECV_TIMEOUT_MS = 20;
 static const uint32_t RELAY_STOP_POLL_MS = 20;
+// The relay's own wait quantum. This, not SO_RCVTIMEO, is what bounds how long the relay can sit
+// before it re-reads g_relay_stop.
+static const long RELAY_SELECT_TIMEOUT_US = 20 * 1000;
 
 struct RelayEmit {
     struct raw_pcb* pcb;
@@ -780,10 +783,22 @@ static void link_multicast_relay_task(void*) {
 
     for (;;) {
         if (g_relay_stop) break;
+        // select() paces the loop and bounds the block. A plain blocking recvfrom cannot be
+        // relied on to return: SO_RCVTIMEO is not guaranteed to be honoured, and measured over
+        // two failover runs the relay sat in recvfrom across 2 s, then 5 s, then a wake-up
+        // datagram, without ever reaching its g_relay_stop check. With select the wait is ours,
+        // and the flag is seen within RELAY_SELECT_TIMEOUT_MS whatever lwIP does with timeouts.
+        fd_set readset;
+        FD_ZERO(&readset);
+        FD_SET(rs, &readset);
+        struct timeval tv = {};
+        tv.tv_usec = RELAY_SELECT_TIMEOUT_US;
+        const int ready = select(rs + 1, &readset, NULL, NULL, &tv);
+        if (ready <= 0) continue;
         struct sockaddr_in src = {};
         socklen_t sl = sizeof(src);
         int n = recvfrom(rs, payload, sizeof(payload), 0, (struct sockaddr*)&src, &sl);
-        // Check again on the way out: the wake-up datagram that unblocks recvfrom arrives here,
+        // Check again on the way out: the wake-up datagram that unblocks the wait arrives here,
         // and it must be dropped rather than relayed on the way to the exit.
         if (g_relay_stop) break;
         if (n <= 0) continue;
@@ -883,6 +898,10 @@ void wifi_stop_link_relay() {
     }
     if (g_relay_task) {
         ESP_LOGE(TAG, "relay did not stop after %d polls -- leaving it running", polls);
+        // Clear the latch. Leaving g_relay_stop set means every later wifi_start_link_relay
+        // creates a relay that exits on its first pass, so one failed stop turns the ESP into a
+        // permanently relay-less host. Failing to stop is recoverable; staying latched is not.
+        g_relay_stop = false;
         return;
     }
     g_relay_stop = false;
