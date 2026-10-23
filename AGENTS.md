@@ -293,7 +293,12 @@ bpm spread <=0.05, `|phase_err_beats|` <=0.03, `eff_speed` spread <=0.005, sampl
   and `peers0` count 0 — the Link session rides through brief loss, so "IP path down" is far worse than a few
   missed pings. ICMP at 1 Hz plus the 20812 reply is the discriminator: both dead = IP path, ICMP alive with
   a session drop = Link state.
-- Metro jitter over that run: `late last` 34-69 us, `worst=13798us`, `mean=264us`, `rms=822us`.
+- **3 h run 08:12:36Z-11:12:36Z: PASS on every term, two independent captures.** Mine: 10791 telemetry
+  samples, 0 gaps, 10731 post-acquisition, retention **100.0%**, bpm/phase/eff_speed spreads all 0, zero
+  post-acquisition drops; ESP serial 2162 `Link diag` lines, **2162 `peers=1`**, the single `peers=0` is the
+  boot, **zero `peerloss` and zero `sendfail` lines**. mc-420's capture agrees (10587 samples, 100%, 0 drops).
+  This is the certification run: three hours, no unexplained event on either device.
+- Metro jitter over the 30 min run: `late last` 34-69 us, `worst=13798us`, `mean=264us`, `rms=822us`.
 - **Earlier, still open**: the ENOMEM send failure did NOT reproduce in a 1500 s soak on `df18c36`
   (`ok=16307 fail=0 giveup=0 errno=0`); only evidence is one ~6 s burst at t=218.9 s in a 600 s run
   (`err=12`, inside an IGMP re-join). **Session bounce** `enable(false)`/`enable(true)` re-joins in 2540 ms;
