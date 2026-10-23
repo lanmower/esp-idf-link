@@ -839,7 +839,11 @@ static void link_multicast_relay_task(void*) {
     link_relay_release(rs, rpcb);
 }
 
-static const int RELAY_STOP_MAX_POLLS = 100;
+// 250 x 20 ms = 5 s. The relay can be parked inside an esp_netif_tcpip_exec that only retires
+// once the tcpip thread gets a turn, so a 2 s ceiling was not enough on a busy core; a caller
+// that must not proceed with a live relay checks g_relay_task afterwards rather than trusting
+// this to have worked.
+static const int RELAY_STOP_MAX_POLLS = 250;
 
 void wifi_stop_link_relay() {
     if (!g_relay_task) return;
@@ -1100,12 +1104,17 @@ static void wifi_supervisor_task(void* arg) {
             const bool bssid_is_self = wifi_get_own_ap_mac(own_ap_mac) && memcmp(best, own_ap_mac, 6) == 0;
             if (matches > 0 && !bssid_is_self && memcmp(best, my_mac, 6) < 0) {
                 ESP_LOGW(TAG, "Lost dual-host tie-break (lower BSSID seen) -- dropping AP, joining");
-                // Quiesce OUR traffic before the teardown, not after it: the relay task and the
-                // forward socket both hold the AP netif, and stopping Wi-Fi under them left a
-                // callback running against a netif that esp_netif_destroy had already freed --
-                // Core 0 panicked InstrFetchProhibited at PC 0xffffffff about 2 s later, once
-                // esp_wifi_start() brought the driver back up.
+                // Stop OUR traffic before the teardown, and refuse to tear down if it will not
+                // stop. Measured on the first host-AP failover: `wifi_stop_link_relay()` hit its
+                // poll ceiling, logged "relay did not stop after 100 polls -- leaving it running",
+                // and the yield then destroyed the AP netif and restarted Wi-Fi underneath that
+                // still-running task -- Core 0 panicked InstrFetchProhibited at PC 0xffffffff
+                // 70 ms later. Deferring is self-correcting: the supervisor retries next tick.
                 wifi_stop_link_relay();
+                if (g_relay_task) {
+                    ESP_LOGW(TAG, "relay still running -- deferring the yield, not tearing down under it");
+                    continue;
+                }
                 wifi_close_link_forward();
                 esp_wifi_stop();
                 g_wifi_started = false;
