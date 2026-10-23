@@ -288,8 +288,9 @@ so it's jitter not drift — but it delays Start. Bigger buffer = worse; do NOT 
 1. **Pi shell** (`node C:/dev/mc-420/.gm/exec-ssh.js "<cmd>"`, root@192.168.137.100) then
    `printf 'PING' | timeout 3 nc -u -w1 192.168.4.10 20812`. Only way to reach 192.168.4.x; also how `LRST`
    is fired. Every datagram is a subscriber hit (above).
-2. **aloop telemetry, straight from the PC**: UDP `status` -> `192.168.137.100:4445` -> JSON in ~190 ms — one
-   hop (the PC is on the ICS subnet), no Pi shell, costs the ESP nothing.
+2. **aloop telemetry, straight from the PC**: UDP `status` -> `192.168.137.132:4445` -> JSON in ~150 ms — one
+   hop (the PC is on the ICS subnet), no Pi shell, costs the ESP nothing. **The Pi is `.132`, not `.100`**: on
+   the ICS host `192.168.137.100` is `FAILED` in `ip neigh` and 4445/4446 both time out.
 - **Pi clock reads 2024-04-09** — ~915 days behind; `ip route` has no default route, so no NTP.
 - **`ip_forward` on the Pi is 0**, so no PC can route to 192.168.4.0/24 and `route add` is pointless twice
   over. Turning it on would expose the open SSID to 192.168.137.0/24; don't, unless asked.
@@ -313,15 +314,43 @@ so it's jitter not drift — but it delays Start. Bigger buffer = worse; do NOT 
   the peer's session id; beat monotonic, no tempo break. **The per-boot auto bounce was removed; only
   on-demand `LRST` to `192.168.4.10:20811` (or `224.76.78.75:20811`) remains.**
 - **`bad` (badmagic) is benign**: Link's own `_link_v1` measurement traffic, 1:1 with `Link msr: rx`.
-- Peer-loss instrumentation (`44ce414964`, on `main`, not yet flashed): `peerloss: flag= ap= ap_sta= ip=
+- Peer-loss instrumentation (`44ce414964`): `peerloss: flag= ap= ap_sta= ip=
   rssi= chan= igmp(ok= fail=) heap= min=` at the 1->0 transition + `Link peer back after N ms`; `rssi=0
-  chan=0` means `esp_wifi_sta_get_ap_info` failed.
+  chan=0` means `esp_wifi_sta_get_ap_info` failed. On the device from 2026-10-23 (`54e3d17`).
 - `esp_wifi_statis_dump(uint32_t modules)` is the only Wi-Fi buffer-statistics API (`esp_wifi.h` v6.1); no
   public enum for its bitmask, so dump all with `0xffffffff`. AMPDU has no runtime control — only
   `ampdu_tx_enable` at init (`3d703ce`).
 - Hands-free flash from CI binaries `51aded2` (source `eec4578`): 50 s, app 20.9 s at 500.7 kbit/s, hash
   verified, `boot:0x13`, booted STA `192.168.4.19`, txprobe `e_gw=0 e_unknown=0 e_group=0 e_sock=0`. First
   image carrying `dc9add9` (six AP->STA-yield defects) + `f0fc252`.
+
+## Live state 2026-10-23: two-device mesh, measured on a joint run with mc-420
+
+The host is the ICS gateway itself: `eth0` 192.168.137.1/24, `wlan0` on an unrelated 10.213.218.0/24. There is
+**no route to 192.168.4.0/24**, so the ESP's 20812 status port is unreachable from here and the serial console
+is the only ESP telemetry; the Pi can poll 20812 directly and should.
+
+- **Attaching the console RESETS the board.** Every open of `/dev/ttyUSB0` prints `rst:0x1 (POWERON_RESET),
+  boot:0x13`. A soak must open the port **once** and never re-open — a second open turns the run into a reboot
+  test. A 93.4%-retention reading with one drop was traced to exactly this: the drop was my own re-open.
+- **Cold-boot acquisition**: reboot -> `peers=1` in ~14 s (stale peer ages out at ~7 s, reacquire 14.1 s);
+  after a flash, 23 s. Measure retention from t+60 s or the boot reads as a failure.
+- **10 min joint run 07:20:52Z-07:30:52Z on the pre-flash image**: 600 telemetry samples, 0 gaps; post-acq
+  540 samples at **100.0%** retention; bpm spread 0.0000, max `|phase_err_beats|` 0.0000, `eff_speed` spread
+  0.00000. ESP: 124 `Link diag` lines, 123 `peers=1`, txprobe `e_gw=0 e_unknown=0 e_group=0 e_sock=0`
+  throughout, heap 130-132k, rssi -33..-42, chan 6. Pi `xruns` delta 0.
+- **Device now runs `54e3d17`**, compile `Oct 13 2026 13:49:32`, ELF `b65e475f9` (was Oct 11 09:32:48 /
+  `dd5d08e11`). Flashed 2026-10-23.
+- **Flashing from Linux, on this host**: `sudo pip install --break-system-packages esptool` (no `pip` module
+  preinstalled; python 3.14 is PEP 668 managed; `ensurepip` yields no pip). Then
+  `sudo python3 -m esptool --chip esp32 --port /dev/ttyUSB0 --baud 460800 --before default-reset --after
+  hard-reset write-flash --flash-mode dio 0x1000 build/bootloader/bootloader.bin 0x8000
+  build/partition_table/partition-table.bin 0x20000 build/link-idf-example.bin` — 1312688 B in 20.0 s,
+  hash verified. **`default-reset` works here**: it connected, ran the stub and read MAC
+  `e4:65:b8:76:cf:c4`. The "esptool can never reset this board, always `boot:0x13`" note is specific to the
+  Windows WCH driver over usbipd, not to the board; the differential auto-reset and the CH341 handshake
+  register still apply there.
+- **`beat_mark.late_ms` is a sawtooth** (0.3..500, mean 250), not lateness — it tracks position in the beat.
 
 ## Bass generator: 8 approaches, per-bar shaping
 
