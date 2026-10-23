@@ -73,6 +73,10 @@ static esp_netif_t* g_ap_netif = NULL;
 static SemaphoreHandle_t g_ap_netif_lock = NULL;
 static TaskHandle_t volatile g_relay_task = NULL;
 static volatile bool g_relay_stop = false;
+// The relay's receive socket, published so wifi_stop_link_relay can wake it. A blocked recvfrom
+// never observes g_relay_stop, and no timeout can be trusted to unblock it, so the stop has to be
+// a wake-up rather than a request.
+static volatile int g_relay_sock = -1;
 
 static int g_fwd_sock = -1;
 static SemaphoreHandle_t g_fwd_lock = NULL;
@@ -728,6 +732,7 @@ static esp_err_t raw_remove_on_tcpip(void* ctx) {
 static void link_relay_release(int rs, struct raw_pcb* rpcb) {
     if (rpcb) esp_netif_tcpip_exec(raw_remove_on_tcpip, rpcb);
     if (rs >= 0) close(rs);
+    g_relay_sock = -1;
     g_relay_task = NULL;
     vTaskDelete(NULL);
 }
@@ -738,6 +743,7 @@ static void link_multicast_relay_task(void*) {
 
     int rs = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (rs < 0) { ESP_LOGE(RELAY_TAG, "recv socket failed"); link_relay_release(rs, NULL); return; }
+    g_relay_sock = rs;
     int one = 1;
     setsockopt(rs, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
     int recv_timeout_ms = (int)RELAY_RECV_TIMEOUT_MS;
@@ -777,6 +783,9 @@ static void link_multicast_relay_task(void*) {
         struct sockaddr_in src = {};
         socklen_t sl = sizeof(src);
         int n = recvfrom(rs, payload, sizeof(payload), 0, (struct sockaddr*)&src, &sl);
+        // Check again on the way out: the wake-up datagram that unblocks recvfrom arrives here,
+        // and it must be dropped rather than relayed on the way to the exit.
+        if (g_relay_stop) break;
         if (n <= 0) continue;
 
         bool from_self = (src.sin_addr.s_addr == ap_ip);
@@ -845,12 +854,31 @@ static void link_multicast_relay_task(void*) {
 // this to have worked.
 static const int RELAY_STOP_MAX_POLLS = 250;
 
+// Send one throwaway datagram to the relay's own port so a blocked recvfrom returns. Measured:
+// the relay never observed g_relay_stop across 2 s, then 5 s, so the yield deferred forever and
+// the mesh sat in a dual-host state. Asking politely did not work; this wakes it.
+static void relay_wake_recv() {
+    const int rs = g_relay_sock;
+    if (rs < 0) return;
+    const int ws = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (ws < 0) return;
+    struct sockaddr_in dst = {};
+    dst.sin_family      = AF_INET;
+    dst.sin_port        = htons(LINK_DISCOVERY_MULTICAST_PORT);
+    dst.sin_addr.s_addr = inet_addr("127.0.0.1");
+    const char byte = 0;
+    sendto(ws, &byte, 1, 0, (struct sockaddr*)&dst, sizeof(dst));
+    close(ws);
+}
+
 void wifi_stop_link_relay() {
     if (!g_relay_task) return;
     g_relay_stop = true;
+    relay_wake_recv();
     int polls = 0;
     while (g_relay_task && polls < RELAY_STOP_MAX_POLLS) {
         vTaskDelay(pdMS_TO_TICKS(RELAY_STOP_POLL_MS));
+        if (polls % 10 == 9) relay_wake_recv();
         polls++;
     }
     if (g_relay_task) {
@@ -1074,7 +1102,18 @@ static void wifi_supervisor_task(void* arg) {
                 esp_wifi_disconnect();
                 esp_wifi_stop();
                 g_wifi_started = false;
-                if (g_sta_netif) { esp_netif_destroy(g_sta_netif); g_sta_netif = NULL; }
+                if (g_sta_netif) {
+                    // destroy_DEFAULT_wifi, not destroy: the plain call leaves IDF's own
+                    // WIFI_EVENT / IP_EVENT handlers registered against a freed netif. The yield
+                    // then creates a second STA netif, so after esp_wifi_start the driver's
+                    // connect events run esp_netif_action_connected on both handler sets -- an
+                    // indirect call through freed memory, which is what PC 0xffffffff was.
+                    if (esp_netif_destroy_default_wifi(g_sta_netif) != ESP_OK) {
+                        ESP_LOGW(TAG, "STA netif destroy failed -- falling back to esp_netif_destroy");
+                        esp_netif_destroy(g_sta_netif);
+                    }
+                    g_sta_netif = NULL;
+                }
                 wifi_start_link_ap(ssid);
                 wifi_start_link_relay();
                 sta_down_count = 0;
@@ -1121,11 +1160,21 @@ static void wifi_supervisor_task(void* arg) {
                 g_ap_active = false;
                 SemaphoreHandle_t ap_lock = ap_netif_lock();
                 xSemaphoreTake(ap_lock, portMAX_DELAY);
-                if (g_ap_netif) { esp_netif_destroy(g_ap_netif); g_ap_netif = NULL; }
+                if (g_ap_netif) {
+                    // Settle BEFORE the destroy: esp_wifi_stop posts WIFI_EVENT_AP_STOP
+                    // asynchronously, and destroying the netif first means that event is
+                    // delivered to a handler set whose object is already gone.
+                    vTaskDelay(pdMS_TO_TICKS(200));
+                    // destroy_DEFAULT_wifi, not destroy: the plain call leaves IDF's own
+                    // WIFI_EVENT / IP_EVENT handlers registered against a freed netif, and the
+                    // ESP then panicked at PC 0xffffffff once the driver came back up.
+                    if (esp_netif_destroy_default_wifi(g_ap_netif) != ESP_OK) {
+                        ESP_LOGW(TAG, "AP netif destroy failed -- falling back to esp_netif_destroy");
+                        esp_netif_destroy(g_ap_netif);
+                    }
+                    g_ap_netif = NULL;
+                }
                 xSemaphoreGive(ap_lock);
-                // Settle: destroy-then-start in the same tick let the driver's post-connection
-                // path (wifi:pm start) run against a netif list that had not been re-listed yet.
-                vTaskDelay(pdMS_TO_TICKS(200));
                 ensure_sta_started();
                 wifi_connect_sta(ssid, "");
                 wifi_join_link_multicast();
