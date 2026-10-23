@@ -255,6 +255,29 @@ telemetry (5 s `Link diag`, 10 s txprobe = 0.2 Hz). The Pi can poll 20812 direct
   Useful fields: `xruns`, `link{synced,bpm,peers,phase_err_beats}`, `wifi`, `eff_speed`,
   `beat_mark{beat,late_ms}`, `groove`, `loopers`. ESP status `bpm` is **3 dp**, aloop `link.bpm` is **1 dp**.
 - **`beat_mark.late_ms` is a sawtooth** (0.3..500, mean 250), not lateness — it tracks position in the beat.
+- **Host-AP failover is certified** (compile `Oct 23 2026 13:28:17`, `4806b18729`, with aloop `0967bb7c`).
+  A verified 100 s outage runs: peer loss with the IP held and IGMP clean -> `STA down (n/30)` over ~60 s ->
+  `host 'ticker' disappeared, re-hosting` + AP/DHCP on 192.168.4.1 -> `Lost dual-host tie-break (lower
+  BSSID seen)` -> STA IP -> `Link peer back after 113678 ms`. ~114 s end to end. Two bugs had to be fixed
+  to get there, both in `wifi_config.cpp`:
+  - **`wifi_stop_link_relay()` left `g_relay_stop` latched** on its failure path, so every later
+    `wifi_start_link_relay()` created a relay that exited on its first pass — one bad stop made the box a
+    permanently relay-less host. Clear the flag on the failure path.
+  - **A blocking `recvfrom` is not bounded** by `SO_RCVTIMEO` in any way you can rely on, so the relay sat
+    through 2 s, then 5 s, then a wake-up datagram without ever reaching its stop check, and the yield
+    deferred forever with the ESP stuck as a second host. The relay now waits with `select()` and a 20 ms
+    timeout: the wait is ours. **`LWIP_NETIF_LOOPBACK` is off by default**, so a wake datagram to
+    127.0.0.1 goes nowhere — do not re-add one.
+  - Before those fixes the yield panicked: `Guru Meditation`, Core 0, `InstrFetchProhibited`, PC
+    `0xffffffff`, `rst:0xc (SW_CPU_RESET)`, ~70 ms after `relay did not stop` — the teardown freed
+    `g_ap_netif` under a relay task still holding it. Use `esp_netif_destroy_default_wifi()`, not
+    `esp_netif_destroy()` (the plain call leaves IDF's own wifi event handlers registered; and it returns
+    **void** in v6.1, so do not compare it against `ESP_OK`), and settle 200 ms **before** the destroy so
+    `WIFI_EVENT_AP_STOP` is delivered first.
+- **`LRST` is certified and safe to repeat**: `printf 'LRST' | nc -u -w1 192.168.4.x 20811` -> peers 0,
+  `peerloss` line, `Link peer lost -- sent Stop + All Notes Off.`, `Link peer back after N ms`, `Link
+  connected`. **N = 4018 ms** on `54e3d17` (was ~2540 ms on the older image); bpm and beat stay monotonic;
+  the telemetry counters never step backwards, so it is a session bounce and not a restart.
 - **Detecting a Pi-side aloop restart from telemetry**: use the monotonic counters `resample_chain.samples` /
   `resample_fold.samples` and `beat_mark.beat` — a step backwards means aloop restarted. **Do NOT use
   `xruns`**: a restart that has not yet dropped a buffer leaves it at 0, so it cannot distinguish a restart
