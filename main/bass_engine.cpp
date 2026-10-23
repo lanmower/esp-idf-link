@@ -9,6 +9,10 @@
 
 static const char* TAG = "BASS";
 
+// One-bar memory for the rest branch in shapeBar: a bar that just rested must not rest again, so
+// restBarProb can never coin-flip its way into two silent bars in a row.
+static bool s_prevBarRested = false;
+
 static constexpr int   kRootNoteE2             = 40;
 // The chord offset is added AFTER clampRange has bounded the motif, so the sum can leave the bass
 // register entirely (root+15 motif + root+11 chord = +26). Fold the result back into a bass window
@@ -331,10 +335,13 @@ void BassEngine::shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPer
 
     const ApproachShape& sh = shapeFor(m_approach);
 
-    if (bar % kDropBarPeriod == kDropBarIndex || randChance(sh.restBarProb)) {
+    const bool restWanted = bar % kDropBarPeriod == kDropBarIndex || randChance(sh.restBarProb);
+    if (restWanted && !s_prevBarRested) {
         for (int i = 0; i < bli::kStepsPerBar; i++) out[i] = mn(kEmptyNote, 0.f, 0, 0);
+        s_prevBarRested = true;
         return;
     }
+    s_prevBarRested = false;
 
     for (int i = 0; i < bli::kStepsPerBar; i++) out[i] = src[i];
 
@@ -570,6 +577,7 @@ void BassEngine::regeneratePhrase(bool advanceArc) {
     int figureKeyHeld = -1;
 
     for (int bar = 0; bar < kBarsPerPhrase; bar++) {
+        if (bar == 0) s_prevBarRested = false;
         int sec       = bar / kBarsPerSection;
         int cellIdx   = (bar / cellBars) % kBarsPerChordCell;
 
