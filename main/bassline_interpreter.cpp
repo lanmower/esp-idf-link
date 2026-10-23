@@ -392,7 +392,8 @@ int generateTurnaround(TurnNote out[3], int root, int scaleIdx,
         int lifted = root + tone + ((rng.next01() < dials.voiceSweep * 0.45f) ? kOctave : 0);
         pitches[i] = std::max(root, std::min(root + kRegisterSpan, lifted));
     }
-    pitches[n - 1] = root + kClosingOctaves[Dials::bandIndex(rng.next01(), 4)];
+    const int closingTone = kClosingOctaves[Dials::bandIndex(rng.next01(), 4)];
+    pitches[n - 1] = std::max(root, std::min(root + kRegisterSpan, root + closingTone));
 
     for (int i = 0; i < n; i++) {
         bool closes = (i == n - 1);
