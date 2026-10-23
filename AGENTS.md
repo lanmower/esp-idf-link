@@ -453,6 +453,12 @@ length (0..2), pot2 = velocity (0..1).
 EOL** (`7e8dacd`): `eol=lf` for shell/py/cmake/csv/sdkconfig/Dockerfile, `eol=crlf` for `*.bat *.cmd`,
 `binary` for `*.bin *.elf *.mid`; a CRLF-checked-out shell script dies in the Linux CI container.
 
+**There is no local ESP-IDF on this host and none is needed — GitHub Actions is the toolchain.** The loop
+for a firmware change is push -> Actions builds (~3-5 min) and commits the three `.bin` on green `main` ->
+`git pull` -> flash (~25 s) -> observe on the console or via telemetry: about six minutes per edit. Never
+defer a firmware change for want of a local toolchain. CI publishes only the three `.bin` and **not the
+ELF**, so a panic backtrace cannot be symbolised from here.
+
 ## CI autobump: how it commits, and its hazard
 
 `build.yml` commits the three `.bin`s: records the sha it built, `git reset --hard FETCH_HEAD`, restores the
