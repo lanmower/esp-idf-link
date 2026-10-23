@@ -334,7 +334,7 @@ is the only ESP telemetry; the Pi can poll 20812 directly and should.
   boot:0x13`. A soak must open the port **once** and never re-open — a second open turns the run into a reboot
   test. A 93.4%-retention reading with one drop was traced to exactly this: the drop was my own re-open.
 - **Cold-boot acquisition**: reboot -> `peers=1` in ~14 s (stale peer ages out at ~7 s, reacquire 14.1 s);
-  after a flash, 23 s. Measure retention from t+60 s or the boot reads as a failure.
+  after a flash, 23 s; second cold boot 20 s. Measure retention from t+60 s or the boot reads as a failure.
 - **10 min joint run 07:20:52Z-07:30:52Z on the pre-flash image**: 600 telemetry samples, 0 gaps; post-acq
   540 samples at **100.0%** retention; bpm spread 0.0000, max `|phase_err_beats|` 0.0000, `eff_speed` spread
   0.00000. ESP: 124 `Link diag` lines, 123 `peers=1`, txprobe `e_gw=0 e_unknown=0 e_group=0 e_sock=0`
@@ -350,7 +350,15 @@ is the only ESP telemetry; the Pi can poll 20812 directly and should.
   `e4:65:b8:76:cf:c4`. The "esptool can never reset this board, always `boot:0x13`" note is specific to the
   Windows WCH driver over usbipd, not to the board; the differential auto-reset and the CH341 handshake
   register still apply there.
+- **30 min run 07:35:28Z-08:06:08Z on `54e3d17`**: 1798 telemetry samples, 1 gap, retention **99.7%**;
+  bpm/phase/eff_speed spreads all 0. **One real drop at t=1560.4 s (08:01:29Z)**, and `44ce414` earned its
+  keep: `peerloss: flag=1 ap=0 ap_sta=0 ip=192.168.4.10 rssi=-33 chan=6 igmp(ok=53 fail=0) heap=132800`,
+  netif `up=1 link=1 ip=192.168.4.10 gw=192.168.4.1`. **Associated, IP held, IGMP clean — so a `peers` 1->0
+  is the Link SESSION, not the IP path.** Recovery `Link peer back after 5387 ms`. In the same second the Pi's
+  `xruns` went 65 -> 0 and the ESP saw the peer's Link source port move 52984 -> 40006, i.e. the Pi side
+  restarted; attribution confirmed with mc-420. Recovery is 5.4 s, nowhere near the ~1 h stall once feared.
 - **`beat_mark.late_ms` is a sawtooth** (0.3..500, mean 250), not lateness — it tracks position in the beat.
+- Metro jitter over that run: `late last` ~34-69 us, `worst=13798us`, `mean=264us`, `rms=822us`.
 
 ## Bass generator: 8 approaches, per-bar shaping
 
