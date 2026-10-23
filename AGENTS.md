@@ -255,6 +255,12 @@ telemetry (5 s `Link diag`, 10 s txprobe = 0.2 Hz). The Pi can poll 20812 direct
   Useful fields: `xruns`, `link{synced,bpm,peers,phase_err_beats}`, `wifi`, `eff_speed`,
   `beat_mark{beat,late_ms}`, `groove`, `loopers`. ESP status `bpm` is **3 dp**, aloop `link.bpm` is **1 dp**.
 - **`beat_mark.late_ms` is a sawtooth** (0.3..500, mean 250), not lateness — it tracks position in the beat.
+- **Detecting a Pi-side aloop restart from telemetry**: use the monotonic counters `resample_chain.samples` /
+  `resample_fold.samples` and `beat_mark.beat` — a step backwards means aloop restarted. **Do NOT use
+  `xruns`**: a restart that has not yet dropped a buffer leaves it at 0, so it cannot distinguish a restart
+  from a quiet run (measured 2026-10-23: five restarts in 86 s with `xruns` pinned at 0). A restart drops the
+  Link peer for 5-13 s and moves the peer's Link source port, and is by far the most common cause of a
+  "peer loss" that is not a device fault.
 - **Attaching the USB console RESETS the board**: every open of `/dev/ttyUSB0` prints `rst:0x1
   (POWERON_RESET), boot:0x13`. A soak must open the port **once** and never re-open — a second open turns the
   run into a reboot test. One 93.4%-retention reading was traced to exactly this.
