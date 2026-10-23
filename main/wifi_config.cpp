@@ -158,6 +158,28 @@ static void wifi_event_handler(void* arg, esp_event_base_t base,
     }
 }
 
+#if WIFI_NO_TEARDOWN_ROLE_SWITCH
+static esp_err_t netif_admin_up_on_tcpip(void* ctx) {
+    struct netif* lwip_netif = (struct netif*)ctx;
+    if (!lwip_netif) return ESP_ERR_INVALID_ARG;
+    netif_set_up(lwip_netif);
+    return ESP_OK;
+}
+
+static esp_err_t netif_admin_down_on_tcpip(void* ctx) {
+    struct netif* lwip_netif = (struct netif*)ctx;
+    if (!lwip_netif) return ESP_ERR_INVALID_ARG;
+    netif_set_down(lwip_netif);
+    return ESP_OK;
+}
+
+static void netif_set_admin_state(esp_netif_t* n, bool up) {
+    if (!n) return;
+    struct netif* lwip_netif = (struct netif*)esp_netif_get_netif_impl(n);
+    if (!lwip_netif) return;
+    esp_netif_tcpip_exec(up ? netif_admin_up_on_tcpip : netif_admin_down_on_tcpip, lwip_netif);
+}
+
 static void role_park_netif(esp_netif_t* n) {
     if (!n) return;
     esp_netif_dhcps_stop(n);
@@ -165,12 +187,12 @@ static void role_park_netif(esp_netif_t* n) {
     esp_netif_ip_info_t zeroed;
     memset(&zeroed, 0, sizeof(zeroed));
     esp_netif_set_ip_info(n, &zeroed);
-    esp_netif_down(n);
+    netif_set_admin_state(n, false);
 }
 
 static void role_activate_netif(esp_netif_t* n) {
     if (!n) return;
-    esp_netif_up(n);
+    netif_set_admin_state(n, true);
     if (n == g_sta_netif) esp_netif_dhcpc_start(n);
     esp_netif_set_default_netif(n);
 }
@@ -184,6 +206,7 @@ static void role_enforce(esp_netif_t* in_role) {
         role_activate_netif(g_ap_netif);
     }
 }
+#endif
 
 esp_err_t wifi_config_init() {
     ap_netif_lock();
