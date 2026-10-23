@@ -1100,15 +1100,23 @@ static void wifi_supervisor_task(void* arg) {
             const bool bssid_is_self = wifi_get_own_ap_mac(own_ap_mac) && memcmp(best, own_ap_mac, 6) == 0;
             if (matches > 0 && !bssid_is_self && memcmp(best, my_mac, 6) < 0) {
                 ESP_LOGW(TAG, "Lost dual-host tie-break (lower BSSID seen) -- dropping AP, joining");
+                // Quiesce OUR traffic before the teardown, not after it: the relay task and the
+                // forward socket both hold the AP netif, and stopping Wi-Fi under them left a
+                // callback running against a netif that esp_netif_destroy had already freed --
+                // Core 0 panicked InstrFetchProhibited at PC 0xffffffff about 2 s later, once
+                // esp_wifi_start() brought the driver back up.
+                wifi_stop_link_relay();
+                wifi_close_link_forward();
                 esp_wifi_stop();
                 g_wifi_started = false;
                 g_ap_active = false;
-                wifi_stop_link_relay();
-                wifi_close_link_forward();
                 SemaphoreHandle_t ap_lock = ap_netif_lock();
                 xSemaphoreTake(ap_lock, portMAX_DELAY);
                 if (g_ap_netif) { esp_netif_destroy(g_ap_netif); g_ap_netif = NULL; }
                 xSemaphoreGive(ap_lock);
+                // Settle: destroy-then-start in the same tick let the driver's post-connection
+                // path (wifi:pm start) run against a netif list that had not been re-listed yet.
+                vTaskDelay(pdMS_TO_TICKS(200));
                 ensure_sta_started();
                 wifi_connect_sta(ssid, "");
                 wifi_join_link_multicast();
@@ -1118,7 +1126,10 @@ static void wifi_supervisor_task(void* arg) {
 }
 
 void wifi_start_supervisor(const char* ssid) {
-    xTaskCreate(wifi_supervisor_task, "wifi_super", 4096, (void*)ssid, 4, NULL);
+    // Stack for the whole role switch, not just the poll loop: the tie-break branch runs
+    // esp_wifi_stop, esp_netif_destroy, esp_wifi_start, the STA connect and an IGMP join
+    // inline, and 4096 bytes was not enough for that depth.
+    xTaskCreate(wifi_supervisor_task, "wifi_super", 8192, (void*)ssid, 4, NULL);
 }
 
 bool wifi_is_connected() { return g_wifi_connected; }
