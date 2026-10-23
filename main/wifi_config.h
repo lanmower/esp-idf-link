@@ -9,6 +9,8 @@
 
 constexpr std::size_t kMacLen = 6;
 
+#define WIFI_NO_TEARDOWN_ROLE_SWITCH 0
+
 #define LINK_MCAST_OCTET_A 224
 #define LINK_MCAST_OCTET_B 76
 #define LINK_MCAST_OCTET_C 78

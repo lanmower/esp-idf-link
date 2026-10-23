@@ -130,6 +130,9 @@ static void wifi_event_handler(void* arg, esp_event_base_t base,
         ip_event_got_ip_t* ev = (ip_event_got_ip_t*)data;
         ESP_LOGI(TAG, "IP: " IPSTR, IP2STR(&ev->ip_info.ip));
         g_wifi_connected = true;
+#if WIFI_NO_TEARDOWN_ROLE_SWITCH
+        if (g_sta_netif && !g_ap_active) esp_netif_set_default_netif(g_sta_netif);
+#endif
     } else if (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP) {
         g_wifi_connected = false;
         ESP_LOGW(TAG, "IP lost -- STA still associated, treating as down");
@@ -155,6 +158,33 @@ static void wifi_event_handler(void* arg, esp_event_base_t base,
     }
 }
 
+static void role_park_netif(esp_netif_t* n) {
+    if (!n) return;
+    esp_netif_dhcps_stop(n);
+    esp_netif_dhcpc_stop(n);
+    esp_netif_ip_info_t zeroed;
+    memset(&zeroed, 0, sizeof(zeroed));
+    esp_netif_set_ip_info(n, &zeroed);
+    esp_netif_down(n);
+}
+
+static void role_activate_netif(esp_netif_t* n) {
+    if (!n) return;
+    esp_netif_up(n);
+    if (n == g_sta_netif) esp_netif_dhcpc_start(n);
+    esp_netif_set_default_netif(n);
+}
+
+static void role_enforce(esp_netif_t* in_role) {
+    if (in_role == g_sta_netif) {
+        role_park_netif(g_ap_netif);
+        role_activate_netif(g_sta_netif);
+    } else if (in_role == g_ap_netif) {
+        role_park_netif(g_sta_netif);
+        role_activate_netif(g_ap_netif);
+    }
+}
+
 esp_err_t wifi_config_init() {
     ap_netif_lock();
     fwd_sock_lock();
@@ -162,13 +192,31 @@ esp_err_t wifi_config_init() {
                                         wifi_event_handler, NULL, NULL);
     esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID,
                                         wifi_event_handler, NULL, NULL);
+#if WIFI_NO_TEARDOWN_ROLE_SWITCH
+    if (!g_sta_netif) g_sta_netif = esp_netif_create_default_wifi_sta();
+    if (!g_ap_netif) {
+        SemaphoreHandle_t ap_lock = ap_netif_lock();
+        xSemaphoreTake(ap_lock, portMAX_DELAY);
+        g_ap_netif = esp_netif_create_default_wifi_ap();
+        xSemaphoreGive(ap_lock);
+    }
+#endif
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    return esp_wifi_init(&cfg);
+    const esp_err_t init_err = esp_wifi_init(&cfg);
+    if (init_err != ESP_OK) return init_err;
+#if WIFI_NO_TEARDOWN_ROLE_SWITCH
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+    role_enforce(g_sta_netif);
+#endif
+    return ESP_OK;
 }
 
 static bool g_wifi_started = false;
 
 static void ensure_sta_started() {
+#if WIFI_NO_TEARDOWN_ROLE_SWITCH
+    role_enforce(g_ap_active ? g_ap_netif : g_sta_netif);
+#else
     if (!g_sta_netif) {
         g_sta_netif = esp_netif_create_default_wifi_sta();
     }
@@ -177,6 +225,7 @@ static void ensure_sta_started() {
     if (esp_wifi_get_mode(&mode) != ESP_OK || mode != want) {
         ESP_ERROR_CHECK(esp_wifi_set_mode(want));
     }
+#endif
     if (!g_wifi_started) {
         esp_err_t err = esp_wifi_start();
         const bool start_tolerated = (err == ESP_OK || err == ESP_ERR_WIFI_CONN);
@@ -281,16 +330,22 @@ esp_err_t wifi_start_link_ap(const char* ssid) {
     g_sta_wanted = false;
     SemaphoreHandle_t ap_lock = ap_netif_lock();
     xSemaphoreTake(ap_lock, portMAX_DELAY);
+#if !WIFI_NO_TEARDOWN_ROLE_SWITCH
     if (!g_ap_netif) {
         g_ap_netif = esp_netif_create_default_wifi_ap();
     }
+#endif
     esp_netif_t* ap = g_ap_netif;
     xSemaphoreGive(ap_lock);
     if (!ap) {
         ESP_LOGE(TAG, "AP netif unavailable -- not hosting");
         return ESP_ERR_INVALID_STATE;
     }
+#if WIFI_NO_TEARDOWN_ROLE_SWITCH
+    role_enforce(g_ap_netif);
+#else
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+#endif
 
     wifi_config_t cfg = {};
     strncpy((char*)cfg.ap.ssid, ssid, sizeof(cfg.ap.ssid) - 1);
@@ -939,13 +994,21 @@ static const uint16_t TX_PROBE_PORT = 34999;
 static const uint8_t TX_PROBE_SILENT_HOST_LAST_OCTET = 99;
 static const unsigned TX_PROBE_LAST_OCTET_SHIFT = 24;
 
+static esp_netif_t* multicast_egress_netif() {
+#if WIFI_NO_TEARDOWN_ROLE_SWITCH
+    if (g_ap_active && g_ap_netif) return g_ap_netif;
+#endif
+    return g_sta_netif;
+}
+
 static int udp_sendto_errno(uint32_t addr_network_order, uint16_t port_network_order, int* sock_err) {
     const int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock_err) *sock_err = (fd < 0) ? errno : 0;
     if (fd < 0) return -1;
     if (is_ipv4_multicast_dst(addr_network_order)) {
+        esp_netif_t* egress = multicast_egress_netif();
         esp_netif_ip_info_t ipinfo;
-        if (g_sta_netif && esp_netif_get_ip_info(g_sta_netif, &ipinfo) == ESP_OK && ipinfo.ip.addr != 0) {
+        if (egress && esp_netif_get_ip_info(egress, &ipinfo) == ESP_OK && ipinfo.ip.addr != 0) {
             struct in_addr ifaddr;
             ifaddr.s_addr = ipinfo.ip.addr;
             setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &ifaddr, sizeof ifaddr);
@@ -1115,6 +1178,9 @@ static void wifi_supervisor_task(void* arg) {
         }
 
         if (!g_ap_active) {
+#if WIFI_NO_TEARDOWN_ROLE_SWITCH
+            role_park_netif(g_ap_netif);
+#endif
             if (sta_up) {
                 sta_down_count = 0;
                 if (igmp_reassert_countdown <= 0) {
@@ -1134,6 +1200,9 @@ static void wifi_supervisor_task(void* arg) {
                 g_role_epoch = g_role_epoch + 1;
                 g_sta_wanted = false;
                 esp_wifi_disconnect();
+#if WIFI_NO_TEARDOWN_ROLE_SWITCH
+                role_park_netif(g_sta_netif);
+#else
                 esp_wifi_stop();
                 g_wifi_started = false;
                 if (g_sta_netif) {
@@ -1145,11 +1214,15 @@ static void wifi_supervisor_task(void* arg) {
                     esp_netif_destroy_default_wifi(g_sta_netif);
                     g_sta_netif = NULL;
                 }
+#endif
                 wifi_start_link_ap(ssid);
                 wifi_start_link_relay();
                 sta_down_count = 0;
             }
         } else {
+#if WIFI_NO_TEARDOWN_ROLE_SWITCH
+            role_park_netif(g_sta_netif);
+#endif
             if (igmp_reassert_countdown <= 0) {
                 SemaphoreHandle_t igmp_lock = ap_netif_lock();
                 xSemaphoreTake(igmp_lock, portMAX_DELAY);
@@ -1190,6 +1263,10 @@ static void wifi_supervisor_task(void* arg) {
                     continue;
                 }
                 wifi_close_link_forward();
+#if WIFI_NO_TEARDOWN_ROLE_SWITCH
+                g_ap_active = false;
+                ensure_sta_started();
+#else
                 esp_wifi_stop();
                 g_wifi_started = false;
                 g_ap_active = false;
@@ -1208,6 +1285,7 @@ static void wifi_supervisor_task(void* arg) {
                 }
                 xSemaphoreGive(ap_lock);
                 ensure_sta_started();
+#endif
                 wifi_connect_sta(ssid, "");
                 wifi_join_link_multicast();
             }

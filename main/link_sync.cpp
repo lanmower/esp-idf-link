@@ -8,6 +8,8 @@
 #include <lwip/sockets.h>
 #include <lwip/inet.h>
 #include "esp_netif.h"
+#include <esp_netif_net_stack.h>
+#include <lwip/netif.h>
 #include "esp_heap_caps.h"
 #include "esp_system.h"
 #include "wifi_config.h"
@@ -50,6 +52,19 @@ static bool telemetry_subscribed() {
     return esp_timer_get_time() < s_subscriber_until_us;
 }
 
+static bool netif_ready_for_multicast(esp_netif_t* nif) {
+#if !WIFI_NO_TEARDOWN_ROLE_SWITCH
+    (void)nif;
+    return true;
+#else
+    if (!nif) return false;
+    if (!esp_netif_is_netif_up(nif)) return false;
+    struct netif* lwip_netif = (struct netif*)esp_netif_get_netif_impl(nif);
+    if (!lwip_netif) return false;
+    return netif_is_link_up(lwip_netif);
+#endif
+}
+
 static void broadcast_link_clock(int64_t linkMicros) {
     static int64_t s_lastSend = 0;
     int64_t nowUs = esp_timer_get_time();
@@ -75,6 +90,7 @@ static void broadcast_link_clock(int64_t linkMicros) {
     for (; nif; nif = esp_netif_next_unsafe(nif)) {
         esp_netif_ip_info_t ipinfo;
         if (esp_netif_get_ip_info(nif, &ipinfo) != ESP_OK || ipinfo.ip.addr == 0) continue;
+        if (!netif_ready_for_multicast(nif)) continue;
         struct in_addr ifaddr; ifaddr.s_addr = ipinfo.ip.addr;
         setsockopt(s_clk_sock, IPPROTO_IP, IP_MULTICAST_IF, &ifaddr, sizeof ifaddr);
         sendto(s_clk_sock, pkt, sizeof pkt, 0, (struct sockaddr*)&dst, sizeof dst);
@@ -115,6 +131,7 @@ static void broadcast_ticker_timeline(const ableton::Link::SessionState& state,
     for (; nif; nif = esp_netif_next_unsafe(nif)) {
         esp_netif_ip_info_t ipinfo;
         if (esp_netif_get_ip_info(nif, &ipinfo) != ESP_OK || ipinfo.ip.addr == 0) continue;
+        if (!netif_ready_for_multicast(nif)) continue;
         struct in_addr ifaddr; ifaddr.s_addr = ipinfo.ip.addr;
         setsockopt(s_ttmp_sock, IPPROTO_IP, IP_MULTICAST_IF, &ifaddr, sizeof ifaddr);
         sendto(s_ttmp_sock, pkt, sizeof pkt, 0, (struct sockaddr*)&dst, sizeof dst);
