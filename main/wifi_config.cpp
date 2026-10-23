@@ -70,6 +70,10 @@ static void remember_ap_sta_ip(uint32_t ip) {
 
 static esp_netif_t* g_sta_netif = NULL;
 static esp_netif_t* g_ap_netif = NULL;
+// Bumped when a role teardown begins. The relay snapshots this before an emit and re-reads it
+// around every point where it touches the netif it cached, so a relay that was mid-emit when the
+// role changed drops the work instead of sending through a netif that is being destroyed.
+static volatile uint32_t g_role_epoch = 0;
 static SemaphoreHandle_t g_ap_netif_lock = NULL;
 static TaskHandle_t volatile g_relay_task = NULL;
 static volatile bool g_relay_stop = false;
@@ -838,12 +842,14 @@ static void link_multicast_relay_task(void*) {
             sta_ips[sta_ip_count++] = sta_ip;
         }
 
+        const uint32_t emit_epoch = g_role_epoch;
+
         SemaphoreHandle_t netif_lock = ap_netif_lock();
         xSemaphoreTake(netif_lock, portMAX_DELAY);
         struct netif* ap_lwip = g_ap_netif ? (struct netif*)esp_netif_get_netif_impl(g_ap_netif) : NULL;
         xSemaphoreGive(netif_lock);
 
-        if (ap_lwip) {
+        if (ap_lwip && g_ap_active && emit_epoch == g_role_epoch) {
             RelayEmit emit;
             memset(&emit, 0, sizeof(emit));
             emit.pcb          = rpcb;
@@ -859,6 +865,14 @@ static void link_multicast_relay_task(void*) {
         }
 
         pbuf_free(p);
+
+        // The emit can block on the tcpip thread across a teardown, so re-read the epoch once it
+        // has retired: if the role moved while it was in flight, the netif it just used is on its
+        // way out and the relay drops the work instead of looping back for another emit.
+        if (emit_epoch != g_role_epoch) {
+            ESP_LOGW(RELAY_TAG, "role changed mid-emit -- dropping the relay");
+            break;
+        }
     }
     link_relay_release(rs, rpcb);
 }
@@ -1117,6 +1131,7 @@ static void wifi_supervisor_task(void* arg) {
                 esp_wifi_connect();
             } else {
                 ESP_LOGW(TAG, "STA down past %d tries -- host '%s' disappeared, re-hosting", RECONNECT_TRIES, ssid);
+                g_role_epoch = g_role_epoch + 1;
                 g_sta_wanted = false;
                 esp_wifi_disconnect();
                 esp_wifi_stop();
@@ -1159,6 +1174,10 @@ static void wifi_supervisor_task(void* arg) {
             const bool bssid_is_self = wifi_get_own_ap_mac(own_ap_mac) && memcmp(best, own_ap_mac, 6) == 0;
             if (matches > 0 && !bssid_is_self && memcmp(best, my_mac, 6) < 0) {
                 ESP_LOGW(TAG, "Lost dual-host tie-break (lower BSSID seen) -- dropping AP, joining");
+                // The teardown starts here, ahead of the stop wait: a relay that is mid-emit has to
+                // see the role move while wifi_stop_link_relay is still waiting on it, or it
+                // finishes that emit against the netif this branch is about to destroy.
+                g_role_epoch = g_role_epoch + 1;
                 // Stop OUR traffic before the teardown, and refuse to tear down if it will not
                 // stop. Measured on the first host-AP failover: `wifi_stop_link_relay()` hit its
                 // poll ceiling, logged "relay did not stop after 100 polls -- leaving it running",
