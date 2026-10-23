@@ -1108,10 +1108,7 @@ static void wifi_supervisor_task(void* arg) {
                     // then creates a second STA netif, so after esp_wifi_start the driver's
                     // connect events run esp_netif_action_connected on both handler sets -- an
                     // indirect call through freed memory, which is what PC 0xffffffff was.
-                    if (esp_netif_destroy_default_wifi(g_sta_netif) != ESP_OK) {
-                        ESP_LOGW(TAG, "STA netif destroy failed -- falling back to esp_netif_destroy");
-                        esp_netif_destroy(g_sta_netif);
-                    }
+                    esp_netif_destroy_default_wifi(g_sta_netif);
                     g_sta_netif = NULL;
                 }
                 wifi_start_link_ap(ssid);
@@ -1168,10 +1165,7 @@ static void wifi_supervisor_task(void* arg) {
                     // destroy_DEFAULT_wifi, not destroy: the plain call leaves IDF's own
                     // WIFI_EVENT / IP_EVENT handlers registered against a freed netif, and the
                     // ESP then panicked at PC 0xffffffff once the driver came back up.
-                    if (esp_netif_destroy_default_wifi(g_ap_netif) != ESP_OK) {
-                        ESP_LOGW(TAG, "AP netif destroy failed -- falling back to esp_netif_destroy");
-                        esp_netif_destroy(g_ap_netif);
-                    }
+                    esp_netif_destroy_default_wifi(g_ap_netif);
                     g_ap_netif = NULL;
                 }
                 xSemaphoreGive(ap_lock);
