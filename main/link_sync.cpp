@@ -145,7 +145,7 @@ static volatile bool   s_phaseReqPending = false;
 static volatile int64_t s_phaseReqBeat0us = 0;
 static volatile double  s_phaseReqQuantum = 4.0;
 
-#define LINK_STATUS_PORT 20812
+#define LINK_STATUS_PORT 20813
 
 struct MetroStats { uint32_t fired; int64_t last; int64_t worst; double mean; double rms; };
 MetroStats metro_stats();

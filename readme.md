@@ -100,3 +100,25 @@ General Operation
 Potentiometer Behaviour Detail
 - Smoothing: Uses Exponential Moving Average (EMA) for smoothness.
 - Jitter Rejection: Uses a secondary, slower EMA to establish a "stable center". Movement is only registered if the primary smoothed value deviates significantly from this stable center, preventing noise from causing parameter changes while allowing slow, deliberate movements.
+
+## Network ports
+
+All ports are UDP. The Ableton Link discovery group is `224.76.78.75`. Each
+port carries exactly one protocol, so a request/reply poll can never be read
+as a beat message.
+
+| Port  | Direction             | Protocol and payload                                                         | Source                          |
+|-------|-----------------------|------------------------------------------------------------------------------|---------------------------------|
+| 20808 | Link peers            | Ableton Link discovery                                                       | `main/wifi_config.h`            |
+| 20810 | ESP -> group          | `LCLK` clock: 4-byte tag + int64 Link micros. 50 Hz while a status subscriber is active, 1 Hz idle | `LINK_PHASE_PORT`, `broadcast_link_clock` |
+| 20811 | group or unicast -> ESP | `LTMP` tempo/phase request, `LRST` session reset. Bound on any address, joins the group | `LINK_TEMPO_PORT`, `tempo_listener_task` |
+| 20812 | ESP -> group          | `TTMP` beat origin: micros per beat, beat origin in microbeats, time origin micros. 10 Hz while subscribed, 5 s idle | `LINK_TTMP_PORT`, `broadcast_ticker_timeline` |
+| 20813 | unicast request/reply | Status: send any datagram of 1 to 64 bytes, get one JSON line back to the sender (`link`, `peers`, `bpm`, `playing`, `beat`, `phase`, `quantum`, `ap`, `metro`) | `LINK_STATUS_PORT`, `status_responder_task` |
+| 34999 | ESP -> `g_link_send_dst_ip` | TX probe (diagnostic, rate limited)                                    | `TX_PROBE_PORT`, `main/wifi_config.cpp` |
+
+- A status request also marks a telemetry subscriber for 15 s, which raises
+  the `LCLK` and `TTMP` rates in the table above.
+- Status used to share port 20812 with `TTMP`. It moved to 20813 so a status
+  poll cannot be read as a beat message. Any client that polls status must
+  send to 20813.
+- Do not assign 20808, 20810, 20811, 20812 or 20813 to a second protocol.
