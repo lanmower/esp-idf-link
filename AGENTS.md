@@ -269,7 +269,7 @@ telemetry (5 s `Link diag`, 10 s txprobe = 0.2 Hz). The Pi can poll the status p
   status port at 20813, the epoch guard and the destroy-based switch). 100 s outage at 10:45:00Z, run
   detached on the Pi with a TERM-timeout trap. Re-host at 10:46:12Z, tie-break yield at 10:46:45Z, Link peer
   back after 103838 ms. Pi side: AP stations=1 after. Witness: `.gm/witness-out/mesh-failover-2a5162f-20261025.txt`.
-  The phrase-reseat warning seen during its soak is most likely float noise at zero advance, not proven (row `bass-phrase-reseat-epsilon`).
+  The phrase-reseat warning (`phrase position jumped 1024.0 steps`) was float noise at zero advance: `phraseAdvance` (`main/bass_engine.cpp`) treats a backward move under `kPhraseNoiseSteps` as zero, and `tools/phrase-advance-witness.sh` runs in the CI `host-witness` job (green on `79bebc3`, run 40217155630).
   A verified 100 s outage runs: peer loss with the IP held and IGMP clean -> `STA down (n/30)` over ~60 s ->
   `host 'ticker' disappeared, re-hosting` + AP/DHCP on 192.168.4.1 -> `Lost dual-host tie-break (lower
   BSSID seen)` -> STA IP -> `Link peer back after 113678 ms`. ~114 s end to end. Two bugs had to be fixed
