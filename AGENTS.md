@@ -167,6 +167,9 @@ leaving too few for Link's per-interface discovery gateway -> EMFILE -> peers ne
   hard-reset write-flash --flash-mode dio 0x1000 build/bootloader/bootloader.bin 0x8000
   build/partition_table/partition-table.bin 0x20000 build/link-idf-example.bin` — 1312688 B in 20.0 s, hash
   verified. **`default-reset` works here**: it connected, ran the stub, read MAC `e4:65:b8:76:cf:c4`.
+  **Check the MAC on every flash.** On 2026-10-25 the board on `/dev/ttyUSB0` read `e4:65:b8:77:0d:14`
+  (the 1st unit), not `e4:65:b8:76:cf:c4` (the 2nd, which every certification was run on). Which physical
+  board is attached can change between sessions; the esptool `MAC:` line is the only proof.
 
 ### Flashing from the Windows box
 
