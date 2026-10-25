@@ -46,7 +46,7 @@ Supervisor (`wifi_config.cpp`, 2 s cadence; `RECONNECT_TRIES=30`, IGMP re-assert
   of drop is the Link SESSION, not the IP path. See Live state.
 - AP: re-scans; yields to a strictly-lower `ticker` BSSID **only with ZERO stations**
   (`ap_has_associated_stations()`) — one host wins. **Comparison MAC is the STA MAC**
-  (`e4:65:b8:76:cf:c4`, 2nd unit, STA `192.168.4.10`; 1st `e4:65:b8:77:0d:14`), not the SoftAP MAC (`...:c5`);
+  (`e4:65:b8:76:cf:c4`, 2nd unit; 1st `e4:65:b8:77:0d:14`; STA IP is DHCP from the host, observed `.10` on 2026-10-23 and `.19` on 2026-10-25, so never key on the IP), not the SoftAP MAC (`...:c5`);
   Pi `e4:5f:01:53:f0:f1` is lower, so this box yields. **Self-BSSID guard reads the interface**
   (`esp_wifi_get_mac(WIFI_IF_AP)`, never `esp_read_mac()` = eFuse) or it flaps AP->STA->AP every tick
   (`5faf01a`).
