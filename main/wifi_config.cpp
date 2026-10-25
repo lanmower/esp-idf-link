@@ -197,6 +197,19 @@ static void role_activate_netif(esp_netif_t* n) {
     esp_netif_set_default_netif(n);
 }
 
+// Witness for the flag-on plan (docs/netif-redesign-plan.md, H3): the state of both netifs after
+// every role switch, so the parked netif's admin state and address are read from the console.
+static void role_log(esp_netif_t* in_role) {
+    esp_netif_ip_info_t sta_info = {};
+    esp_netif_ip_info_t ap_info = {};
+    if (g_sta_netif) esp_netif_get_ip_info(g_sta_netif, &sta_info);
+    if (g_ap_netif) esp_netif_get_ip_info(g_ap_netif, &ap_info);
+    ESP_LOGI(TAG, "role: in=%s sta_up=%d sta_ip=" IPSTR " ap_up=%d ap_ip=" IPSTR,
+             in_role == g_sta_netif ? "STA" : "AP",
+             g_sta_netif ? (int)esp_netif_is_netif_up(g_sta_netif) : 0, IP2STR(&sta_info.ip),
+             g_ap_netif ? (int)esp_netif_is_netif_up(g_ap_netif) : 0, IP2STR(&ap_info.ip));
+}
+
 static void role_enforce(esp_netif_t* in_role) {
     if (in_role == g_sta_netif) {
         role_park_netif(g_ap_netif);
@@ -205,6 +218,7 @@ static void role_enforce(esp_netif_t* in_role) {
         role_park_netif(g_sta_netif);
         role_activate_netif(g_ap_netif);
     }
+    role_log(in_role);
 }
 #endif
 
@@ -378,7 +392,19 @@ esp_err_t wifi_start_link_ap(const char* ssid) {
     cfg.ap.max_connection = 8;
     cfg.ap.beacon_interval = 100;
 
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &cfg));
+    const esp_err_t ap_cfg_err = esp_wifi_set_config(WIFI_IF_AP, &cfg);
+    ESP_ERROR_CHECK(ap_cfg_err);
+#if WIFI_NO_TEARDOWN_ROLE_SWITCH
+    {
+        // Witness for H2 (the AP is reconfigured on a running APSTA): what the driver reports it applied.
+        wifi_config_t applied = {};
+        uint8_t ap_mac[6] = {0};
+        esp_wifi_get_config(WIFI_IF_AP, &applied);
+        esp_wifi_get_mac(WIFI_IF_AP, ap_mac);
+        ESP_LOGI(TAG, "ap cfg: ret=%d ssid=%s ch=%d ap_mac=" MACSTR,
+                 (int)ap_cfg_err, (const char*)applied.ap.ssid, (int)applied.ap.channel, MAC2STR(ap_mac));
+    }
+#endif
     if (!g_wifi_started) {
         esp_err_t serr = esp_wifi_start();
         if (serr != ESP_OK) ESP_LOGW(TAG, "esp_wifi_start (AP): %s", esp_err_to_name(serr));
