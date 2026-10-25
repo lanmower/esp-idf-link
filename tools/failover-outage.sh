@@ -7,6 +7,18 @@
 # Busybox-safe: no pgrep -c, no pkill.
 HOLD=${1:-100}
 
+# The AP must come back however this run ends: normal completion, a failed command, or a signal.
+# started=0 until the explicit restore, so the EXIT trap restores exactly once.
+started=0
+restore() {
+  [ "$started" = 1 ] && return
+  started=1
+  rc-service autoap start >/dev/null 2>&1
+  echo "$(date -u +%FT%TZ) START"
+}
+trap restore EXIT
+trap 'exit 1' HUP INT TERM
+
 snap() {
   n=$(pgrep hostapd 2>/dev/null | wc -l)
   info=$(iw dev wlan0 info 2>/dev/null)
@@ -28,7 +40,6 @@ while [ "$elapsed" -lt "$HOLD" ]; do
   snap "DURING+${elapsed}"
 done
 
-rc-service autoap start
-echo "$(date -u +%FT%TZ) START"
+restore
 sleep 20; snap AFTER+20
 sleep 40; snap AFTER+60
