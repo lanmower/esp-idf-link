@@ -2,8 +2,21 @@
 // Each check states the property it witnesses; a failed check exits non-zero with its name.
 #include "bass_engine.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+
+// The engine's MIDI output, stubbed for the host: this witness checks phrase advance, not sends.
+void send_midi_message(const uint8_t* message, size_t size) {
+    (void)message;
+    (void)size;
+}
+void send_midi_cc(uint8_t channel, uint8_t cc_num, uint8_t value) {
+    (void)channel;
+    (void)cc_num;
+    (void)value;
+}
 
 static int g_fail = 0;
 static int g_checks = 0;
