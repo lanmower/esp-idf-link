@@ -197,6 +197,10 @@ untested on hardware until a device run polls it), `TX_PROBE_PORT 34999`. The au
   must itself bind 20810/20812.
 - **Every multicast send must iterate netifs and set `IP_MULTICAST_IF` per interface**
   (`esp_netif_next_unsafe`): else a raw socket exits the wrong interface on a dual-netif device.
+- **Measured multicast rates, subscribed, 2026-10-25** (Pi `wlan0` capture, 30 s, all from `192.168.4.19`):
+  20810 LCLK 1414 frames (~47/s), 20812 TTMP 286 (~9.5/s), 34999 TX probe 3 (~0.1/s). `IgnoredMulti` rose 1707,
+  against 1703 captured on unbound ports. An earlier 81/s reading was a window artifact, not a second sender.
+  Idle: LCLK ~1/s, TTMP ~0.2/s. The ESP sends on one interface only.
 - **LCLK/TTMP are subscriber-driven** (`0a8760c`): a datagram to **20813 or 20811** counts as a subscriber hit
   (since `a100df8`; it was 20812 before, where the ESP's own TTMP looped back and kept itself subscribed). A
   hit holds for `SUBSCRIBER_HOLD_US` (15 s). Without one, LCLK drops 50 Hz -> 1 Hz and TTMP 10 Hz -> 0.2 Hz; clock rate-limited to one
