@@ -177,7 +177,8 @@ path needs it; on Linux `default-reset` just works.
 ## Mesh UDP protocol and MIDI emission
 
 Payloads little-endian `int64`; ports are `#define`s in `link_sync.cpp`: `LINK_PHASE_PORT 20810`,
-`LINK_TEMPO_PORT 20811`, `LINK_TTMP_PORT`/`LINK_STATUS_PORT` 20812, `TX_PROBE_PORT 34999`.
+`LINK_TEMPO_PORT 20811`, `LINK_TTMP_PORT` 20812, `LINK_STATUS_PORT` **20813** (moved from 20812 in `a100df8`,
+untested on hardware until a device run polls it), `TX_PROBE_PORT 34999`. The authoritative table is `readme.md` `## Network ports`.
 
 | Port | Direction | Payload | Purpose |
 |---|---|---|---|
@@ -185,7 +186,7 @@ Payloads little-endian `int64`; ports are `#define`s in `link_sync.cpp`: `LINK_P
 | 20811 | looper -> esp | `LTMP` + microsPerBeat (+ beat0 micros + quantum microbeats) | looper sets tempo and phase |
 | 20811 | request | `LRST` | `enable(false); enable(true); enableStartStopSync(false)` — no Wi-Fi teardown |
 | 20812 | esp -> group ~10 Hz | `TTMP` + microsPerBeat + beatOrigin microbeats + timeOrigin micros | esp -> looper timeline |
-| 20812 | req/resp | any datagram -> one-line JSON | status: peers/bpm/playing/beat/phase/quantum/ap/metro |
+| 20813 | req/resp | any datagram -> one-line JSON | status: peers/bpm/playing/beat/phase/quantum/ap/metro (was 20812 until `a100df8`) |
 | 34999 | esp -> gw / group | diagnostic | `log_tx_probe` every 10 s + `log_send_failure_probe`; nothing replies |
 
 - **aloop binds only `224.76.78.75:20808`** (Pi AF_PACKET capture): 20810/20812 dropped at its IP layer —
@@ -196,7 +197,7 @@ Payloads little-endian `int64`; ports are `#define`s in `link_sync.cpp`: `LINK_P
 - **LCLK/TTMP are subscriber-driven** (`0a8760c`): without a hit on 20812 or 20811 within
   `SUBSCRIBER_HOLD_US` (15 s), clock drops 50 Hz -> 1 Hz, timeline 10 Hz -> 0.2 Hz; clock rate-limited to one
   packet per 20 ms (timeline 100 ms). **`peers` readouts are not passive** — polling the ESP raises its
-  broadcast rate for 15 s. The 20812 responder replies to ANY 1..64-byte payload and cannot perturb the
+  broadcast rate for 15 s. The status responder (now 20813) replies to ANY 1..64-byte payload and cannot perturb the
   session (it only reads `captureAppSessionState`); `LRST`/`LTMP` on 20811 are prefix+length checked, so a
   short `PING` can never be mistaken for either.
 - Tempo bounded to **20..999 bpm** (`LINK_TEMPO_MAX_BPM 999.0`, `396092d`). `beatAtTime` is quantum-insensitive,
@@ -247,8 +248,8 @@ so it's jitter not drift — but it delays Start. Bigger buffer = worse; do NOT 
 ## Observing the running mesh
 
 This host (the ICS gateway) has `eth0` 192.168.137.1/24 and an unrelated `wlan0`; **there is no route to
-192.168.4.0/24**, so the ESP's 20812 is unreachable from here and the serial console is the only ESP
-telemetry (5 s `Link diag`, 10 s txprobe = 0.2 Hz). The Pi can poll 20812 directly and should.
+192.168.4.0/24**, so the ESP's status port is unreachable from here and the serial console is the only ESP
+telemetry (5 s `Link diag`, 10 s txprobe = 0.2 Hz). The Pi can poll the status port (20813 since `a100df8`) directly and should.
 
 - **aloop telemetry: UDP `status` -> `192.168.137.132:4445`**, JSON in ~150 ms, one hop, costs the ESP
   nothing. **The Pi is `.132`, not `.100`** — `.100` is `FAILED` in `ip neigh` and 4445/4446 both time out.
@@ -321,7 +322,7 @@ bpm spread <=0.05, `|phase_err_beats|` <=0.03, `eff_speed` spread <=0.005, sampl
   52984 -> 40006). Not a device fault on either side.
 - **ICMP is not the metric**: ~1% ICMP loss Pi->ESP (17/1765, then 33/3342) while Link retention stayed 100%
   and `peers0` count 0 — the Link session rides through brief loss, so "IP path down" is far worse than a few
-  missed pings. ICMP at 1 Hz plus the 20812 reply is the discriminator: both dead = IP path, ICMP alive with
+  missed pings. ICMP at 1 Hz plus the status reply (20813 since `a100df8`; it was 20812 before) is the discriminator: both dead = IP path, ICMP alive with
   a session drop = Link state.
 - **3 h run 08:12:36Z-11:12:36Z: PASS on every term, two independent captures.** Mine: 10791 telemetry
   samples, 0 gaps, 10731 post-acquisition, retention **100.0%**, bpm/phase/eff_speed spreads all 0, zero
