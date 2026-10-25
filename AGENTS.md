@@ -265,6 +265,11 @@ telemetry (5 s `Link diag`, 10 s txprobe = 0.2 Hz). The Pi can poll the status p
   `beat_mark{beat,late_ms}`, `groove`, `loopers`. ESP status `bpm` is **3 dp**, aloop `link.bpm` is **1 dp**.
 - **`beat_mark.late_ms` is a sawtooth** (0.3..500, mean 250), not lateness — it tracks position in the beat.
 - **Host-AP failover is certified** (compile `Oct 23 2026 13:28:17`, `4806b18729`, with aloop `0967bb7c`).
+- **Host-AP failover is also certified on `2a5162f`** (compile `Oct 25 2026 08:42:55`; the image with the
+  status port at 20813, the epoch guard and the destroy-based switch). 100 s outage at 10:45:00Z, run
+  detached on the Pi with a TERM-timeout trap. Re-host at 10:46:12Z, tie-break yield at 10:46:45Z, Link peer
+  back after 103838 ms. Pi side: AP stations=1 after. Witness: `.gm/witness-out/mesh-failover-2a5162f-20261025.txt`.
+  The phrase-reseat warning seen during its soak is most likely float noise at zero advance, not proven (row `bass-phrase-reseat-epsilon`).
   A verified 100 s outage runs: peer loss with the IP held and IGMP clean -> `STA down (n/30)` over ~60 s ->
   `host 'ticker' disappeared, re-hosting` + AP/DHCP on 192.168.4.1 -> `Lost dual-host tie-break (lower
   BSSID seen)` -> STA IP -> `Link peer back after 113678 ms`. ~114 s end to end. Two bugs had to be fixed
