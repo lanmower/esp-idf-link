@@ -19,17 +19,17 @@ The candidate commit makes exactly two kinds of change, both inside the flag:
 
 With the flag on, the switch never calls `esp_netif_destroy*` or `esp_wifi_stop`:
 
-- Both netifs are created once in `wifi_config_init` (`main/wifi_config.cpp:218-232`), and the mode is set to
+- Both netifs are created once in `wifi_config_init` (`main/wifi_config.cpp:225-240`), and the mode is set to
   `WIFI_MODE_APSTA` once.
-- `role_enforce` (`:200-207`) parks the out-of-role netif (`role_park_netif`, `:183`) and activates the
+- `role_enforce` (`:213-220`) parks the out-of-role netif (`role_park_netif`, `:183`) and activates the
   in-role one (`role_activate_netif`, `:193`).
 
 ## 2. Hypotheses
 
 - **H1 (convergence).** A 100 s host-AP outage with the flag on re-hosts, yields and rejoins, with no panic
   and no deferral, as the flag-off image does.
-- **H2 (the AP beacons on a running APSTA).** `wifi_start_link_ap` (`:352`) reconfigures the AP with
-  `esp_wifi_set_config(WIFI_IF_AP, ...)` (`:381`) while Wi-Fi runs. AGENTS.md lists this as unverified.
+- **H2 (the AP beacons on a running APSTA).** `wifi_start_link_ap` (`:366`) reconfigures the AP with
+  `esp_wifi_set_config(WIFI_IF_AP, ...)` (`:395`) while Wi-Fi runs. AGENTS.md lists this as unverified.
 - **H3 (the parked netif is silent).** While the ESP is a station, the AP netif is parked: admin down, no IP,
   no DHCP server. While it is an AP, the STA netif is parked likewise.
 - **H4 (no send failures after rejoin).** After rejoin, Link sends do not fail. The send counters do not
@@ -61,7 +61,7 @@ no Pi scan may run outside the outage window.
   `role: in=<STA|AP> sta_up=<0|1> sta_ip=<a.b.c.d> ap_up=<0|1> ap_ip=<a.b.c.d>`,
   read with `esp_netif_is_netif_up` and `esp_netif_get_ip_info` for both netifs. H3 holds if every line with
   `in=STA` has `ap_up=0 ap_ip=0.0.0.0`, and every line with `in=AP` has `sta_up=0 sta_ip=0.0.0.0`.
-- **H2 authority:** a line printed after `esp_wifi_set_config(WIFI_IF_AP, ...)` at `:381`:
+- **H2 authority:** a line printed after `esp_wifi_set_config(WIFI_IF_AP, ...)` at `:395`:
   `ap cfg: ret=<esp_err> ssid=<ssid> ch=<channel> ap_mac=<mac>`, using `esp_wifi_get_config(WIFI_IF_AP)` and
   `esp_wifi_get_mac(WIFI_IF_AP)`. H2 holds if `ret=0`, `ssid=ticker`, and `ch=6`, and `WIFI_EVENT_AP_START`
   (`AP started`) follows within 5 s.
@@ -110,14 +110,14 @@ Measured so far:
 ## 7. Reachability (P9, C), and what it proves
 
 `callers` at the commit this revision is based on (`codeinsight` index complete):
-- `esp_netif_destroy_default_wifi`: callers `wifi_config.cpp:1237` and `:1306`.
-- `esp_wifi_stop`: callers `wifi_config.cpp:1229` and `:1293`.
+- `esp_netif_destroy_default_wifi`: callers `wifi_config.cpp:1263` and `:1332`.
+- `esp_wifi_stop`: callers `wifi_config.cpp:1255` and `:1319`.
 - `esp_netif_destroy`: no caller in our code. Its only callers are in a managed component's test.
 
 `tools/flag_reachability.py`, run on this revision with the flag at `0` and at `1`: all four calls are live
 with the flag off and **not live with the flag on**. The check follows preprocessor conditionals, so the
 result holds for the flag's `#if` branches, including the chain through `role_enforce`, `role_park_netif`,
-`ensure_sta_started`, the re-host branch (`:1222-1243`) and the yield branch (`:1284-1312`).
+`ensure_sta_started`, the re-host branch (`:1244-1270`) and the yield branch (`:1302-1340`).
 
 The candidate commit must rerun the checker and record its output. A call found live with the flag on fails P9.
 
@@ -140,10 +140,10 @@ The candidate commit must rerun the checker and record its output. A call found 
 
 - H2 (a running APSTA AP reconfigured by `esp_wifi_set_config`) is the main unknown. If it fails, P7 fails and
   the AP does not beacon after the re-host.
-- At the yield, `ensure_sta_started()` (`:1291`, `:1310`) follows `g_ap_active = false`. If a relay send is
+- At the yield, `ensure_sta_started()` (`:1317`, `:1336`) follows `g_ap_active = false`. If a relay send is
   still in flight when `role_enforce(g_sta_netif)` parks the AP, it can reach the parked netif. The defer at
-  `:1285` guards the stop, not the order. P10 and P11 would show it.
+  `:1311` guards the stop, not the order. P10 and P11 would show it.
 - `esp_netif_set_default_netif` is set on `IP_EVENT_STA_GOT_IP` (`:129-134`) and in `role_activate_netif`. A
   down event in between could leave the default on a parked netif. P4 and P11 would show it.
-- Per-tick parking (`:1205`, `:1247`) is new load on every 2 s tick. P0 measures it.
+- Per-tick parking (`:1231`, `:1273`) is new load on every 2 s tick. P0 measures it.
 - The mc-420 sampler (P6) is the only telemetry that gates P0. If it is not validated, P0 does not start.
