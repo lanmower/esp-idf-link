@@ -15,6 +15,14 @@ struct NoteSlot {
     float pitchBendSemitones;
 };
 
+// How far the phrase moved from lastSteps to nowSteps. A backward move past float noise is a wrap
+// of the phrase; a smaller backward move is rounding at zero advance and counts as no movement.
+struct PhraseAdvance {
+    double steps;
+    bool wrapped;
+};
+PhraseAdvance phraseAdvance(double lastSteps, double nowSteps, double phraseSteps);
+
 class BassEngine {
 public:
     enum Approach {

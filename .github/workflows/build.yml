@@ -129,3 +129,19 @@ jobs:
           done
           echo "Failed to push binaries after retries"
           exit 1
+
+  host-witness:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Control model witness
+        run: bash tools/control-model-witness.sh
+
+      - name: Phrase advance witness
+        run: bash tools/phrase-advance-witness.sh
+
+      - name: Bassline property witness
+        run: bash tools/bassline-witness.sh --property

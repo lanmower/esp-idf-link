@@ -32,6 +32,15 @@ static constexpr int   kLastSection            = kSectionsPerPhrase - 1;
 static constexpr int   kHalfPhraseSteps        = kStepsPerPhrase / 2;
 static constexpr double kMaxAdvanceBeatsPerProcess = 1.0;
 static constexpr double kMaxAdvanceStepsPerProcess = kMaxAdvanceBeatsPerProcess * kStepsPerBeat;
+// Float noise at zero advance (about 1e-13) must not wrap to a whole phrase.
+static constexpr double kPhraseNoiseSteps = 1e-6;
+
+PhraseAdvance phraseAdvance(double lastSteps, double nowSteps, double phraseSteps) {
+    const double delta = nowSteps - lastSteps;
+    if (delta < -kPhraseNoiseSteps) return {delta + phraseSteps, true};
+    if (delta < 0.0) return {0.0, false};
+    return {delta, false};
+}
 static constexpr int   kTurnaroundTailSteps    = 16;
 static constexpr float kTurnaroundStartStep    = kStepsPerPhrase - kTurnaroundTailSteps;
 
@@ -810,15 +819,15 @@ void BassEngine::process(const ableton::Link::SessionState& state,
 
     processNoteOffs(phrasePosInSteps, bpm);
 
-    double advanceSteps = phrasePosInSteps - m_lastPhrasePosSteps;
-    if (advanceSteps < 0.0) advanceSteps += kStepsPerPhrase;
+    const PhraseAdvance advance = phraseAdvance(m_lastPhrasePosSteps, phrasePosInSteps, kStepsPerPhrase);
+    const double advanceSteps = advance.steps;
+    const bool wrapped = advance.wrapped;
     if (advanceSteps > kMaxAdvanceStepsPerProcess) {
         ESP_LOGW(TAG, "phrase position jumped %.1f steps -- reseating, not replaying", advanceSteps);
         m_lastPhrasePosSteps = phrasePosInSteps;
         return;
     }
 
-    bool wrapped = (phrasePosInSteps < m_lastPhrasePosSteps);
     for (const auto& n : m_phrase) {
         bool due;
         if (!wrapped) {
