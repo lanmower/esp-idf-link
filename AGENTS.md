@@ -197,8 +197,9 @@ untested on hardware until a device run polls it), `TX_PROBE_PORT 34999`. The au
   must itself bind 20810/20812.
 - **Every multicast send must iterate netifs and set `IP_MULTICAST_IF` per interface**
   (`esp_netif_next_unsafe`): else a raw socket exits the wrong interface on a dual-netif device.
-- **LCLK/TTMP are subscriber-driven** (`0a8760c`): without a hit on 20812 or 20811 within
-  `SUBSCRIBER_HOLD_US` (15 s), clock drops 50 Hz -> 1 Hz, timeline 10 Hz -> 0.2 Hz; clock rate-limited to one
+- **LCLK/TTMP are subscriber-driven** (`0a8760c`): a datagram to **20813 or 20811** counts as a subscriber hit
+  (since `a100df8`; it was 20812 before, where the ESP's own TTMP looped back and kept itself subscribed). A
+  hit holds for `SUBSCRIBER_HOLD_US` (15 s). Without one, LCLK drops 50 Hz -> 1 Hz and TTMP 10 Hz -> 0.2 Hz; clock rate-limited to one
   packet per 20 ms (timeline 100 ms). **`peers` readouts are not passive** — polling the ESP raises its
   broadcast rate for 15 s. The status responder (now 20813) replies to ANY 1..64-byte payload and cannot perturb the
   session (it only reads `captureAppSessionState`); `LRST`/`LTMP` on 20811 are prefix+length checked, so a
