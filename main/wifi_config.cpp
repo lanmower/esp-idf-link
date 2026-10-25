@@ -1336,6 +1336,9 @@ static void wifi_supervisor_task(void* arg) {
                 ensure_sta_started();
 #endif
                 wifi_connect_sta(ssid, "");
+                // The AP-role countdown would hold the station's first join back by up to 30 s.
+                // Zeroing it lets the next tick join once the station has an IP.
+                igmp_reassert_countdown = 0;
                 wifi_join_link_multicast();
             }
         }

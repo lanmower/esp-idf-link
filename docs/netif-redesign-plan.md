@@ -147,3 +147,30 @@ The candidate commit must rerun the checker and record its output. A call found 
   down event in between could leave the default on a parked netif. P4 and P11 would show it.
 - Per-tick parking (`:1231`, `:1273`) is new load on every 2 s tick. P0 measures it.
 - The mc-420 sampler (P6) is the only telemetry that gates P0. If it is not validated, P0 does not start.
+
+## 10. Candidate 2: station join on the first tick after the yield (rev 1, before any flash)
+
+**Change.** The yield branch of `wifi_supervisor_task` (`main/wifi_config.cpp`, after `wifi_connect_sta`) sets
+`igmp_reassert_countdown = 0`. This image is flag-0 (`WIFI_NO_TEARDOWN_ROLE_SWITCH 0`, commit `41ef503`), so
+it runs the certified destroy-based switch with this one line added. Candidate 1 (flag 1, `3c5003d1`) is
+retired for the next run and stays on disk for reference.
+
+**Evidence.** Candidate 1 outage console (`.gm/captures/2026-10-25/candidate-p0.log`): yield at 3966842 ms
+(13:01:44Z), IP at 3967962 ms. The first station-side join is at 3986922 ms (`ok=134`), about 19 s after the IP.
+The join before the yield (`ok=133`, near 3957k) ran in AP role. The countdown left over from AP role held the
+first join back for up to 30 s.
+
+**Hypotheses.**
+- **H5.** The station's group membership is set within one supervisor tick (2 s) of its `IP:` line.
+  Witness: an `IGMP join 224.76.78.75: ok` line within 4 s after the `IP:` line.
+- **H6.** P4 can hold only if the Pi's aloop is a member of `224.76.78.75` on `wlan0`. Candidate 1 had no
+  Link peer for about 45 minutes while the Pi reported `synced=false, peers=0`, and a Pi-side aloop restart
+  recovered it. This image cannot fix a Pi-side membership loss.
+
+**Preconditions (before any flash).** The 420 agent confirms, on the Pi, that aloop is `synced=true, peers=1`
+with the ESP associated and the AP started at least 60 s earlier. Without that, the run measures nothing.
+
+**Pass criteria.** P0 to P11 from section 5, with P4 as written, plus H5. No retune during a window.
+
+**Procedure.** Push, CI builds the three `.bin`, and the 420 agent gives the flash go-ahead after the MAC
+check. P0 soak (30 min), then one 100 s outage on a 420-agreed second. Rollback is unchanged (`227125e`).
