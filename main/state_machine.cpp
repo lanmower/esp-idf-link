@@ -1,5 +1,8 @@
 #include "state_machine.h"
 #include "bass_engine.h"
+#include "esp_log.h"
+
+static const char* TAG = "SM";
 
 // A second tap on the same pad within this window is a double tap.
 static const uint64_t DOUBLE_TAP_WINDOW_US = 300000;
@@ -20,8 +23,12 @@ void process_state_event(const InputEvent& event,
     for (int i = 0; i < NUM_TOUCH_PADS; i++) held_count += event.pad_held[i] ? 1 : 0;
     if (held_count == 3 && s_held_count < 3) {
         g_bassEngine.clearAll();
-    } else if (held_count == 2 && s_held_count < 2) {
+    } else if (held_count == 2 && s_held_count != 2) {
+        ESP_LOGI(TAG, "two pads held -> fill on");
         g_bassEngine.setFill(true);
+    } else if (held_count != 2 && s_held_count == 2) {
+        ESP_LOGI(TAG, "fill off");
+        g_bassEngine.setFill(false);
     }
     s_held_count = held_count;
     const bool all4 = event.pad_held[0] && event.pad_held[1]
