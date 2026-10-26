@@ -24,8 +24,10 @@ public:
     // Dial position in [0, 1] at a timestamp. Moving a dial touches its setting for the recorder.
     void setDial(int dial, float v01, uint64_t nowUs);
 
+    // nowUs is the input clock that setDial stamps, so touches expire on one clock.
     void process(const ableton::Link::SessionState& state,
-                 const std::chrono::microseconds& time);
+                 const std::chrono::microseconds& time,
+                 uint64_t nowUs);
 
     void stop();
 

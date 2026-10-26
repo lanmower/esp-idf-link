@@ -37,7 +37,7 @@ void process_state_event(const InputEvent& event,
             s_double_held_by[i] = false;
         }
         g_bassEngine.setDoubleHeld(-1);
-        g_bassEngine.process(link_state, link_time);
+        g_bassEngine.process(link_state, link_time, event.timestamp_us);
         return;
     }
     s_all4_latched = false;
@@ -74,5 +74,5 @@ void process_state_event(const InputEvent& event,
         }
     }
 
-    g_bassEngine.process(link_state, link_time);
+    g_bassEngine.process(link_state, link_time, event.timestamp_us);
 }

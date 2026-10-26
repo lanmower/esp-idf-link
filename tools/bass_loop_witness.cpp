@@ -72,7 +72,7 @@ static int64_t runBars(BassEngine& e, int64_t start, int bars, int dialIdx = -1,
         if (dialIdx >= 0 && n % kDialEvery == 0) {
             e.setDial(dialIdx, value, static_cast<uint64_t>(t));
         }
-        e.process(g_state, std::chrono::microseconds(t));
+        e.process(g_state, std::chrono::microseconds(t), static_cast<uint64_t>(t));
     }
     return end;
 }

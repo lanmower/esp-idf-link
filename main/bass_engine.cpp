@@ -121,8 +121,9 @@ void BassEngine::expireTouches(uint64_t nowUs) {
 }
 
 void BassEngine::process(const ableton::Link::SessionState& state,
-                         const std::chrono::microseconds& time) {
-    expireTouches(static_cast<uint64_t>(time.count()));
+                         const std::chrono::microseconds& time,
+                         uint64_t nowUs) {
+    expireTouches(nowUs);
     if (!m_active) return;
 
     const double beat = state.beatAtTime(time, LINK_QUANTUM);
