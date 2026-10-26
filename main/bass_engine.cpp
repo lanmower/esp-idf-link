@@ -60,7 +60,7 @@ BassEngine::BassEngine() {
         0.97f,  // rhythm: every sixteenth (pattern 31)
         0.0f,   // LFO type
         0.25f,  // LFO speed
-        0.0625f,  // trance-gate series 2: three onsets, clear of the skipped sixteenths
+        0.25f,  // volume modulation: series 8, fully open, so every sixteenth sounds
         0.5f,   // octave (centre)
         0.5f,   // gate width
         0.5f,   // arp speed: 16ths
@@ -280,8 +280,10 @@ bool BassEngine::stepSounds(int step) const {
     if (!((rhythm >> (step % 32)) & 1u)) return false;
     const uint32_t series = ctl::tranceGate(ctl::gateSeriesForDial(m_frame[SET_SERIES]),
                                             m_entrySeed[SET_SERIES]);
+    // The volume modulation is the gate series alone; series 0 carries the fake sidechain, so
+    // there is no step this always mutes and a fully open gate is reachable.
     if (!((series >> (step % 32)) & 1u)) return false;
-    return step % 4 != 0;   // fake sidechain: the first sixteenth of every beat is skipped
+    return true;
 }
 
 void BassEngine::allNotesOff() {

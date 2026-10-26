@@ -94,6 +94,10 @@ static void checkEngineSounds() {
     CHECK("filter CC74 is sent on the first step", hasCc(0, 74));
     CHECK("mod wheel CC1 is sent by the LFO", hasCc(0, 1));
 
+    // Four bars at 145 bpm hold 64 sixteenths. The default rhythm is every sixteenth and the
+    // default volume modulation is fully open, so the default is a note on every sixteenth.
+    CHECK("the default plays a note on every sixteenth", countNoteOn(0) >= 60);
+
     e.stop();
     CHECK("stop balances every note-on with a note-off", countNoteOn(0) == countNoteOff(0));
     for (const Msg& m : g_out) {

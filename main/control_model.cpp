@@ -88,22 +88,31 @@ uint32_t tranceGate(int seriesIndex, uint32_t entrySeed) {
     if (seriesIndex < 0) seriesIndex = 0;
     if (seriesIndex >= kGateSeriesCount) seriesIndex = kGateSeriesCount - 1;
 
-    if (seriesIndex < 8) {
-        // Repetitive and short: an 8-step Euclidean figure, tiled over the 32 steps.
-        const uint32_t base = euclidean(seriesIndex + 1, 8);
+    if (seriesIndex == 0) {
+        // Fake sidechain: everything sounds except the first sixteenth of every beat.
+        uint32_t bits = 0;
+        for (int i = 0; i < 32; i++) {
+            if (i % 4 != 0) bits |= (1u << i);
+        }
+        return bits;
+    }
+    if (seriesIndex <= 8) {
+        // Repetitive: an 8-step Euclidean figure, tiled over the 32 steps. Series 8 is E(8,8),
+        // which is every step: the fully open gate.
+        const uint32_t base = euclidean(seriesIndex, 8);
         uint32_t bits = 0;
         for (int i = 0; i < 32; i++) {
             if (base & (1u << (i % 8))) bits |= (1u << i);
         }
         return bits;
     }
-    if (seriesIndex < 24) {
+    if (seriesIndex <= 24) {
         // Polyrhythmic: E(k, 32) with k from 3 to 18.
-        return euclidean(seriesIndex - 8 + 3, 32);
+        return euclidean(seriesIndex - 9 + 3, 32);
     }
     // Random: density rises with the index; the bits come from the entry seed.
     uint32_t state = entrySeed * 2654435761u + static_cast<uint32_t>(seriesIndex) * 40503u + 1u;
-    const uint32_t threshold = static_cast<uint32_t>((seriesIndex - 24 + 1) * 64);  // of 1024
+    const uint32_t threshold = static_cast<uint32_t>((seriesIndex - 25 + 1) * 64);  // of 1024
     uint32_t bits = 0;
     for (int i = 0; i < 32; i++) {
         state = state * 1664525u + 1013904223u;

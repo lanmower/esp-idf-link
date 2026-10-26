@@ -57,17 +57,27 @@ static void checkStepPatterns() {
 static void checkTranceGates() {
     CHECK("32 gate series", kGateSeriesCount == 32);
     bool repetitive = true;
-    for (int s = 0; s < 8; s++) {
+    for (int s = 0; s <= 8; s++) {
         const uint32_t g = tranceGate(s, 7u);
         for (int i = 0; i < 24; i++) {
             if (((g >> i) & 1u) != ((g >> (i + 8)) & 1u)) repetitive = false;
         }
     }
-    CHECK("series 0 to 7 repeat every 8 steps", repetitive);
-    CHECK("series 8 is polyrhythmic with three onsets", popcount32(tranceGate(8, 0u)) == 3);
+    CHECK("series 0 to 8 repeat every 8 steps", repetitive);
+
+    // Series 0 is the fake sidechain: it mutes only the first sixteenth of every beat.
+    const uint32_t sc = tranceGate(0, 7u);
+    CHECK("series 0 mutes the first sixteenth of every beat", !(sc & 0x1u) && !(sc & (1u << 4)));
+    CHECK("series 0 sounds every other sixteenth", popcount32(sc) == 24);
+
+    // Series 8 is the fully open gate, so a roll of every sixteenth is one dial position away.
+    CHECK("series 8 is fully open", popcount32(tranceGate(8, 0u)) == 32);
+
+    CHECK("series 9 is polyrhythmic with three onsets", popcount32(tranceGate(9, 0u)) == 3);
+    CHECK("series 24 is polyrhythmic with 18 onsets", popcount32(tranceGate(24, 0u)) == 18);
     CHECK("a random series is deterministic for a seed", tranceGate(27, 1234u) == tranceGate(27, 1234u));
     CHECK("a new seed gives a new random pattern", tranceGate(27, 1234u) != tranceGate(27, 1235u));
-    CHECK("random density rises with the index", popcount32(tranceGate(31, 9u)) > popcount32(tranceGate(24, 9u)));
+    CHECK("random density rises with the index", popcount32(tranceGate(31, 9u)) > popcount32(tranceGate(25, 9u)));
 }
 
 static void checkHashes() {

@@ -40,12 +40,16 @@ that pad's double settings. Releasing the pad returns them to the single setting
 3. **Adjustment period** means "touched at the turnaround". A different reading changes the recorder only.
 4. **Clearing a persistent setting** is not yet a gesture in firmware: `ctl::LoopTrack::clear()` exists, but no pad
    or dial calls it.
-5. **Fake sidechain** skips the first sixteenth of every beat; the trance-gate series applies on top.
-6. **Random patterns** are seeded when a setting is touched, so each new change gives a new pattern, and the same
+5. **Fake sidechain** is series 0 of the volume-modulation dial: it skips the first sixteenth of every
+   beat. It is part of the dial's range, not always on, so a fully open gate is reachable.
+6. **Volume-modulation dial range:** series 0 fake sidechain, 1-8 repetitive tilings (8 is fully open,
+   every sixteenth), 9-24 polyrhythmic, 25-31 random. Every sixteenth is one dial position away.
+7. **Random patterns** are seeded when a setting is touched, so each new change gives a new pattern, and the same
    entry gives the same pattern.
-7. **Defaults at boot:** scale 0, width 0, pitch offset 0, rhythm 16 (E(17,32)), LFO sine at 0.25 cycles per bar,
-   trance series 2 (three onsets, clear of the sidechain-skipped sixteenths), octave 0, gate width 50 percent, arp half, no random octave or drop-out, LFO width 0,
-   filter centred, loop 8 bars, no aberration.
+8. **Defaults at boot:** scale 0, width 0, pitch offset 0, rhythm 31 (every sixteenth), LFO sine at 0.25 cycles
+   per bar, volume modulation series 8 (fully open), octave 0, gate width 50 percent, arp 16ths, no random octave
+   or drop-out, LFO width 0, filter centred, loop 8 bars, no aberration. Those defaults are a gated
+   sixteenth-note roll, because the rhythm is every sixteenth and the gate is fully open.
 
 ## Still open
 
