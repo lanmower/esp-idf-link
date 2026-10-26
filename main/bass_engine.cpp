@@ -60,7 +60,7 @@ BassEngine::BassEngine() {
         0.5f,   // rhythm
         0.0f,   // LFO type
         0.25f,  // LFO speed
-        0.0f,   // trance-gate series
+        0.0625f,  // trance-gate series 2: three onsets, clear of the skipped sixteenths
         0.5f,   // octave (centre)
         0.5f,   // gate width
         0.1f,   // arp speed (half)

@@ -44,7 +44,7 @@ that pad's double settings. Releasing the pad returns them to the single setting
 6. **Random patterns** are seeded when a setting is touched, so each new change gives a new pattern, and the same
    entry gives the same pattern.
 7. **Defaults at boot:** scale 0, width 0, pitch offset 0, rhythm 16 (E(17,32)), LFO sine at 0.25 cycles per bar,
-   trance series 0 (repetitive), octave 0, gate width 50 percent, arp half, no random octave or drop-out, LFO width 0,
+   trance series 2 (three onsets, clear of the sidechain-skipped sixteenths), octave 0, gate width 50 percent, arp half, no random octave or drop-out, LFO width 0,
    filter centred, loop 8 bars, no aberration.
 
 ## Still open
