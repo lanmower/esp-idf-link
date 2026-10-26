@@ -29,6 +29,11 @@ public:
 
     void stop();
 
+    // Three pads held together clear the recordings and the sounding notes. Two pads held together
+    // turn fill on: sounding notes stay on and more keep sounding until a clear.
+    void clearAll();
+    void setFill(bool on);
+
     bool isActive() const { return m_active; }
 
 private:
@@ -61,6 +66,7 @@ private:
     static constexpr int     kLfoEveryTicks   = 3;
     static constexpr int     kRootNote        = 33;   // A1
     static constexpr int     kNoteVelocity    = 100;
+    static constexpr size_t  kMaxActiveNotes  = 24;
 
     int   settingFor(int dial) const;
     void  expireTouches(uint64_t nowUs);
@@ -86,6 +92,7 @@ private:
     int      m_activeSingle     = 0;
     int      m_doubleHeld       = -1;
     bool     m_active           = false;
+    bool     m_fill             = false;
     int64_t  m_lastTick         = -1;
     int      m_lastFilterCc     = -1;
     int      m_lastLfoCc        = -1;

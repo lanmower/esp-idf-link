@@ -14,6 +14,16 @@ void process_state_event(const InputEvent& event,
                          const std::chrono::microseconds& link_time)
 {
     static bool s_all4_latched = false;
+    static int  s_held_count = 0;
+
+    int held_count = 0;
+    for (int i = 0; i < NUM_TOUCH_PADS; i++) held_count += event.pad_held[i] ? 1 : 0;
+    if (held_count == 3 && s_held_count < 3) {
+        g_bassEngine.clearAll();
+    } else if (held_count == 2 && s_held_count < 2) {
+        g_bassEngine.setFill(true);
+    }
+    s_held_count = held_count;
     const bool all4 = event.pad_held[0] && event.pad_held[1]
                    && event.pad_held[2] && event.pad_held[3];
     if (all4) {

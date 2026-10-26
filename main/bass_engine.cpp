@@ -224,8 +224,12 @@ void BassEngine::arpEvent(int step, int64_t loopTick, int period, int64_t t) {
     note = std::clamp(note, 0, 127);
 
     const int length = std::max(1, static_cast<int>(std::lround(static_cast<float>(period) * gate)));
+    if (m_activeNotes.size() >= kMaxActiveNotes) {
+        sendNoteOff(m_activeNotes.front().note);
+        m_activeNotes.erase(m_activeNotes.begin());
+    }
     sendNoteOn(note);
-    m_activeNotes.push_back({note, t + length});
+    m_activeNotes.push_back({note, m_fill ? t + 1000000000LL : t + length});
 }
 
 void BassEngine::sendLfoAndFilter(int64_t loopTick) {
@@ -244,6 +248,7 @@ void BassEngine::sendLfoAndFilter(int64_t loopTick) {
 }
 
 void BassEngine::endDueNotes(int64_t t) {
+    if (m_fill) return;   // filled notes stay on until a clear
     for (auto it = m_activeNotes.begin(); it != m_activeNotes.end();) {
         if (it->offTick <= t) {
             sendNoteOff(it->note);
@@ -260,6 +265,16 @@ void BassEngine::stop() {
     m_lastFilterCc = -1;
     m_lastLfoCc = -1;
     allNotesOff();
+}
+
+void BassEngine::clearAll() {
+    for (int c = 0; c < ctl::kControlCount; ++c) m_track[c].clear();
+    m_fill = false;
+    allNotesOff();
+}
+
+void BassEngine::setFill(bool on) {
+    m_fill = on;
 }
 
 void BassEngine::allNotesOff() {
