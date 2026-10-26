@@ -276,6 +276,10 @@ void BassEngine::clearAll() {
 
 void BassEngine::setFill(bool on) {
     m_fill = on;
+    if (!on) {
+        // Notes sounded during fill have no end time: end them at the next tick.
+        for (ActiveNote& n : m_activeNotes) n.offTick = std::min(n.offTick, m_lastTick);
+    }
 }
 
 void BassEngine::allNotesOff() {
