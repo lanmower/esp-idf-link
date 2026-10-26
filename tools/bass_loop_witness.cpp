@@ -78,13 +78,18 @@ static int64_t runBars(BassEngine& e, int64_t start, int bars, int dialIdx = -1,
 }
 
 // Runs one bar from startUs and returns how many notes sounded in it. If dialIdx >= 0 the dial is
-// kept moving throughout, which keeps that setting touched for the recorder.
-static int notesInBar(BassEngine& e, int64_t startUs, int dialIdx = -1, float value = 0.0f) {
+// kept moving for the first dialHoldUs of the bar, which touches that setting for the recorder.
+// It is then left alone, so the touch expires well before the next turnaround and the change is
+// free to revert rather than persist.
+static int notesInBar(BassEngine& e, int64_t startUs, int dialIdx = -1, float value = 0.0f,
+                      int64_t dialHoldUs = 0) {
     g_out.clear();
     const int64_t end = startUs + kBarUs;
     int n = 0;
     for (int64_t t = startUs; t < end; t += kStepUs, ++n) {
-        if (dialIdx >= 0 && n % kDialEvery == 0) e.setDial(dialIdx, value, static_cast<uint64_t>(t));
+        if (dialIdx >= 0 && t - startUs < dialHoldUs && n % kDialEvery == 0) {
+            e.setDial(dialIdx, value, static_cast<uint64_t>(t));
+        }
         e.process(g_state, std::chrono::microseconds(t), static_cast<uint64_t>(t));
     }
     return countNoteOn(0);
@@ -134,9 +139,11 @@ static void checkWindowShortensPromptly() {
     const int baseline = notesInBar(e, t); t += kBarUs;
     CHECK("the sequencer sounds notes with the default settings", baseline > 0);
 
-    // Hold the gate at zero through one bar, then release it. Pad 0 double-tap dial 0 is gate width.
+    // Hold the gate at zero for the first half of a bar, then let go. Pad 0 double-tap dial 0 is
+    // gate width. Releasing early keeps it from still being touched at the turnaround, which
+    // would make it persist instead of reverting.
     e.setDoubleHeld(0);
-    const int muted = notesInBar(e, t, 0, 0.0f); t += kBarUs;
+    const int muted = notesInBar(e, t, 0, 0.0f, kBarUs / 2); t += kBarUs;
     e.setDoubleHeld(-1);
     CHECK("gate width held at zero silences the bar", muted == 0);
 
