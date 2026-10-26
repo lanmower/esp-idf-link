@@ -302,9 +302,10 @@ telemetry (5 s `Link diag`, 10 s txprobe = 0.2 Hz). The Pi can poll the status p
 - **Attaching the USB console RESETS the board**: every open of `/dev/ttyUSB0` prints `rst:0x1
   (POWERON_RESET), boot:0x13`. A soak must open the port **once** and never re-open — a second open turns the
   run into a reboot test. One 93.4%-retention reading was traced to exactly this.
-- **Pi clock resets to 2024-04-09 every boot** (no RTC, no default route, so no NTP). Do NOT step it during a
-  certification run — a 926-day jump on a running PREEMPT_RT process is itself a perturbation. Align by
-  offset, fix in a gap between windows, restart aloop after.
+- **Pi clock resets to 2024-04-09 every boot** (no RTC). The final device is offline, makes its own AP and cannot
+  sync its clock, so wall time is a log-only detail for bench work. Do NOT step it during a certification run —
+  a 926-day jump on a running PREEMPT_RT process is itself a perturbation. Align by offset, fix in a gap between
+  windows, restart aloop after.
 - **Pi root is tmpfs, so nothing survives a reboot**: no logs before boot, no `last reboot`, no pstore. The
   SSH host keys regenerate every boot, so the Pi's host key changes on every reboot (the 2026-10-25 change).
   The 2026-10-25 ~18:30Z reboot (the 63.8 s Link gap in the 3 h soak) has no recorded cause.
