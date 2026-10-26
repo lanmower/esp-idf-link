@@ -269,7 +269,7 @@ telemetry (5 s `Link diag`, 10 s txprobe = 0.2 Hz). The Pi can poll the status p
   status port at 20813, the epoch guard and the destroy-based switch). 100 s outage at 10:45:00Z, run
   detached on the Pi with a TERM-timeout trap. Re-host at 10:46:12Z, tie-break yield at 10:46:45Z, Link peer
   back after 103838 ms. Pi side: AP stations=1 after. Witness: `.gm/witness-out/mesh-failover-2a5162f-20261025.txt`.
-  The phrase-reseat warning (`phrase position jumped 1024.0 steps`) was float noise at zero advance: `phraseAdvance` (`main/bass_engine.cpp`) treats a backward move under `kPhraseNoiseSteps` as zero, and `tools/phrase-advance-witness.sh` runs in the CI `host-witness` job (green on `79bebc3`, run 40217155630).
+  The phrase-reseat warning (`phrase position jumped 1024.0 steps`) was float noise at zero advance: the phrase-advance function was removed with the redesign.
   A verified 100 s outage runs: peer loss with the IP held and IGMP clean -> `STA down (n/30)` over ~60 s ->
   `host 'ticker' disappeared, re-hosting` + AP/DHCP on 192.168.4.1 -> `Lost dual-host tie-break (lower
   BSSID seen)` -> STA IP -> `Link peer back after 113678 ms`. ~114 s end to end. Two bugs had to be fixed
@@ -352,53 +352,21 @@ bpm spread <=0.05, `|phase_err_beats|` <=0.03, `eff_speed` spread <=0.005, sampl
   (`err=12`, inside an IGMP re-join). **Session bounce** `enable(false)`/`enable(true)` re-joins in 2540 ms;
   the per-boot auto bounce was removed, only on-demand `LRST` to `192.168.4.x:20811` remains.
 
-## Bass generator: 8 approaches, per-bar shaping
+## Bass sequencer: 8-bar loop, pads and dials
 
-`main/state_machine.cpp` maps pad -> approach, single/double tap (`DOUBLE_TAP_WINDOW_US = 300000`): 0
-`APP_ROLL`/`APP_ACID`, 1 `APP_FUNK`/`APP_GLITCH`, 2 `APP_STAB`/`APP_DRIFT`, 3 `APP_PEDAL`/`APP_BREAK`.
-`setApproach()` is the ONLY thing that activates the engine. `shapeBar()` per bar from the 25-field
-`ApproachShape` (`bass_engine.h:80`). **An approach is a VOICE, not just a preset** (`0f1271f`):
-`dialsForApproach()` biases base dials -> `Dials::bandIndex` -> `kGrooves`/`ContourShape`/`kScaleNames`; a
-switch clears `m_hasPrevPhraseMotif`, sets `m_regenPending`. PEDAL/DRIFT `minGate` 1.10/0.70 > 1 step =
-sustained voices. Asserts cap microtiming (max-abs <= 0.17 step, SD <= 0.15) — don't raise
-`kMicroTimingFullDepth`. Pitch bend: `raw` starts at `kPitchBendCentreRaw 8192`, emitted only when it changes
-(deduped by `s_last_pitch_bend_raw`), high byte masked `(raw >> 7) & 0x7F`; `kPitchBendHalfRange 8191`,
-`kPitchBendRawMax 16383`, `kPitchBendSemitoneSpan 12.f`.
-
-### Psytrance musicality (reworked 2026-10-13, witnessed on host)
-
-`tools/bassline-witness.sh` runs the REAL engine off-device (stubs in `tools/hoststub/`, 145 bpm): bar x 16th
-grid + metrics; `--mid <file>` writes a playable MIDI file so a change is AUDITIONED; `--property` and
-`--mutate` (added 2026-10-23) run the invariant and mutation suites. Witnessed BEFORE: ROLL emitted a
-13-semitone melodic *sweep* and all 8 of 8 consecutive bars differed — a wandering jam. AFTER: `0 0 0 0 12 12
-12 12 ...`, register +0..+12, 13 notes/bar, 4-bar holds. The invariants that hold the genre:
-- **Rhythm, not melody.** `kGrooves` is psytrance-first (`psy_offbeat`, `psy_roll`, `psy_gallop`,
-  `psy_ratchet`, + minimal, deep, `acid_303`, `techno_roll`, `funk_synco`); `house_bump`/`garage_2step`/
-  `dembow`/`four_floor` removed — four_floor is the *kick* pattern. **Index 8 (top energy band) must stay a
-  full 16th roll** — ROLL's effective `grooveEnergy` is 0.94, so a sparse template there silently stops the
-  densest voice rolling.
-- **Bass grammar** (`transCost`): repeat ~free, octave cheap, step costly, wide leap very costly; non-chord
-  tones 0.95 not 0.52. Cheap repetition IS the hypnosis.
-- **`ApproachShape::repeatBars`** = bars one shaped figure is HELD: ROLL 4, ACID 2, FUNK 2, GLITCH 1, STAB 4,
-  DRIFT 8, PEDAL 8, BREAK 2. GLITCH=1 is deliberate (the one non-repeating voice). Copy-then-`varyRepeat`
-  (vel +-4, CC74 +-6, occasional ghost) stops a hold sounding sampled. **A rest is never held**: when the
-  shaped figure is empty, `figureKeyHeld` is left at -1. **And a bar that just rested may not rest again**
-  (`756b57e`) — otherwise BREAK's `restBarProb` 0.22 produced three consecutive silent bars (~5 s at 145 bpm)
-  by coin flip rather than by arrangement.
-- **Register**: the chord offset is added AFTER `clampRange` bounded the motif, so the sum escaped the bass
-  (+15 motif, +11 chord). Now octave-folded into `kBassLowNote 33`..`kBassHighNote 52`.
-- **Syncopation capped** at `kSyncTargetCap 0.45`; **ghost drop is 25, not 45** (at vel 10-40 a ghost vanishes
-  and holes the roll); **filter floor rises per section** `kSectionFilterRise {0,8,18,5}` — this is what opens
-  the line across the phrase.
-- **Witness resolution matters**: simulate at 1/64 notes, not 1/16 — at 1/16 a note at step 2.053 is emitted
-  during the step-3 call and lands in the wrong cell, under-reporting density.
-
-**Property and mutation suites (2026-10-23, verified here)**: 30/30 properties HOLD over 4 roots x 9 scales x
-5 energies x 3 variations x 24 seeds (~144k checks on the motif properties). Five candidates were REJECTED as
-body-derivable (readable off a constant table or already proven by `static_assert`) — that rejection is the
-admission rule, not a gap. Mutation set psy-bass-v1: 20 mutants, 18 killed = 90%. The two survivors
-(`leap-window-24`, `leap-penalty-off`) are equivalent: every sampled interval wider than 7 semitones is
-exactly an octave (wideLeapShare 0.1212 vs octaveShare 0.1211), so the `d > leap` branch is unreachable.
+`main/bass_engine.cpp` is a tick scheduler (12 ticks per sixteenth, 48 per beat) driven by the Link beat.
+`main/state_machine.cpp` maps the pads and dials; `main/control_model.{h,cpp}` holds the 16 settings and the recorder.
+- **Single tap** selects that pad's single settings and starts the sequencer. Pad 0: scale, width. Pad 1: pitch
+  offset, 32-step rhythm. Pad 2: LFO type, LFO speed (mod wheel CC 1). Pad 3: trance-gate series, octave.
+- **Double tap and hold** routes the dials to that pad's double settings. Pad 0: gate width, arp speed. Pad 1:
+  random octave, random drop-out. Pad 2: LFO width, filter shift (CC 74). Pad 3: loop window, chromatic aberration.
+- **Recording** (`ctl::LoopTrack`): moving a dial records its setting as the loop plays. A released change holds
+  until the turnaround; a change still touched at the turnaround becomes persistent; otherwise it reverts.
+  Touch expires 250 ms after the last move.
+- The volume modulation's fake sidechain skips the first sixteenth of every beat.
+- Witnesses, both run in the CI `host-witness` job: `tools/control-model-witness.sh`, `tools/bass-loop-witness.sh`.
+- Removed with the redesign: the eight approaches, the 64-bar phrase, the grooves, the bassline interpreter and the
+  phrase-advance function. The float reseat bug went with them, because the scheduler resynchronises instead.
 
 ## HTTP clip server (8080) and SPIFFS
 
@@ -441,8 +409,6 @@ length (0..2), pot2 = velocity (0..1).
   wetness, 127 = full Gator** (Manual v1.01). All outside SRCS — nothing here runs on-device today.
 - `kScales[3]` is `{0,3,5,7,10,3,5}` while `kScaleLens[3] == 5`: trailing `{3,5}` is padding so the row
   matches its neighbours. Don't fix it.
-- `kRegisterSpan = 15` (`bassline_interpreter.h`) must track the `anchorMotif` clamp in `bass_engine.cpp` —
-  nowhere else; neither file includes the other.
 - `kProgs` rows are **scale-degree indices**, not semitones, not MIDI notes (fixed `c0fc974`): `{0,5,3,6}`
   i-VI-iv-VII, `{0,6,5,6}` i-VII-VI-VII, `{0,3,6,2}` i-iv-VII-III, `{0,5,6,4}` i-VI-VII-V ("dark cadence"),
   `{0,2,6,3}` i-III-VII-iv, `{0,0,5,6}` pedal.
@@ -466,9 +432,9 @@ length (0..2), pot2 = velocity (0..1).
 
 **NOT** in the build: `effect_arp.cpp`, `effect_filter.cpp`, `effect_handler.cpp`, `effect_sidechain.cpp`,
 `midi_file.cpp` — nothing `#include`s a `.cpp`, so that cluster is reachable only from itself.
-`bassline_interpreter` must stay **host-compilable**: only its own header plus `<algorithm>` `<cmath>`
+`bass_engine` and `control_model` must stay **host-compilable**: only their own headers plus `<algorithm>` `<cmath>`
 `<cstring>`, no ESP-IDF headers (MinGW: also `-D_USE_MATH_DEFINES`, or `M_PI` is undefined).
-`tools/bassline_witness.cpp` extends that to the whole engine via `tools/hoststub/`. **`.gitattributes` pins
+`tools/bass_loop_witness.cpp` extends that to the whole engine via `tools/hoststub/`. **`.gitattributes` pins
 EOL** (`7e8dacd`): `eol=lf` for shell/py/cmake/csv/sdkconfig/Dockerfile, `eol=crlf` for `*.bat *.cmd`,
 `binary` for `*.bin *.elf *.mid`; a CRLF-checked-out shell script dies in the Linux CI container.
 

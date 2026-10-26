@@ -1,53 +1,28 @@
 #pragma once
 
-#include <vector>
 #include <cstdint>
-#include <ableton/Link.hpp>
 #include <chrono>
-#include "bassline_interpreter.h"
+#include <vector>
+#include <ableton/Link.hpp>
+#include "control_model.h"
 
-struct NoteSlot {
-    float posInSteps;
-    int   note;
-    float lengthInSteps;
-    int   velocity;
-    int   filterCC74;
-    float pitchBendSemitones;
-};
-
-// How far the phrase moved from lastSteps to nowSteps. A backward move past float noise is a wrap
-// of the phrase; a smaller backward move is rounding at zero advance and counts as no movement.
-struct PhraseAdvance {
-    double steps;
-    bool wrapped;
-};
-PhraseAdvance phraseAdvance(double lastSteps, double nowSteps, double phraseSteps);
-
+// The bassline sequencer. An 8-bar loop of sixteenths, driven by the Link beat. Pads choose which
+// settings the two dials control (single tap), and double-tap-and-hold switches the dials to that
+// pad's double-tap settings. Every setting is recorded as the loop plays (see ctl::LoopTrack).
 class BassEngine {
 public:
-    enum Approach {
-        APP_ROLL   = 0,
-        APP_ACID   = 1,
-        APP_FUNK   = 2,
-        APP_GLITCH = 3,
-        APP_STAB   = 4,
-        APP_DRIFT  = 5,
-        APP_PEDAL  = 6,
-        APP_BREAK  = 7,
-        APP_COUNT  = 8
-    };
-
     BassEngine();
 
-    void setActiveBank(int bank);
-    int  activeBank() const { return m_activeBank; }
+    // A single tap on a pad selects its single-tap settings and starts the sequencer.
+    void selectSingle(int pad);
 
-    void setApproach(int approach);
-    int  approach() const { return m_approach; }
+    // Double-tap-and-hold: the dials control this pad's double-tap settings. -1 when released.
+    void setDoubleHeld(int pad);
+    int  doubleHeld() const { return m_doubleHeld; }
+    int  activeSingle() const { return m_activeSingle; }
 
-    void setDial(int dialIdx, float v01);
-
-    void nudge();
+    // Dial position in [0, 1] at a timestamp. Moving a dial touches its setting for the recorder.
+    void setDial(int dial, float v01, uint64_t nowUs);
 
     void process(const ableton::Link::SessionState& state,
                  const std::chrono::microseconds& time);
@@ -55,99 +30,66 @@ public:
     void stop();
 
     bool isActive() const { return m_active; }
-    const bli::Dials& dials() const { return m_dials; }
 
 private:
-    enum { MOTIF_SIMPLIFY = 0, MOTIF_SUB_DROP = 1, MOTIF_MODAL_SHIFT = 2, MOTIF_DRIFT = 3 };
-    static constexpr int    kMotifTransformCount = 4;
-    static constexpr int    kEmptyNote           = -1;
-    static constexpr int    kNoBarYet            = -1;
-    static constexpr double kNoPhrasePositionYet = -1.0;
-
-    struct MS {
-        int   note;
-        float len;
-        int   vel;
-        int   fcc;
-        float pbSemitones;
-        float tsBeats;
+    enum Setting {
+        SET_SCALE = 0,
+        SET_WIDTH,
+        SET_PITCH,
+        SET_RHYTHM,
+        SET_LFO_TYPE,
+        SET_LFO_SPEED,
+        SET_SERIES,
+        SET_OCTAVE,
+        SET_GATE,
+        SET_ARP,
+        SET_RAND_OCT,
+        SET_RAND_DROP,
+        SET_LFO_WIDTH,
+        SET_FILTER,
+        SET_WINDOW,
+        SET_ABERRATION
     };
-    static MS mn(int note, float len, int vel, int fcc,
-                 float pbSemitones = 0.f, float tsBeats = 0.f);
-    static void msInit(MS m[bli::kStepsPerBar]);
 
-    void regeneratePhrase(bool advanceArc = true);
-
-    void genInterpreted(MS m[bli::kStepsPerBar], int root, int scIdx, const bli::Dials& dials);
-
-    void transformMotif(const MS src[bli::kStepsPerBar], MS dst[bli::kStepsPerBar],
-                        int type, int root, int scIdx);
-    void anchorMotif(MS m[bli::kStepsPerBar], int root, int scIdx);
-    static void clampRange(MS m[bli::kStepsPerBar], int root);
-
-    struct ApproachShape {
-        float density;
-        float gate;
-        float octaveJumpProb;
-        float syncTarget;
-        float mutatePerBar;
-        float velDrift;
-        float filtSweepDepth;
-        float timingSteps;
-        bool  rolling;
-        bool  questionAnswer;
-        bool  pickups;
-        float minGateSteps;
-        float grooveEnergyBias;
-        float contourBias;
-        float swingBias;
-        float articBias;
-        float colorBias;
-        float   ghostProb;
-        float   restBarProb;
-        int     cellBars;
-        int     repeatBars;
-        int     phaseShiftBars;
-        float   voiceOffsetSteps;
-        uint16_t accentMask;
-        float   swingSteps;
+    struct ActiveNote {
+        int     note;
+        int64_t offTick;
     };
-    static const ApproachShape& shapeFor(int approach);
-    bli::Dials dialsForApproach() const;
-    void shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPerBar],
-                  int bar, int root, int scIdx);
-    void varyRepeat(MS m[bli::kStepsPerBar], int bar, const ApproachShape& sh);
-    static float syncopationFraction(const MS m[bli::kStepsPerBar]);
-    static void rotateMotif(const MS src[bli::kStepsPerBar], MS dst[bli::kStepsPerBar],
-                            int shiftSteps);
-    void insertGhosts(MS m[bli::kStepsPerBar], const ApproachShape& sh);
 
-    void turnInterpreted(int base, int scIdx, const bli::Dials& dials);
+    static constexpr int64_t kMaxCatchUpTicks = 48;   // one beat; a longer gap is resynchronised
+    static constexpr uint64_t kTouchHoldUs    = 250000;
+    static constexpr int     kLfoEveryTicks   = 3;
+    static constexpr int     kRootNote        = 33;   // A1
+    static constexpr int     kNoteVelocity    = 100;
 
-    void addNote(float posInSteps, int note, float len, int vel, int fcc,
-                 float pbSemitones = 0.f);
+    int   settingFor(int dial) const;
+    void  expireTouches(uint64_t nowUs);
+    void  tick(int64_t t);
+    void  stepBoundary(int step);
+    void  arpEvent(int step, int64_t loopTick, int period, int64_t t);
+    void  sendLfoAndFilter(int64_t loopTick);
+    void  endDueNotes(int64_t t);
+    void  allNotesOff();
+    void  sendNoteOn(int note);
+    void  sendNoteOff(int note);
 
-    void playNote        (const NoteSlot& n, double bpm);
-    void processNoteOffs (double phrasePosInSteps, double bpm);
+    ctl::LoopTrack m_track[ctl::kControlCount];
+    float    m_live[ctl::kControlCount]       = {};
+    float    m_frame[ctl::kControlCount]      = {};
+    uint64_t m_lastMoveUs[ctl::kControlCount] = {};
+    bool     m_touched[ctl::kControlCount]    = {};
+    uint32_t m_entrySeed[ctl::kControlCount]  = {};
+    uint32_t m_seedCounter = 1;
 
-    std::vector<NoteSlot> m_phrase;
-
-    struct ActiveNote { int note; double offPosInSteps; };
+    int      m_loopSteps        = ctl::kLoopSteps;
+    int      m_pendingLoopSteps = ctl::kLoopSteps;
+    int      m_activeSingle     = 0;
+    int      m_doubleHeld       = -1;
+    bool     m_active           = false;
+    int64_t  m_lastTick         = -1;
+    int      m_lastFilterCc     = -1;
+    int      m_lastLfoCc        = -1;
     std::vector<ActiveNote> m_activeNotes;
-
-    int        m_activeBank    = bli::BANK_HARMONY;
-    int        m_approach      = APP_ROLL;
-    bli::Dials m_dials;
-    bool   m_active         = false;
-    int    m_phraseCount    = 0;
-    double m_lastPhrasePosSteps = kNoPhrasePositionYet;
-    int    m_scaleIdx       = 0;
-    int    m_progIdx        = 0;
-    bool   m_regenPending   = false;
-    int    m_scaleHoldPhrasesRemaining = 0;
-    int    m_lastBarInPhrase = kNoBarYet;
-    MS     m_prevPhraseMotifA[bli::kStepsPerBar] = {};
-    bool   m_hasPrevPhraseMotif = false;
 };
 
 extern BassEngine g_bassEngine;

@@ -1,728 +1,252 @@
-#include "main.h"
 #include "bass_engine.h"
 #include "io_helpers.h"
-#include "esp_log.h"
-#include "esp_random.h"
+#include "main.h"
 #include <algorithm>
-#include <cstring>
 #include <cmath>
 
-static const char* TAG = "BASS";
+BassEngine g_bassEngine;
 
-// One-bar memory for the rest branch in shapeBar: a bar that just rested must not rest again, so
-// restBarProb can never coin-flip its way into two silent bars in a row.
-static bool s_prevBarRested = false;
+namespace {
 
-static constexpr int   kRootNoteE2             = 40;
-// The chord offset is added AFTER clampRange has bounded the motif, so the sum can leave the bass
-// register entirely (root+15 motif + root+11 chord = +26). Fold the result back into a bass window
-// by octaves: it keeps the scale degree and the contour, and keeps the line under the kick.
-static constexpr int   kBassLowNote           = kRootNoteE2 - 7;
-static constexpr int   kBassHighNote          = kRootNoteE2 + 12;
-static constexpr int   kStepsPerBeat           = 4;
-static constexpr int   kBarsPerPhrase          = 64;
-static constexpr int   kStepsPerPhrase         = kBarsPerPhrase * bli::kStepsPerBar;
-static constexpr int   kSectionsPerPhrase      = 4;
-static constexpr int   kBarsPerSection         = kBarsPerPhrase / kSectionsPerPhrase;
-static constexpr int   kBarsPerChordCell       = 4;
-static constexpr int   kFirstSection           = 0;
-static constexpr int   kBridgeSection          = 1;
-static constexpr int   kPeakSection            = 2;
-static constexpr int   kLastSection            = kSectionsPerPhrase - 1;
-static constexpr int   kHalfPhraseSteps        = kStepsPerPhrase / 2;
-static constexpr double kMaxAdvanceBeatsPerProcess = 1.0;
-static constexpr double kMaxAdvanceStepsPerProcess = kMaxAdvanceBeatsPerProcess * kStepsPerBeat;
-// Float noise at zero advance (about 1e-13) must not wrap to a whole phrase.
-static constexpr double kPhraseNoiseSteps = 1e-6;
+constexpr uint8_t kNoteOnStatus  = 0x90;
+constexpr uint8_t kNoteOffStatus = 0x80;
+constexpr uint8_t kChannelOne    = 1;      // user channel, as send_midi_cc takes it
+constexpr uint8_t kCcModWheel    = 1;
+constexpr uint8_t kCcFilter      = 74;
+constexpr uint8_t kCcAllNotesOff = 123;
+constexpr int     kMaxArpOffsets = 16;
+constexpr int64_t kTicksPerBeat  = 4 * ctl::kTicksPerStep;
+constexpr float   kPi            = 3.14159265f;
 
-PhraseAdvance phraseAdvance(double lastSteps, double nowSteps, double phraseSteps) {
-    const double delta = nowSteps - lastSteps;
-    if (delta < -kPhraseNoiseSteps) return {delta + phraseSteps, true};
-    if (delta < 0.0) return {0.0, false};
-    return {delta, false};
-}
-static constexpr int   kTurnaroundTailSteps    = 16;
-static constexpr float kTurnaroundStartStep    = kStepsPerPhrase - kTurnaroundTailSteps;
-
-static constexpr int   kOctaveSemitones        = 12;
-static constexpr int   kMaxSemitonesAboveRoot  = bli::kRegisterSpan;
-static constexpr int   kMaxSemitonesBelowRoot  = 12;
-static constexpr int   kFifthScaleDegreeIndex  = 4;
-static constexpr int   kFifthSemitones         = 7;
-static constexpr int   kThirdSemitones         = 3;
-static constexpr int   kStep0MaxSemitonesFromRoot = 2;
-static constexpr int   kMidBarStep             = bli::kStepsPerBar / 2;
-static constexpr float kMidBarFifthProbability = 0.4f;
-static constexpr int   kSubDropFloorNote       = 36;
-static constexpr int   kSubDropFilterCCReduction = 30;
-static constexpr int   kFilterCCFloor          = 10;
-static constexpr float kSimplifyThinProbability = 0.6f;
-static constexpr float kModalShiftProbability  = 0.5f;
-static constexpr float kModalShiftFifthProbability = 0.5f;
-static constexpr int   kDriftDropBeatMaxIndex  = 3;
-static constexpr float kDriftTailProbability   = 0.5f;
-
-static constexpr float kScaleJitterProbability = 0.35f;
-static constexpr int   kScaleJitterRange       = 3;
-static constexpr int   kScaleHoldMinPhrases    = 1;
-static constexpr int   kScaleHoldRangePhrases  = 2;
-static constexpr int   kArcPeriodPhrases       = 8;
-static constexpr float kMotifBlendProbability  = 0.15f;
-static constexpr float kMaxSwingSteps          = 0.4f;
-static constexpr int   kGhostVelocity          = 38;
-static constexpr float kGhostLengthSteps       = 0.25f;
-static constexpr int   kAccentVelocityBoost    = 14;
-static constexpr int   kAccentVelocityDrop     = 6;
-static constexpr int   kDropBarPeriod          = 16;
-static constexpr int   kDropBarIndex           = kDropBarPeriod - 1;
-static constexpr float kMicroTimingFullDepth   = 0.06f;
-static constexpr float kArticulatedTurnaroundThreshold = 0.6f;
-static constexpr int   kFrequentTurnaroundPeriodPhrases = 2;
-static constexpr int   kSparseTurnaroundPeriodPhrases   = 4;
-static constexpr float kSamePositionEpsilonSteps = 0.01f;
-static constexpr double kWrapBackwardThreshold = -200.0;
-
-static constexpr uint8_t kMidiNoteOn         = 0x90;
-static constexpr uint8_t kMidiNoteOff        = 0x80;
-static constexpr uint8_t kMidiControlChange  = 0xB0;
-static constexpr uint8_t kMidiPitchBend      = 0xE0;
-static constexpr uint8_t kMidiCCFilter       = 74;
-static constexpr uint8_t kMidiCCAllNotesOff  = 123;
-static constexpr int     kPitchBendCentreRaw = 8192;
-static constexpr int     kPitchBendHalfRange = 8191;
-static constexpr int     kPitchBendRawMax    = 16383;
-static constexpr float   kPitchBendSemitoneSpan = 12.f;
-
-static int scaleDegreeSemitones(int scIdx, int degree) { return bli::scaleDegree(scIdx, degree); }
-
-enum ChordDegree {
-    kDegreeTonic       = 0,
-    kDegreeSupertonic  = 1,
-    kDegreeMediant     = 2,
-    kDegreeSubdominant = 3,
-    kDegreeDominant    = 4,
-    kDegreeSubmediant  = 5,
-    kDegreeLeadingTone = 6,
-};
-
-enum ChordProgression {
-    kProgTonicSubmediantSubdominantLeadingTone = 0,
-    kProgTonicLeadingToneSubmediantLeadingTone = 1,
-    kProgTonicSubdominantLeadingToneMediant    = 2,
-    kProgDarkCadence                           = 3,
-    kProgTonicMediantLeadingToneSubdominant    = 4,
-    kProgTonicPedalSubmediantLeadingTone       = 5,
-    kNumProgs                                  = 6,
-};
-
-static const int kChordDegreeProgs[kNumProgs][kBarsPerChordCell] = {
-    {kDegreeTonic, kDegreeSubmediant, kDegreeSubdominant, kDegreeLeadingTone},
-    {kDegreeTonic, kDegreeLeadingTone, kDegreeSubmediant, kDegreeLeadingTone},
-    {kDegreeTonic, kDegreeSubdominant, kDegreeLeadingTone, kDegreeMediant},
-    {kDegreeTonic, kDegreeSubmediant, kDegreeLeadingTone, kDegreeDominant},
-    {kDegreeTonic, kDegreeMediant, kDegreeLeadingTone, kDegreeSubdominant},
-    {kDegreeTonic, kDegreeTonic, kDegreeSubmediant, kDegreeLeadingTone},
-};
-
-static float rand01() {
-    return (float)(esp_random() & 0xFFFFFF) / (float)0x1000000;
-}
-static int randBelow(int n) {
-    if (n <= 1) return 0;
-    return (int)(esp_random() % (uint32_t)n);
-}
-static bool randChance(float prob) { return rand01() < prob; }
-
-BassEngine::MS BassEngine::mn(int note, float len, int vel, int fcc,
-                               float pbSemitones, float tsBeats) {
-    return {note, len, vel, fcc, pbSemitones, tsBeats};
+int floorDiv(int a, int b) {
+    return a >= 0 ? a / b : -((-a + b - 1) / b);
 }
 
-void BassEngine::msInit(MS m[bli::kStepsPerBar]) {
-    for (int i = 0; i < bli::kStepsPerBar; i++) m[i] = {kEmptyNote, 0.f, 0, 0, 0.f, 0.f};
+// Arp offsets in scale degrees. Width 0 is the held pitch; wider arps go higher, and past the
+// halfway point they come back down through the lower degrees.
+int arpOffsets(float width, int out[kMaxArpOffsets]) {
+    const float w = ctl::widthForDial(width);
+    const int span = static_cast<int>(std::lround(w * 4.0f));
+    if (span <= 0) {
+        out[0] = 0;
+        return 1;
+    }
+    int n = 0;
+    for (int d = 0; d <= span; ++d) out[n++] = d;
+    if (w > 0.5f) {
+        for (int d = span - 1; d >= -span; --d) out[n++] = d;
+    }
+    return n;
 }
 
-struct EspRng : bli::RngSource {
-    float next01() override { return rand01(); }
-};
-
-void BassEngine::genInterpreted(MS m[bli::kStepsPerBar], int root, int scIdx,
-                                const bli::Dials& dials) {
-    EspRng rng;
-    bli::Step steps[bli::kStepsPerBar];
-    bli::generateMotif(steps, root, scIdx, dials, rng);
-    for (int i = 0; i < bli::kStepsPerBar; i++) {
-        if (steps[i].note < 0) {
-            m[i] = {kEmptyNote, 0.f, 0, 0, 0.f, 0.f};
-        } else {
-            m[i] = mn(steps[i].note, steps[i].len, steps[i].vel, steps[i].fcc, steps[i].pb);
-        }
+// LFO shape in [0, 1] at a fractional cycle position.
+float lfoShape(int type, float frac) {
+    switch (type) {
+        case 1:  return frac < 0.5f ? 2.0f * frac : 2.0f - 2.0f * frac;   // triangle
+        case 2:  return frac;                                              // saw
+        case 3:  return frac < 0.5f ? 1.0f : 0.0f;                         // square
+        default: return 0.5f + 0.5f * std::sin(2.0f * kPi * frac);         // sine
     }
 }
 
-void BassEngine::anchorMotif(MS m[bli::kStepsPerBar], int root, int scIdx) {
-    int fifthInterval = scaleDegreeSemitones(scIdx, kFifthScaleDegreeIndex);
+}  // namespace
 
-    if (m[0].note < 0 || std::abs(m[0].note - root) > kStep0MaxSemitonesFromRoot)
-        m[0] = mn(root, 0.5f, 120, 90);
-
-    if (m[kMidBarStep].note < 0)
-        m[kMidBarStep] = mn(root + (randChance(kMidBarFifthProbability) ? fifthInterval : 0),
-                            0.5f, 112, 85);
-
-    clampRange(m, root);
-}
-
-void BassEngine::clampRange(MS m[bli::kStepsPerBar], int root) {
-    for (int i = 0; i < bli::kStepsPerBar; i++) {
-        if (m[i].note < 0) continue;
-        while (m[i].note > root + kMaxSemitonesAboveRoot) m[i].note -= kOctaveSemitones;
-        while (m[i].note < root - kMaxSemitonesBelowRoot) m[i].note += kOctaveSemitones;
-    }
-}
-
-void BassEngine::transformMotif(const MS src[bli::kStepsPerBar], MS dst[bli::kStepsPerBar], int type,
-                                 int root, int scIdx) {
-    memcpy(dst, src, bli::kStepsPerBar * sizeof(MS));
-    if (type == MOTIF_SIMPLIFY) {
-        for (int i = 0; i < bli::kStepsPerBar; i++)
-            if (dst[i].note >= 0 && i % kStepsPerBeat != 0 && randChance(kSimplifyThinProbability))
-                dst[i].note = kEmptyNote;
-    } else if (type == MOTIF_SUB_DROP) {
-        for (int i = 0; i < bli::kStepsPerBar; i++) {
-            if (dst[i].note < 0) continue;
-            if (dst[i].note > kSubDropFloorNote) dst[i].note -= kOctaveSemitones;
-            dst[i].fcc = std::max(kFilterCCFloor, dst[i].fcc - kSubDropFilterCCReduction);
-        }
-    } else if (type == MOTIF_MODAL_SHIFT) {
-        for (int i = 0; i < bli::kStepsPerBar; i++) {
-            if (dst[i].note < 0 || i % kStepsPerBeat == 0) continue;
-            if (randChance(kModalShiftProbability))
-                dst[i].note += randChance(kModalShiftFifthProbability) ? kFifthSemitones
-                                                                      : kThirdSemitones;
-        }
-    } else {
-        int dropBeat = (randBelow(kDriftDropBeatMaxIndex) + 1) * kStepsPerBeat;
-        for (int i = 0; i < bli::kStepsPerBar; i++) {
-            if (i >= dropBeat && i < dropBeat + kStepsPerBeat) dst[i].note = kEmptyNote;
-        }
-        if (dst[bli::kStepsPerBar - 1].note < 0 && randChance(kDriftTailProbability))
-            dst[bli::kStepsPerBar - 1] = mn(root, 0.15f, 65, 45);
-    }
-}
-
-void BassEngine::addNote(float posInSteps, int note, float len, int vel, int fcc,
-                         float pbSemitones) {
-    m_phrase.erase(std::remove_if(m_phrase.begin(), m_phrase.end(),
-        [posInSteps](const NoteSlot& n) {
-            return std::fabs(n.posInSteps - posInSteps) < kSamePositionEpsilonSteps;
-        }),
-        m_phrase.end());
-    m_phrase.push_back({posInSteps, note, len, vel, fcc, pbSemitones});
-}
-
-void BassEngine::turnInterpreted(int base, int scIdx, const bli::Dials& dials) {
-    EspRng rng;
-    bli::TurnNote tn[3];
-    int n = bli::generateTurnaround(tn, base, scIdx, dials, rng);
-    for (int i = 0; i < n; i++) {
-        addNote(kTurnaroundStartStep + tn[i].stepOffset, tn[i].note, tn[i].len, tn[i].vel,
-                tn[i].fcc, tn[i].pb);
-    }
-}
-
-const BassEngine::ApproachShape& BassEngine::shapeFor(int approach) {
-    // repeatBars: how many bars one shaped figure is HELD before a new one is generated.
-    // This is the hypnosis knob -- without it every bar is a fresh random line, which reads as a
-    // wandering jam rather than a loop a dancer can lock into. Psytrance holds a 1-2 bar
-    // ostinato for 4-8 bars while the chord cells move underneath it.
-    static const ApproachShape kShapes[APP_COUNT] = {
-        {1.00f, 0.50f, 0.10f, 0.00f, 0.35f,  6.f, 18.f, 0.02f, true,  false, false,
-         0.22f,  0.44f,  0.19f, -0.05f, -0.05f,  0.06f,
-         0.00f, 0.02f, 2, 4, 0,  0.00f, 0x1111, 0.00f},
-        {0.72f, 0.80f, 0.08f, 0.15f, 0.50f, 22.f, 55.f, 0.00f, false, false, false,
-         0.20f,  0.00f,  0.44f,  0.04f, -0.05f, -0.04f,
-         0.05f, 0.04f, 4, 2, 0, -0.04f, 0x4448, 0.08f},
-        {0.50f, 0.55f, 0.12f, 0.38f, 0.60f, 30.f, 25.f, 0.05f, false, true,  true,
-         0.30f,  0.33f,  0.06f,  0.19f,  0.15f,  0.14f,
-         0.35f, 0.03f, 4, 2, 0, -0.12f, 0x4441, 0.26f},
-        {0.32f, 0.70f, 0.18f, 0.45f, 0.75f, 34.f, 30.f, 0.09f, false, true,  true,
-         0.20f,  0.11f,  0.31f, -0.16f, -0.25f,  0.40f,
-         0.10f, 0.12f, 3, 1, 4, -0.08f, 0x1224, 0.14f},
-        {0.25f, 0.22f, 0.35f, 0.50f, 0.25f, 12.f, 15.f, 0.045f, false, false, false,
-         0.20f, -0.30f, -0.44f, -0.06f, -0.30f, -0.26f,
-         0.00f, 0.18f, 2, 4, 0,  0.00f, 0x4444, 0.00f},
-        {0.40f, 1.60f, 0.14f, 0.10f, 0.30f, 10.f, 45.f, 0.03f, false, false, false,
-         0.70f, -0.33f, -0.31f, -0.26f,  0.55f, -0.15f,
-         0.00f, 0.10f, 2, 8, 0,  0.00f, 0x0009, 0.05f},
-        {0.20f, 2.50f, 0.15f, 0.20f, 0.15f,  8.f, 35.f, 0.00f, false, false, false,
-         1.10f, -0.44f, -0.44f, -0.36f,  0.60f, -0.26f,
-         0.00f, 0.06f, 8, 8, 0,  0.00f, 0x0001, 0.00f},
-        {0.55f, 0.35f, 0.22f, 0.50f, 0.85f, 36.f, 40.f, 0.06f, false, true,  true,
-         0.24f,  0.22f, -0.06f,  0.09f, -0.10f,  0.17f,
-         0.05f, 0.22f, 4, 2, 6, -0.10f, 0x0812, 0.20f},
+BassEngine::BassEngine() {
+    // Baseline for each setting: the value it has when a loop starts.
+    const float defaults[ctl::kControlCount] = {
+        0.0f,   // scale
+        0.0f,   // width
+        0.5f,   // pitch offset (centre: the root)
+        0.5f,   // rhythm
+        0.0f,   // LFO type
+        0.25f,  // LFO speed
+        0.0f,   // trance-gate series
+        0.5f,   // octave (centre)
+        0.5f,   // gate width
+        0.1f,   // arp speed (half)
+        0.0f,   // random octave
+        0.0f,   // random drop-out
+        0.5f,   // LFO width (centre: none)
+        0.5f,   // filter shift (centre)
+        1.0f,   // loop window (8 bars)
+        0.0f,   // chromatic aberration
     };
-    if (approach < APP_ROLL || approach >= APP_COUNT) approach = APP_ROLL;
-    return kShapes[approach];
-}
-
-bli::Dials BassEngine::dialsForApproach() const {
-    const ApproachShape& sh = shapeFor(m_approach);
-    bli::Dials d = m_dials;
-    d.grooveEnergy  = std::max(0.f, std::min(1.f, d.grooveEnergy  + sh.grooveEnergyBias));
-    d.motionContour = std::max(0.f, std::min(1.f, d.motionContour + sh.contourBias));
-    d.grooveSwing   = std::max(0.f, std::min(1.f, d.grooveSwing   + sh.swingBias));
-    d.voiceArtic    = std::max(0.f, std::min(1.f, d.voiceArtic    + sh.articBias));
-    d.harmonyColor  = std::max(0.f, std::min(1.f, d.harmonyColor  + sh.colorBias));
-    return d;
-}
-
-float BassEngine::syncopationFraction(const MS m[bli::kStepsPerBar]) {
-    int occupied = 0;
-    int offGrid  = 0;
-    for (int i = 0; i < bli::kStepsPerBar; i++) {
-        if (m[i].note < 0) continue;
-        occupied++;
-        if (i % 2 != 0) offGrid++;
+    for (int c = 0; c < ctl::kControlCount; ++c) {
+        m_track[c].setBaseline(defaults[c]);
+        m_live[c]  = defaults[c];
+        m_frame[c] = defaults[c];
+        m_entrySeed[c] = 1u + static_cast<uint32_t>(c);
     }
-    return occupied > 0 ? (float)offGrid / (float)occupied : 0.f;
+    m_pendingLoopSteps = ctl::loopBarsForDial(defaults[SET_WINDOW]) * ctl::kStepsPerBar;
+    m_loopSteps = m_pendingLoopSteps;
+    m_activeNotes.reserve(32);
 }
 
-void BassEngine::rotateMotif(const MS src[bli::kStepsPerBar], MS dst[bli::kStepsPerBar],
-                             int shiftSteps) {
-    const int shift = ((shiftSteps % bli::kStepsPerBar) + bli::kStepsPerBar) % bli::kStepsPerBar;
-    for (int i = 0; i < bli::kStepsPerBar; i++)
-        dst[(i + shift) % bli::kStepsPerBar] = src[i];
+int BassEngine::settingFor(int dial) const {
+    if (m_doubleHeld >= 0) return ctl::controlIndex(true, m_doubleHeld, dial);
+    return ctl::controlIndex(false, m_activeSingle, dial);
 }
 
-void BassEngine::insertGhosts(MS m[bli::kStepsPerBar], const ApproachShape& sh) {
-    if (sh.ghostProb <= 0.f) return;
-    bool real[bli::kStepsPerBar];
-    for (int i = 0; i < bli::kStepsPerBar; i++) real[i] = (m[i].note >= 0);
-    for (int i = 0; i < bli::kStepsPerBar; i++) {
-        if (real[i]) continue;
-        const int left  = (i > 0) ? i - 1 : bli::kStepsPerBar - 1;
-        const int right = (i + 1) % bli::kStepsPerBar;
-        int src = -1;
-        if (real[left]) src = left;
-        else if (real[right]) src = right;
-        if (src < 0) continue;
-        if (!randChance(sh.ghostProb)) continue;
-        m[i] = m[src];
-        m[i].vel = kGhostVelocity;
-        m[i].len = kGhostLengthSteps;
+void BassEngine::selectSingle(int pad) {
+    if (pad < 0 || pad >= ctl::kPadCount) return;
+    m_activeSingle = pad;
+    m_active = true;
+}
+
+void BassEngine::setDoubleHeld(int pad) {
+    m_doubleHeld = (pad >= 0 && pad < ctl::kPadCount) ? pad : -1;
+    if (m_doubleHeld >= 0) m_active = true;
+}
+
+void BassEngine::setDial(int dial, float v01, uint64_t nowUs) {
+    if (dial < 0 || dial > 1) return;
+    const int c = settingFor(dial);
+    if (!m_touched[c]) {
+        // A new change: its random patterns are seeded afresh.
+        m_touched[c] = true;
+        m_track[c].setTouched(true);
+        m_entrySeed[c] = ctl::hash32(m_seedCounter++, static_cast<uint32_t>(c), 0x51u) | 1u;
+    }
+    m_live[c] = std::clamp(v01, 0.0f, 1.0f);
+    m_lastMoveUs[c] = nowUs;
+}
+
+void BassEngine::expireTouches(uint64_t nowUs) {
+    for (int c = 0; c < ctl::kControlCount; ++c) {
+        if (m_touched[c] && nowUs - m_lastMoveUs[c] > kTouchHoldUs) {
+            m_touched[c] = false;
+            m_track[c].setTouched(false);
+        }
     }
 }
 
-void BassEngine::shapeBar(MS out[bli::kStepsPerBar], const MS src[bli::kStepsPerBar],
-                          int bar, int root, int scIdx) {
-    static constexpr float kMetricalWeightUnit = 0.3333333f;
-    static constexpr float kRollingCarryProb   = 0.55f;
-    static constexpr int   kQuestionBar        = 6;
-    static constexpr int   kAnswerBar          = 7;
-    static constexpr int   kQuestionGapStart   = 8;
-    static constexpr int   kQuestionGapEnd     = 12;
-    static constexpr float kAnswerFillProb     = 0.6f;
-    static constexpr int   kSyncAdjustPasses   = 16;
-    static constexpr float kSyncTolerance      = 0.02f;
-    static constexpr int   kSyncBoundaryBars   = 4;
-    static constexpr float kSyncBoundaryGain   = 1.6f;
-    // Filter floor per section of the phrase. The per-section sine below only breathes within a
-    // section; this is what makes the line actually OPEN across the phrase (first -> bridge ->
-    // peak) and settle back for the last section, which is the arrangement device the genre runs
-    // on. Without it every section sits at the same average cutoff.
-    static constexpr float kSectionFilterRise[kSectionsPerPhrase] = {0.f, 8.f, 18.f, 5.f};
-    static constexpr float kSyncBodyScale      = 0.70f;
-    static constexpr float kSyncTargetCap      = 0.45f;
-    static constexpr float kOctaveJumpStepProb = 0.35f;
-    static constexpr float kPickupProb         = 0.35f;
-    static constexpr float kPickupLengthSteps  = 0.25f;
-    static constexpr int   kPickupVelDrop      = 20;
-    static constexpr int   kVelocityWobble     = 3;
-    static constexpr float kTwoPi              = 6.28318530717958647692f;
-    static constexpr float kQuarterTurn        = 1.57079632679489661923f;
+void BassEngine::process(const ableton::Link::SessionState& state,
+                         const std::chrono::microseconds& time) {
+    expireTouches(static_cast<uint64_t>(time.count()));
+    if (!m_active) return;
 
-    const ApproachShape& sh = shapeFor(m_approach);
+    const double beat = state.beatAtTime(time, LINK_QUANTUM);
+    if (beat < 0.0) return;
+    const int64_t now = static_cast<int64_t>(std::floor(beat * static_cast<double>(kTicksPerBeat)));
 
-    const bool restWanted = bar % kDropBarPeriod == kDropBarIndex || randChance(sh.restBarProb);
-    if (restWanted && !s_prevBarRested) {
-        for (int i = 0; i < bli::kStepsPerBar; i++) out[i] = mn(kEmptyNote, 0.f, 0, 0);
-        s_prevBarRested = true;
+    if (m_lastTick < 0 || now < m_lastTick || now - m_lastTick > kMaxCatchUpTicks) {
+        // First call, a stall or a backward jump: resynchronise without catching up.
+        allNotesOff();
+        m_lastTick = now;
         return;
     }
-    s_prevBarRested = false;
-
-    for (int i = 0; i < bli::kStepsPerBar; i++) out[i] = src[i];
-
-    if (sh.rolling) {
-        MS carried = mn(kEmptyNote, 0.f, 0, 0);
-        for (int i = 0; i < bli::kStepsPerBar; i++) {
-            if (out[i].note >= 0) carried = out[i];
-            else if (carried.note >= 0 && randChance(kRollingCarryProb)) out[i] = carried;
-        }
-    }
-
-    if (sh.density < 1.0f) {
-        for (int i = 0; i < bli::kStepsPerBar; i++) {
-            if (out[i].note < 0) continue;
-            const int metricalWeight = (i % 8 == 0) ? 3 : (i % 4 == 0) ? 2 : (i % 2 == 0) ? 1 : 0;
-            const float keepProb =
-                sh.density + (float)(metricalWeight * (1.0f - sh.density)) * kMetricalWeightUnit;
-            if (!randChance(std::min(1.0f, keepProb))) out[i].note = kEmptyNote;
-        }
-    }
-
-    if (sh.questionAnswer) {
-        if (bar % 8 == kQuestionBar) {
-            for (int i = kQuestionGapStart; i < kQuestionGapEnd; i++) out[i].note = kEmptyNote;
-        } else if (bar % 8 == kAnswerBar) {
-            MS fill = mn(kEmptyNote, 0.f, 0, 0);
-            for (int i = 0; i < bli::kStepsPerBar && fill.note < 0; i++)
-                if (out[i].note >= 0) fill = out[i];
-            if (fill.note >= 0) {
-                for (int i = kQuestionGapStart; i < kQuestionGapEnd; i++)
-                    if (out[i].note < 0 && randChance(kAnswerFillProb)) out[i] = fill;
-            }
-        }
-    }
-
-    const int barInSection = bar % kBarsPerSection;
-    const int secInPhrase  = bar / kBarsPerSection;
-    // Capped: driving notes onto odd 16ths is a funk/breakbeat device. A full-on or psygressive
-    // bass is metrically straight -- its energy comes from the roll, not from syncopation.
-    const float syncTarget = std::min(kSyncTargetCap, sh.syncTarget *
-        (barInSection >= kBarsPerSection - kSyncBoundaryBars ? kSyncBoundaryGain : kSyncBodyScale));
-
-    if (syncTarget > 0.f) {
-        for (int pass = 0; pass < kSyncAdjustPasses; pass++) {
-            const float frac = syncopationFraction(out);
-            if (frac >= syncTarget - kSyncTolerance && frac <= syncTarget + kSyncTolerance) break;
-            const bool needMore = frac < syncTarget;
-            bool moved = false;
-            for (int i = 0; i < bli::kStepsPerBar; i++) {
-                const bool offGrid = (i % 2 != 0);
-                if (needMore == offGrid) continue;
-                if (out[i].note < 0) continue;
-                const int target = needMore ? i + 1 : i - 1;
-                if (target < 0 || target >= bli::kStepsPerBar) continue;
-                const MS tmp = out[target];
-                out[target] = out[i];
-                out[i] = tmp;
-                moved = true;
-                break;
-            }
-            if (!moved) break;
-        }
-    }
-
-    const int editCount = (int)(sh.mutatePerBar * 2.0f + rand01());
-    for (int e = 0; e < editCount; e++) {
-        const int i = randBelow(bli::kStepsPerBar);
-        if (out[i].note < 0) continue;
-        switch (randBelow(3)) {
-            case 0: {
-                const int diatonicThird = std::max(1, bli::scaleDegree(scIdx, 2));
-                const int shift = randChance(0.5f) ? kFifthSemitones : diatonicThird;
-                out[i].note += randChance(0.5f) ? shift : -shift;
-                break;
-            }
-            case 1:
-                out[i].note = kEmptyNote;
-                break;
-            default: {
-                const int j = (i + 1) % bli::kStepsPerBar;
-                const MS tmp = out[i];
-                out[i] = out[j];
-                out[j] = tmp;
-                break;
-            }
-        }
-    }
-
-    if (randChance(sh.octaveJumpProb)) {
-        for (int i = 0; i < bli::kStepsPerBar; i++)
-            if (out[i].note >= 0 && randChance(kOctaveJumpStepProb)) out[i].note += kOctaveSemitones;
-    }
-
-    if (sh.pickups && bar % sh.cellBars == sh.cellBars - 1 && randChance(kPickupProb)) {
-        const int last = bli::kStepsPerBar - 1;
-        if (out[last].note < 0) {
-            MS lead = mn(kEmptyNote, 0.f, 0, 0);
-            for (int i = last; i >= 0; i--)
-                if (out[i].note >= 0) { lead = out[i]; break; }
-            if (lead.note >= 0) {
-                out[last] = lead;
-                out[last].len = kPickupLengthSteps;
-                out[last].vel = std::max(1, out[last].vel - kPickupVelDrop);
-            }
-        }
-    }
-
-    const float barPhase = (float)barInSection / (float)kBarsPerSection;
-    const float velLfo   = std::sin(kTwoPi * barPhase);
-    const float filtLfo  = std::sin(kTwoPi * barPhase + kQuarterTurn);
-
-    const float microDepth = std::min(1.0f, sh.timingSteps / kMicroTimingFullDepth);
-
-    for (int i = 0; i < bli::kStepsPerBar; i++) {
-        if (out[i].note < 0) continue;
-        out[i].len = std::max(sh.minGateSteps, out[i].len * sh.gate);
-        out[i].vel = std::max(1, std::min(127,
-            out[i].vel + (int)(velLfo * sh.velDrift) + (randBelow(kVelocityWobble * 2 + 1) - kVelocityWobble)
-            + ((sh.accentMask >> i) & 1 ? kAccentVelocityBoost : -kAccentVelocityDrop)));
-        out[i].fcc = std::max(0, std::min(127,
-            out[i].fcc + (int)(filtLfo * sh.filtSweepDepth) + (int)kSectionFilterRise[secInPhrase]));
-        out[i].tsBeats += (bli::microOffsetForStep(i) * microDepth + sh.voiceOffsetSteps)
-                          / (float)kStepsPerBeat;
-    }
-
-    insertGhosts(out, sh);
-
-    clampRange(out, root);
+    for (int64_t t = m_lastTick + 1; t <= now; ++t) tick(t);
+    m_lastTick = now;
 }
 
-// A held figure must not be a frozen one: the loop stays recognisable while the velocity and
-// cutoff breathe under it, so a 4-bar hold still feels played rather than sampled.
-void BassEngine::varyRepeat(MS m[bli::kStepsPerBar], int bar, const ApproachShape& sh) {
-    static constexpr float kTwoPiLocal   = 6.28318530717958647692f;
-    static constexpr float kQuarterLocal = 1.57079632679489661923f;
-
-    const float phase    = (float)(bar % 8) / 8.f;
-    const int   velNudge = (int)(std::sin(kTwoPiLocal * phase) * 4.f);
-    const int   fccNudge = (int)(std::sin(kTwoPiLocal * phase + kQuarterLocal) * 6.f);
-
-    for (int i = 0; i < bli::kStepsPerBar; i++) {
-        if (m[i].note < 0) continue;
-        m[i].vel = std::max(1, std::min(127, m[i].vel + velNudge));
-        m[i].fcc = std::max(0, std::min(127, m[i].fcc + fccNudge));
+void BassEngine::tick(int64_t t) {
+    if (t % (static_cast<int64_t>(m_loopSteps) * ctl::kTicksPerStep) == 0) {
+        for (int c = 0; c < ctl::kControlCount; ++c) m_track[c].turnaround();
+        m_loopSteps = m_pendingLoopSteps;
     }
+    const int64_t loopTicks = static_cast<int64_t>(m_loopSteps) * ctl::kTicksPerStep;
+    const int64_t p = t % loopTicks;
 
-    if (sh.ghostProb > 0.f && randChance(0.25f)) {
-        const int last = bli::kStepsPerBar - 1;
-        if (m[last].note < 0) {
-            for (int i = last - 1; i >= 0; i--) {
-                if (m[i].note >= 0) {
-                    m[last] = m[i];
-                    m[last].vel = kGhostVelocity;
-                    m[last].len = kGhostLengthSteps;
-                    break;
-                }
-            }
-        }
+    if (p % ctl::kTicksPerStep == 0) {
+        stepBoundary(static_cast<int>(p / ctl::kTicksPerStep));
+    }
+    endDueNotes(t);
+
+    const int period = ctl::arpPeriodTicks(ctl::arpSpeedIndexForDial(m_frame[SET_ARP]));
+    if (p % period == 0) {
+        arpEvent(static_cast<int>(p / ctl::kTicksPerStep), p, period, t);
+    }
+    if (p % kLfoEveryTicks == 0) {
+        sendLfoAndFilter(p);
     }
 }
 
-void BassEngine::regeneratePhrase(bool advanceArc) {
-    if (advanceArc) m_phraseCount++;
-    m_phrase.clear();
-
-    const bli::Dials voice = dialsForApproach();
-
-    if (m_scaleHoldPhrasesRemaining <= 0) {
-        int base = voice.pickScaleIdx();
-        int jitter = randChance(kScaleJitterProbability) ? (randBelow(kScaleJitterRange) - 1) : 0;
-        m_scaleIdx = std::max(0, std::min(bli::kNumScales - 1, base + jitter));
-        m_scaleHoldPhrasesRemaining = kScaleHoldMinPhrases + randBelow(kScaleHoldRangePhrases);
-    } else {
-        m_scaleHoldPhrasesRemaining--;
+void BassEngine::stepBoundary(int step) {
+    for (int c = 0; c < ctl::kControlCount; ++c) {
+        m_frame[c] = m_track[c].valueAt(step, m_live[c]);
     }
-    m_progIdx = randBelow(kNumProgs);
-    const int* prog = kChordDegreeProgs[m_progIdx];
-
-    MS motA[bli::kStepsPerBar], motB[bli::kStepsPerBar], motC[bli::kStepsPerBar], motD[bli::kStepsPerBar];
-    MS freshA[bli::kStepsPerBar];
-    genInterpreted(freshA, kRootNoteE2, m_scaleIdx, voice);
-
-    if (m_hasPrevPhraseMotif) {
-        for (int i = 0; i < bli::kStepsPerBar; i++) {
-            if (freshA[i].note >= 0 && m_prevPhraseMotifA[i].note >= 0 &&
-                randChance(kMotifBlendProbability))
-                motA[i] = m_prevPhraseMotifA[i];
-            else
-                motA[i] = freshA[i];
-        }
-    } else {
-        memcpy(motA, freshA, sizeof(motA));
+    if (step == 0) {
+        // The loop window is applied at the next turnaround, so a change never cuts a pass short.
+        m_pendingLoopSteps = ctl::loopBarsForDial(m_frame[SET_WINDOW]) * ctl::kStepsPerBar;
     }
-    memcpy(m_prevPhraseMotifA, motA, sizeof(motA));
-    m_hasPrevPhraseMotif = true;
-
-    anchorMotif(motA, kRootNoteE2, m_scaleIdx);
-
-    int arc = m_phraseCount % kArcPeriodPhrases;
-    int xformB = (arc < 2) ? MOTIF_SIMPLIFY : (arc < 5) ? MOTIF_MODAL_SHIFT
-                                                        : randBelow(kMotifTransformCount);
-    int xformC = (arc < 3) ? MOTIF_SIMPLIFY : (arc < 6) ? MOTIF_SUB_DROP
-                                                        : randBelow(kMotifTransformCount);
-    transformMotif(motA, motB, xformB, kRootNoteE2, m_scaleIdx); clampRange(motB, kRootNoteE2);
-    transformMotif(motA, motC, xformC, kRootNoteE2, m_scaleIdx); clampRange(motC, kRootNoteE2);
-    transformMotif(motA, motD, MOTIF_DRIFT, kRootNoteE2, m_scaleIdx); clampRange(motD, kRootNoteE2);
-
-    float varVal = voice.motionVariation;
-    const char* structure;
-    float rnd = rand01();
-    if      (varVal < 0.2f) structure = "AAAD";
-    else if (varVal < 0.5f) structure = (rnd < 0.6f) ? "AAAB" : "ABAB";
-    else if (varVal < 0.8f) structure = (rnd < 0.5f) ? "ABAC" : "AAAB";
-    else                    structure = "ABAC";
-
-    int secProgs[kSectionsPerPhrase] = {m_progIdx, (m_progIdx + 1) % kNumProgs,
-                                        (m_progIdx + 2) % kNumProgs, m_progIdx};
-    secProgs[kBridgeSection] = randBelow(kNumProgs);
-    secProgs[kPeakSection]   = randBelow(kNumProgs);
-
-    const ApproachShape& sh = shapeFor(m_approach);
-    const int cellBars = std::max(1, sh.cellBars);
-    const float swingSteps = std::min(kMaxSwingSteps, sh.swingSteps);
-
-    int distinctBars = 0;
-    int syncPermilleSum = 0;
-    int noteMin = 127;
-    int noteMax = 0;
-    uint32_t barHash[kBarsPerPhrase] = {};
-    int seenCount = 0;
-
-    MS heldFigure[bli::kStepsPerBar] = {};
-    int figureKeyHeld = -1;
-
-    for (int bar = 0; bar < kBarsPerPhrase; bar++) {
-        if (bar == 0) s_prevBarRested = false;
-        int sec       = bar / kBarsPerSection;
-        int cellIdx   = (bar / cellBars) % kBarsPerChordCell;
-
-        const int* secProg = kChordDegreeProgs[secProgs[sec]];
-        int rootSemitoneOffset = scaleDegreeSemitones(m_scaleIdx, secProg[cellIdx]);
-
-        char part;
-        if (sec == kFirstSection || sec == kLastSection) {
-            part = structure[cellIdx];
-        } else if (sec == kBridgeSection) {
-            static const char BRIDGE[kBarsPerChordCell] = {'B','A','B','A'};
-            part = BRIDGE[cellIdx];
-        } else {
-            static const char PEAK[kBarsPerChordCell]   = {'C','B','C','B'};
-            part = PEAK[cellIdx];
-        }
-
-        const MS* motif = (part=='A') ? motA : (part=='B') ? motB :
-                          (part=='C') ? motC : motD;
-
-        MS rotated[bli::kStepsPerBar];
-        if (sh.phaseShiftBars > 0) {
-            rotateMotif(motif, rotated, (bar / sh.phaseShiftBars) % bli::kStepsPerBar);
-            motif = rotated;
-        }
-
-        MS barMotif[bli::kStepsPerBar];
-        const bool isDropBar  = (bar % kDropBarPeriod == kDropBarIndex);
-        const int  figureKey  = (bar / sh.repeatBars) * 2 + (isDropBar ? 1 : 0);
-        if (figureKey != figureKeyHeld) {
-            shapeBar(heldFigure, motif, bar, kRootNoteE2, m_scaleIdx);
-            memcpy(barMotif, heldFigure, sizeof(barMotif));
-            // A rest is never held. restBarProb silences the shape it lands on, and holding that
-            // turns a one-bar breath into repeatBars bars of dead air — STAB opened with 8 silent
-            // bars before this. Leaving the key unheld re-shapes every bar until a real figure
-            // appears, which is the pre-hold behaviour.
-            bool anyNote = false;
-            for (int i = 0; i < bli::kStepsPerBar; i++) {
-                if (heldFigure[i].note >= 0) { anyNote = true; break; }
-            }
-            figureKeyHeld = anyNote ? figureKey : -1;
-        } else {
-            memcpy(barMotif, heldFigure, sizeof(barMotif));
-            varyRepeat(barMotif, bar, sh);
-        }
-
-        uint32_t h = 2166136261u;
-        for (int i = 0; i < bli::kStepsPerBar; i++) {
-            h = (h ^ (uint32_t)(barMotif[i].note + 1)) * 16777619u;
-            h = (h ^ (uint32_t)(int)(barMotif[i].tsBeats * 64.f)) * 16777619u;
-        }
-        bool dup = false;
-        for (int k = 0; k < seenCount; k++) if (barHash[k] == h) { dup = true; break; }
-        if (!dup) barHash[seenCount++] = h;
-        if (!dup) distinctBars++;
-        syncPermilleSum += (int)(syncopationFraction(barMotif) * 1000.f);
-
-        for (int i = 0; i < bli::kStepsPerBar; i++) {
-            if (barMotif[i].note < 0) continue;
-            int note = barMotif[i].note + rootSemitoneOffset;
-            while (note > kBassHighNote) note -= kOctaveSemitones;
-            while (note < kBassLowNote)  note += kOctaveSemitones;
-            note = std::max(0, std::min(127, note));
-            noteMin = std::min(noteMin, note);
-            noteMax = std::max(noteMax, note);
-
-            float tsSteps = barMotif[i].tsBeats * kStepsPerBeat;
-            float basePos = (float)(bar * bli::kStepsPerBar + i);
-            float posInSteps = basePos + tsSteps;
-
-            if (i % 2 != 0) posInSteps += swingSteps;
-            if (posInSteps < 0.f) posInSteps = 0.f;
-
-            m_phrase.push_back({posInSteps, note, barMotif[i].len, barMotif[i].vel,
-                                 barMotif[i].fcc, barMotif[i].pbSemitones});
-        }
+    const float shift = ctl::filterShiftForDial(m_frame[SET_FILTER]);
+    const int cc = std::clamp(64 + static_cast<int>(std::lround(shift * 64.0f)), 0, 127);
+    if (cc != m_lastFilterCc) {
+        send_midi_cc(kChannelOne, kCcFilter, static_cast<uint8_t>(cc));
+        m_lastFilterCc = cc;
     }
-
-    m_phrase.erase(std::remove_if(m_phrase.begin(), m_phrase.end(),
-        [](const NoteSlot& n) { return n.posInSteps >= kTurnaroundStartStep; }), m_phrase.end());
-
-    int turnaroundRate = (voice.voiceArtic > kArticulatedTurnaroundThreshold)
-                         ? kFrequentTurnaroundPeriodPhrases : kSparseTurnaroundPeriodPhrases;
-    if (m_phraseCount % turnaroundRate == 0) {
-        int baseSemitoneOffset =
-            scaleDegreeSemitones(m_scaleIdx, prog[(kBarsPerSection - 1) % kBarsPerChordCell]);
-        int tBase = std::max(0, std::min(127, kRootNoteE2 + baseSemitoneOffset));
-        turnInterpreted(tBase, m_scaleIdx, voice);
-    }
-
-    std::sort(m_phrase.begin(), m_phrase.end(),
-              [](const NoteSlot& a, const NoteSlot& b) {
-                  return a.posInSteps < b.posInSteps;
-              });
-
-    ESP_LOGI(TAG, "Phrase[%d] approach=%d bank=%d scale=%s prog=%d notes=%d bars=%d"
-                  " uniq=%d sync=%d reg=%d..%d",
-             m_phraseCount, m_approach, m_activeBank, bli::scaleName(m_scaleIdx), m_progIdx,
-             (int)m_phrase.size(), kBarsPerPhrase, distinctBars,
-             syncPermilleSum / kBarsPerPhrase,
-             noteMin <= noteMax ? noteMin : 0, noteMin <= noteMax ? noteMax : 0);
 }
 
-void BassEngine::playNote(const NoteSlot& n, double bpm) {
-    int note = std::max(0, std::min(127, n.note));
-    int vel  = std::max(1, std::min(127, n.velocity));
-    int fcc  = std::max(0, std::min(127, n.filterCC74));
+void BassEngine::arpEvent(int step, int64_t loopTick, int period, int64_t t) {
+    // Onset from the rhythm pattern.
+    const uint32_t rhythm = ctl::stepPattern(ctl::rhythmForDial(m_frame[SET_RHYTHM]));
+    if (!((rhythm >> (step % 32)) & 1u)) return;
 
-    uint8_t noteOn[3] = {kMidiNoteOn, (uint8_t)note, (uint8_t)vel};
-    send_midi_message(noteOn, 3);
+    const float gate = ctl::gateWidthForDial(m_frame[SET_GATE]);
+    if (gate <= 0.0f) return;
 
-    send_midi_cc(1, kMidiCCFilter, (uint8_t)fcc);
+    // Volume modulation: the trance-gate series, and the fake sidechain that skips the first
+    // sixteenth of every beat.
+    const uint32_t series = ctl::tranceGate(ctl::gateSeriesForDial(m_frame[SET_SERIES]),
+                                            m_entrySeed[SET_SERIES]);
+    if (!((series >> (step % 32)) & 1u)) return;
+    if (step % 4 == 0) return;
 
-    int raw = kPitchBendCentreRaw;
-    if (n.pitchBendSemitones != 0.f) {
-        raw = kPitchBendCentreRaw + (int)(n.pitchBendSemitones / kPitchBendSemitoneSpan
-                                          * kPitchBendHalfRange);
-        raw = std::max(0, std::min(kPitchBendRawMax, raw));
+    // Pitch from the arp, around the selected pitch.
+    const int64_t k = loopTick / period;
+    int offsets[kMaxArpOffsets];
+    const int n = arpOffsets(m_frame[SET_WIDTH], offsets);
+    const int offset = offsets[k % n];
+
+    const int scale = ctl::scaleForDial(m_frame[SET_SCALE]);
+    const int size = ctl::scaleSize(scale);
+    const int degree = static_cast<int>(std::lround(ctl::pitchOctaveForDial(m_frame[SET_PITCH]) *
+                                                    static_cast<float>(size))) + offset;
+    const int octaveOfDegree = floorDiv(degree, size);
+    const int index = degree - octaveOfDegree * size;
+    int note = kRootNote + 12 * octaveOfDegree + ctl::scaleSemitone(scale, index);
+    note += 12 * ctl::octaveForDial(m_frame[SET_OCTAVE]);
+
+    // Random octave, drop-out and aberration: deterministic for each position and entry seed.
+    const uint32_t s  = static_cast<uint32_t>(step);
+    const uint32_t kk = static_cast<uint32_t>(k);
+    if (ctl::hashUnit(m_entrySeed[SET_RAND_OCT], s, kk) < ctl::probabilityForDial(m_frame[SET_RAND_OCT])) {
+        note += (ctl::hash32(m_entrySeed[SET_RAND_OCT], s + 101u, kk) & 1u) ? 12 : -12;
     }
-    static int s_last_pitch_bend_raw = -1;
-    if (raw != s_last_pitch_bend_raw) {
-        const uint8_t pb[3] = {kMidiPitchBend, (uint8_t)(raw & 0x7F), (uint8_t)((raw >> 7) & 0x7F)};
-        send_midi_message(pb, 3);
-        s_last_pitch_bend_raw = raw;
+    if (ctl::hashUnit(m_entrySeed[SET_RAND_DROP], s, kk) < ctl::probabilityForDial(m_frame[SET_RAND_DROP])) {
+        return;
     }
+    if (ctl::hashUnit(m_entrySeed[SET_ABERRATION], s, kk) < ctl::aberrationForDial(m_frame[SET_ABERRATION])) {
+        const uint32_t h = ctl::hash32(m_entrySeed[SET_ABERRATION], s + 211u, kk);
+        const int magnitude = 1 + static_cast<int>(h % 3u);
+        note += (h & 0x100u) ? magnitude : -magnitude;
+    }
+    note = std::clamp(note, 0, 127);
 
-    double offPosInSteps = n.posInSteps + n.lengthInSteps;
-    m_activeNotes.push_back({note, offPosInSteps});
+    const int length = std::max(1, static_cast<int>(std::lround(static_cast<float>(period) * gate)));
+    sendNoteOn(note);
+    m_activeNotes.push_back({note, t + length});
 }
 
-void BassEngine::processNoteOffs(double phrasePosInSteps, double) {
-    for (auto it = m_activeNotes.begin(); it != m_activeNotes.end(); ) {
-        double diff = phrasePosInSteps - it->offPosInSteps;
-        if (diff >= 0.0 || diff < kWrapBackwardThreshold) {
-            uint8_t noteOff[3] = {kMidiNoteOff, (uint8_t)it->note, 0x00};
-            send_midi_message(noteOff, 3);
+void BassEngine::sendLfoAndFilter(int64_t loopTick) {
+    const float cycles = ctl::lfoCyclesPerBarForDial(m_frame[SET_LFO_SPEED]);
+    const float bars = static_cast<float>(loopTick) / static_cast<float>(ctl::kTicksPerBar);
+    float frac = bars * cycles;
+    frac -= std::floor(frac);
+    const float shape = lfoShape(ctl::lfoTypeForDial(m_frame[SET_LFO_TYPE]), frac);
+    const float depth = ctl::lfoWidthForDial(m_frame[SET_LFO_WIDTH]);
+    const int cc = std::clamp(64 + static_cast<int>(std::lround(depth * 63.0f * (2.0f * shape - 1.0f))),
+                              0, 127);
+    if (cc != m_lastLfoCc) {
+        send_midi_cc(kChannelOne, kCcModWheel, static_cast<uint8_t>(cc));
+        m_lastLfoCc = cc;
+    }
+}
+
+void BassEngine::endDueNotes(int64_t t) {
+    for (auto it = m_activeNotes.begin(); it != m_activeNotes.end();) {
+        if (it->offTick <= t) {
+            sendNoteOff(it->note);
             it = m_activeNotes.erase(it);
         } else {
             ++it;
@@ -730,117 +254,26 @@ void BassEngine::processNoteOffs(double phrasePosInSteps, double) {
     }
 }
 
-BassEngine::BassEngine() = default;
-
-void BassEngine::setActiveBank(int bank) {
-    if (bank < 0 || bank >= bli::BANK_COUNT) return;
-    m_activeBank = bank;
-
-    if (!m_active) {
-        m_active = true;
-        m_lastPhrasePosSteps       = kNoPhrasePositionYet;
-        m_lastBarInPhrase          = kNoBarYet;
-        m_regenPending             = false;
-        m_phraseCount              = 0;
-        m_hasPrevPhraseMotif       = false;
-        m_scaleHoldPhrasesRemaining = 0;
-        regeneratePhrase();
-    }
-    ESP_LOGI(TAG, "Bank set to %d", m_activeBank);
-}
-
-void BassEngine::setApproach(int approach) {
-    if (approach < APP_ROLL || approach >= APP_COUNT) return;
-    m_approach = approach;
-    m_activeBank = std::min(bli::BANK_COUNT - 1, approach / 2);
-
-    if (!m_active) {
-        m_active = true;
-        m_lastPhrasePosSteps       = kNoPhrasePositionYet;
-        m_lastBarInPhrase          = kNoBarYet;
-        m_regenPending             = false;
-        m_phraseCount              = 0;
-        m_hasPrevPhraseMotif       = false;
-        m_scaleHoldPhrasesRemaining = 0;
-        regeneratePhrase();
-    } else {
-        m_hasPrevPhraseMotif        = false;
-        m_scaleHoldPhrasesRemaining = 0;
-        m_regenPending = true;
-    }
-    ESP_LOGI(TAG, "Approach set to %d (bank %d)", m_approach, m_activeBank);
-}
-
-void BassEngine::setDial(int dialIdx, float v01) {
-    m_dials.set(m_activeBank, dialIdx, v01);
-    if (m_active) m_regenPending = true;
-}
-
-void BassEngine::nudge() {
-    if (m_active) m_regenPending = true;
-}
-
 void BassEngine::stop() {
     m_active = false;
-    uint8_t allOff[3] = {kMidiControlChange, kMidiCCAllNotesOff, 0};
-    send_midi_message(allOff, 3);
+    m_lastTick = -1;
+    m_lastFilterCc = -1;
+    m_lastLfoCc = -1;
+    allNotesOff();
+}
+
+void BassEngine::allNotesOff() {
+    for (const ActiveNote& n : m_activeNotes) sendNoteOff(n.note);
     m_activeNotes.clear();
-    ESP_LOGI(TAG, "Engine stopped");
+    send_midi_cc(kChannelOne, kCcAllNotesOff, 0);
 }
 
-void BassEngine::process(const ableton::Link::SessionState& state,
-                         const std::chrono::microseconds& time) {
-    if (!m_active) return;
-
-    double bpm = state.tempo();
-    double beat = state.beatAtTime(time, LINK_QUANTUM);
-    if (beat < 0.0) return;
-
-    double phrasePosInSteps = std::fmod(beat * kStepsPerBeat, kStepsPerPhrase);
-
-    if (m_lastPhrasePosSteps >= 0.0 &&
-        phrasePosInSteps < m_lastPhrasePosSteps - kHalfPhraseSteps) {
-        regeneratePhrase(true);
-        m_regenPending = false;
-        m_lastBarInPhrase = kNoBarYet;
-    }
-
-    int currentBarInPhrase = static_cast<int>(phrasePosInSteps / bli::kStepsPerBar);
-    if (m_regenPending && m_lastBarInPhrase >= 0 && currentBarInPhrase != m_lastBarInPhrase) {
-        regeneratePhrase(false);
-        m_regenPending = false;
-    }
-    m_lastBarInPhrase = currentBarInPhrase;
-
-    if (m_lastPhrasePosSteps < 0.0) {
-        m_lastPhrasePosSteps = phrasePosInSteps;
-        return;
-    }
-
-    processNoteOffs(phrasePosInSteps, bpm);
-
-    const PhraseAdvance advance = phraseAdvance(m_lastPhrasePosSteps, phrasePosInSteps, kStepsPerPhrase);
-    const double advanceSteps = advance.steps;
-    const bool wrapped = advance.wrapped;
-    if (advanceSteps > kMaxAdvanceStepsPerProcess) {
-        ESP_LOGW(TAG, "phrase position jumped %.1f steps -- reseating, not replaying", advanceSteps);
-        m_lastPhrasePosSteps = phrasePosInSteps;
-        return;
-    }
-
-    for (const auto& n : m_phrase) {
-        bool due;
-        if (!wrapped) {
-            due = (n.posInSteps > m_lastPhrasePosSteps && n.posInSteps <= phrasePosInSteps);
-        } else {
-            due = (n.posInSteps > m_lastPhrasePosSteps || n.posInSteps <= phrasePosInSteps);
-        }
-        if (due) {
-            playNote(n, bpm);
-        }
-    }
-
-    m_lastPhrasePosSteps = phrasePosInSteps;
+void BassEngine::sendNoteOn(int note) {
+    const uint8_t msg[3] = {kNoteOnStatus, static_cast<uint8_t>(note), 100};
+    send_midi_message(msg, 3);
 }
 
-BassEngine g_bassEngine;
+void BassEngine::sendNoteOff(int note) {
+    const uint8_t msg[3] = {kNoteOffStatus, static_cast<uint8_t>(note), 0};
+    send_midi_message(msg, 3);
+}
