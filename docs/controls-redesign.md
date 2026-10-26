@@ -38,8 +38,8 @@ that pad's double settings. Releasing the pad returns them to the single setting
 1. **Approach names** (ROLL, ACID and the rest) are removed. Their pads now carry the new settings.
 2. **The loop replaces the 64-bar phrase.** The loop is the phrase.
 3. **Adjustment period** means "touched at the turnaround". A different reading changes the recorder only.
-4. **Clearing a persistent setting** is not yet a gesture in firmware: `ctl::LoopTrack::clear()` exists, but no pad
-   or dial calls it.
+4. **Clearing** is three pads pressed together: it clears every recording and the sounding notes. Two pads
+   held together turn fill on, which snapshots the sounding sixteenths into a mute mask kept until a clear.
 5. **Fake sidechain** is series 0 of the volume-modulation dial: it skips the first sixteenth of every
    beat. It is part of the dial's range, not always on, so a fully open gate is reachable.
 6. **Volume-modulation dial range:** series 0 fake sidechain, 1-8 repetitive tilings (8 is fully open,
@@ -55,4 +55,6 @@ that pad's double settings. Releasing the pad returns them to the single setting
 
 - Hardware check of the new control map on the board. The host witnesses cover the model and the engine's output,
   not the synths.
-- The clear gesture (item 4 above).
+- Old synth drivers (`synth_mininova.cpp`, `synth_microkorg.cpp`) are still in the build though the sequencer
+  does not call them; removing them would stop any stray patch or CC traffic.
+- Whether the Pi's aloop should also carry the loop; the port-4447 phrase message was withdrawn.
