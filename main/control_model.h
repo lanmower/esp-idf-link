@@ -1,103 +1,80 @@
-// Control model for the bassline: the 8-bar loop, the 4 pads with single and double-tap
-// functions, the two dials, and the automation that is recorded while a dial is being moved.
+// Control model for the bassline sequencer: an 8-bar loop, four pads with a single-tap and a
+// double-tap setting each, two dials, and the automation recorded while a dial is being moved.
 //
-// Host-compilable: only <cstdint> and <cstddef> are included, so the witness in
-// tools/control_model_witness.cpp exercises this code off-device.
+// Host-compilable: only <cstdint> is included, so tools/control_model_witness.cpp exercises it
+// off-device.
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 
 namespace ctl {
 
-// The loop is 8 bars of 16 sixteenths. Every recording lands on this grid.
-constexpr int kStepsPerBar = 16;
-constexpr int kLoopBars = 8;
-constexpr int kLoopSteps = kStepsPerBar * kLoopBars;  // 128
+constexpr int kStepsPerBar  = 16;                           // sixteenths per bar
+constexpr int kTicksPerStep = 12;                           // scheduler ticks per sixteenth
+constexpr int kTicksPerBar  = kStepsPerBar * kTicksPerStep;
+constexpr int kLoopBars     = 8;
+constexpr int kLoopSteps    = kStepsPerBar * kLoopBars;     // 128 steps: the largest loop
 
-// Pads are indexed 0..3 in the order state_machine.cpp numbers them (APPROACH_FOR_PAD).
-constexpr int kPadCount = 4;
+constexpr int kPadCount     = 4;
+constexpr int kControlCount = 16;                           // 8 single-tap, 8 double-tap settings
 
-// Single-tap modes, one per pad. The two dials control the pair of parameters the mode names.
-enum SingleMode : uint8_t {
-    SINGLE_SCALE_WIDTH = 0,  // dial A: scale (friendly list only); dial B: width, held pitch -> arp
-    SINGLE_PITCH_RHYTHM,     // dial A: pitch offset, -1 to +1 octave along the scale; dial B: 32-step rhythm
-    SINGLE_LFO,              // dial A: LFO type; dial B: LFO speed, on the mod wheel
-    SINGLE_GATE_OCTAVE,      // dial A: trance-gate series; dial B: octave, -3 to +3
-    SINGLE_MODE_COUNT
-};
+// Setting index: single-tap pad p, dial d is p*2+d; double-tap pad p, dial d is 8+p*2+d.
+constexpr int controlIndex(bool doubleTap, int pad, int dial) {
+    return (doubleTap ? 8 : 0) + pad * 2 + dial;
+}
 
-// Double-tap modes, one per pad, active while the pad is held.
-enum DoubleMode : uint8_t {
-    DOUBLE_GATE_ARP = 0,     // dial A: gate width 0 to 100%; dial B: arp speed (half, quarter, double, triplet, quad)
-    DOUBLE_OCTAVE_DROP,      // dial A: random octave up/down likelihood; dial B: random note drop-out
-    DOUBLE_LFO_FILTER,       // dial A: LFO width; dial B: filter shift, -100% to +100%
-    DOUBLE_LOOP_ABERRATION,  // dial A: loop window length; dial B: chromatic aberration quantity
-    DOUBLE_MODE_COUNT
-};
+// Friendly scales, EDM and psytrance suited. Scale indices run 0..kScaleCount-1.
+constexpr int kScaleCount = 6;
+int scaleSize(int scale);
+int scaleSemitone(int scale, int degree);
 
-// Friendly scales: the subset of the nine bassline scales that suits EDM and psytrance. Indices
-// are the bassline_interpreter scale indices (aeolian, phrygian, minorPentatonic, phrygianDom,
-// harmonicMinor, hungarianMinor).
-constexpr int kFriendlyScaleCount = 6;
-extern const int kFriendlyScales[kFriendlyScaleCount];
-bool isFriendlyScale(int scaleIdx);
-// Maps a dial position in [0, 1] to a friendly scale index.
-int friendlyScaleForDial(float dial01);
+// Dial mappings: each takes a dial position in [0, 1].
+int   scaleForDial(float v);            // friendly scale index
+float widthForDial(float v);            // 0 = held pitch, 1 = widest arp
+float pitchOctaveForDial(float v);      // -1 .. +1 octave along the scale
+int   rhythmForDial(float v);           // 32-step rhythm pattern index
+int   lfoTypeForDial(float v);          // 0 sine, 1 triangle, 2 saw, 3 square
+float lfoCyclesPerBarForDial(float v);  // 0.25 .. 4 cycles per bar
+float gateWidthForDial(float v);        // 0 .. 1 of the arp period
+int   arpSpeedIndexForDial(float v);    // 0 half, 1 quarter, 2 double, 3 triplet, 4 quad
+int   arpPeriodTicks(int arpIndex);     // ticks between arp notes
+float probabilityForDial(float v);      // 0 .. 1 (random octave, drop-out, aberration)
+float lfoWidthForDial(float v);         // -1 .. +1 depth on the mod wheel
+float filterShiftForDial(float v);      // -1 .. +1 around the centre cutoff
+int   gateSeriesForDial(float v);       // 0 .. 31 trance-gate series
+int   octaveForDial(float v);           // -3 .. +3
+int   loopBarsForDial(float v);         // 1 .. 8 bars
+float aberrationForDial(float v);       // 0 .. 1
 
-// The 32-step bank. Pattern i is the Euclidean rhythm E(i + 1, 32): onsets spread as evenly as
-// possible over 32 sixteenths. Bit n is step n.
-constexpr int kStepPatternCount = 32;
+// The 32-step bank. Pattern i is the Euclidean rhythm E(i + 1, 32); bit n is step n.
+constexpr int kRhythmPatternCount = 32;
 uint32_t stepPattern(int index);
-int stepPatternForDial(float dial01);
 
-// Trance-gate series (volume modulation, 32 steps). Indices 0..7 are repetitive and short,
-// 8..23 are polyrhythmic Euclidean, 24..31 are random. The random patterns are seeded from the
-// entry seed, so the same entry always gives the same pattern, and a new change gives a new seed.
+// Trance-gate series (volume modulation, 32 steps). 0..7 repetitive, 8..23 polyrhythmic,
+// 24..31 random, seeded by the entry seed so each new change gives a new pattern.
 constexpr int kGateSeriesCount = 32;
 uint32_t tranceGate(int seriesIndex, uint32_t entrySeed);
-int tranceGateIndexForDial(float dial01);
 
-// Octave shift for the octave dial, -3 to +3.
-int octaveShiftForDial(float dial01);
+// Deterministic hashing, so a seeded pattern is repeated exactly.
+uint32_t hash32(uint32_t a, uint32_t b, uint32_t c);
+float    hashUnit(uint32_t a, uint32_t b, uint32_t c);   // [0, 1)
 
-// Gate width for double-tap A on pad 0, 0 (nothing) to 1 (100%).
-float gateWidthForDial(float dial01);
-
-// Arp speed for double-tap B on pad 0. Returns the multiplier as numerator over denominator in
-// sixteenths of a step: half = 1/2, quarter = 1/4, double = 2, triplet = 3/2 (three notes in the
-// time of two), quad = 4.
-struct ArpSpeed {
-    int numerator;
-    int denominator;
-};
-ArpSpeed arpSpeedForDial(float dial01);
-
-// Filter shift, -1 (full down) to +1 (full up), from the dial position.
-float filterShiftForDial(float dial01);
-
-// LFO type index for the single-tap LFO mode, 0..(kLfoTypeCount - 1).
-constexpr int kLfoTypeCount = 4;
-int lfoTypeForDial(float dial01);
-
-// Loop automation for one setting (one dial in one mode). This is the KO2-style recording rule:
-//   - while the setting is touched, each step's value is written to the track at the playhead;
-//   - at the loop turnaround, a setting that is still touched becomes persistent: its track is
-//     kept and replayed on every later pass, and the touch keeps overwriting it;
-//   - a setting that is not touched at the turnaround and is not persistent reverts to its
-//     baseline, which is the value it had at the start of the loop;
-//   - a persistent track that is not being touched keeps replaying, until it is cleared.
+// Automation for one setting. KO2-style recording:
+//   - while the setting is touched, each step's value is written to the track and played live;
+//   - once a dial is released, its value is held until the loop turns around;
+//   - at the turnaround, a setting that is still touched becomes persistent: its track is kept
+//     and replayed on every later pass, and touching it again overwrites the positions it passes;
+//   - a setting that is not touched and not persistent reverts to its baseline;
+//   - a persistent track that is not touched keeps replaying, until it is cleared.
 class LoopTrack {
 public:
     void setBaseline(float value);
     float baseline() const { return baseline_; }
 
-    // Touch state for the current pass.
     void setTouched(bool touched);
     bool touched() const { return touched_; }
 
-    // The value this setting has at a loop step, given the live dial value. While touched, the
-    // live value is written to the track at the step and is returned unchanged.
+    // The value at a loop step. While touched, the live value is recorded at the step and returned.
     float valueAt(int step, float liveValue);
 
     // Call once when the loop wraps back to step 0.
@@ -110,11 +87,13 @@ public:
     bool hasRecordedStep(int step) const;
 
 private:
-    float baseline_ = 0.0f;
+    float baseline_   = 0.0f;
     float values_[kLoopSteps] = {};
-    bool valid_[kLoopSteps] = {};
-    bool touched_ = false;
-    bool persistent_ = false;
+    bool  valid_[kLoopSteps]  = {};
+    float hold_       = 0.0f;
+    bool  holdValid_  = false;
+    bool  touched_    = false;
+    bool  persistent_ = false;
 };
 
 }  // namespace ctl

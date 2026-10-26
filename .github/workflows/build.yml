@@ -140,8 +140,5 @@ jobs:
       - name: Control model witness
         run: bash tools/control-model-witness.sh
 
-      - name: Phrase advance witness
-        run: bash tools/phrase-advance-witness.sh
-
-      - name: Bassline property witness
-        run: bash tools/bassline-witness.sh --property
+      - name: Bass loop witness
+        run: bash tools/bass-loop-witness.sh

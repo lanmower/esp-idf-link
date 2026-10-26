@@ -2,29 +2,38 @@
 
 namespace ctl {
 
-const int kFriendlyScales[kFriendlyScaleCount] = {1, 2, 3, 6, 7, 8};
+namespace {
 
-bool isFriendlyScale(int scaleIdx) {
-    for (int i = 0; i < kFriendlyScaleCount; i++) {
-        if (kFriendlyScales[i] == scaleIdx) return true;
-    }
-    return false;
+constexpr int kMaxScaleDegrees = 7;
+
+constexpr int kScaleSizes[kScaleCount] = {7, 7, 5, 7, 7, 7};
+
+// Semitones above the root for each degree. Aeolian, phrygian, minor pentatonic, phrygian dominant,
+// harmonic minor, hungarian minor.
+constexpr int kScaleSemitones[kScaleCount][kMaxScaleDegrees] = {
+    {0, 2, 3, 5, 7, 8, 10},
+    {0, 1, 3, 5, 7, 8, 10},
+    {0, 3, 5, 7, 10, 0, 0},
+    {0, 1, 4, 5, 7, 8, 10},
+    {0, 2, 3, 5, 7, 8, 11},
+    {0, 2, 3, 6, 7, 8, 11},
+};
+
+constexpr int kArpPeriods[5] = {24, 48, 6, 9, 3};   // half, quarter, double, triplet, quad
+
+float clamp01(float v) {
+    if (v <= 0.0f) return 0.0f;
+    if (v >= 1.0f) return 1.0f;
+    return v;
 }
 
-static int clampIndex(float dial01, int count) {
-    if (dial01 <= 0.0f) return 0;
-    if (dial01 >= 1.0f) return count - 1;
-    int idx = static_cast<int>(dial01 * static_cast<float>(count));
+int indexFor(float v, int count) {
+    int idx = static_cast<int>(clamp01(v) * static_cast<float>(count));
     return idx >= count ? count - 1 : idx;
 }
 
-int friendlyScaleForDial(float dial01) {
-    return kFriendlyScales[clampIndex(dial01, kFriendlyScaleCount)];
-}
-
-// Euclidean rhythm E(k, n): step i is an onset when (i * k) mod n is less than k. That spreads k
-// onsets as evenly as possible over n steps.
-static uint32_t euclidean(int k, int n) {
+// Euclidean rhythm E(k, n): step i is an onset when (i * k) mod n is less than k.
+uint32_t euclidean(int k, int n) {
     uint32_t bits = 0;
     for (int i = 0; i < n; i++) {
         if ((i * k) % n < k) bits |= (1u << i);
@@ -32,20 +41,47 @@ static uint32_t euclidean(int k, int n) {
     return bits;
 }
 
+}  // namespace
+
+int scaleSize(int scale) {
+    if (scale < 0) scale = 0;
+    if (scale >= kScaleCount) scale = kScaleCount - 1;
+    return kScaleSizes[scale];
+}
+
+int scaleSemitone(int scale, int degree) {
+    if (scale < 0) scale = 0;
+    if (scale >= kScaleCount) scale = kScaleCount - 1;
+    if (degree < 0) degree = 0;
+    if (degree >= kScaleSizes[scale]) degree = kScaleSizes[scale] - 1;
+    return kScaleSemitones[scale][degree];
+}
+
+int scaleForDial(float v)          { return indexFor(v, kScaleCount); }
+float widthForDial(float v)        { return clamp01(v); }
+float pitchOctaveForDial(float v)  { return clamp01(v) * 2.0f - 1.0f; }
+int rhythmForDial(float v)         { return indexFor(v, kRhythmPatternCount); }
+int lfoTypeForDial(float v)        { return indexFor(v, 4); }
+float lfoCyclesPerBarForDial(float v) { return 0.25f + 3.75f * clamp01(v); }
+float gateWidthForDial(float v)    { return clamp01(v); }
+int arpSpeedIndexForDial(float v)  { return indexFor(v, 5); }
+int arpPeriodTicks(int arpIndex) {
+    if (arpIndex < 0) arpIndex = 0;
+    if (arpIndex > 4) arpIndex = 4;
+    return kArpPeriods[arpIndex];
+}
+float probabilityForDial(float v)  { return clamp01(v); }
+float lfoWidthForDial(float v)     { return clamp01(v) * 2.0f - 1.0f; }
+float filterShiftForDial(float v)  { return clamp01(v) * 2.0f - 1.0f; }
+int gateSeriesForDial(float v)     { return indexFor(v, kGateSeriesCount); }
+int octaveForDial(float v)         { return indexFor(v, 7) - 3; }
+int loopBarsForDial(float v)       { return 1 + indexFor(v, kLoopBars); }
+float aberrationForDial(float v)   { return clamp01(v); }
+
 uint32_t stepPattern(int index) {
     if (index < 0) index = 0;
-    if (index >= kStepPatternCount) index = kStepPatternCount - 1;
+    if (index >= kRhythmPatternCount) index = kRhythmPatternCount - 1;
     return euclidean(index + 1, 32);
-}
-
-int stepPatternForDial(float dial01) {
-    return clampIndex(dial01, kStepPatternCount);
-}
-
-// A small deterministic generator, so a seeded pattern repeats exactly.
-static uint32_t lcgNext(uint32_t& state) {
-    state = state * 1664525u + 1013904223u;
-    return state;
 }
 
 uint32_t tranceGate(int seriesIndex, uint32_t entrySeed) {
@@ -62,56 +98,33 @@ uint32_t tranceGate(int seriesIndex, uint32_t entrySeed) {
         return bits;
     }
     if (seriesIndex < 24) {
-        // Polyrhythmic: Euclidean E(k, 32) with k running from 3 to 18.
+        // Polyrhythmic: E(k, 32) with k from 3 to 18.
         return euclidean(seriesIndex - 8 + 3, 32);
     }
-    // Random: the density rises with the index, and the bits come from the entry seed.
+    // Random: density rises with the index; the bits come from the entry seed.
     uint32_t state = entrySeed * 2654435761u + static_cast<uint32_t>(seriesIndex) * 40503u + 1u;
-    const int threshold = (seriesIndex - 24 + 1) * 64;  // 64 to 512 out of 1024 per step
+    const uint32_t threshold = static_cast<uint32_t>((seriesIndex - 24 + 1) * 64);  // of 1024
     uint32_t bits = 0;
     for (int i = 0; i < 32; i++) {
-        const int r = static_cast<int>(lcgNext(state) >> 22);  // 0..1023
+        state = state * 1664525u + 1013904223u;
+        const uint32_t r = state >> 22;  // 0..1023
         if (r < threshold) bits |= (1u << i);
     }
     return bits;
 }
 
-int tranceGateIndexForDial(float dial01) {
-    return clampIndex(dial01, kGateSeriesCount);
+uint32_t hash32(uint32_t a, uint32_t b, uint32_t c) {
+    uint32_t x = a * 0x9E3779B1u ^ b * 0x85EBCA77u ^ c * 0xC2B2AE3Du;
+    x ^= x >> 15;
+    x *= 0x2C1B3C6Du;
+    x ^= x >> 12;
+    x *= 0x297A2D39u;
+    x ^= x >> 15;
+    return x;
 }
 
-int octaveShiftForDial(float dial01) {
-    if (dial01 <= 0.0f) return -3;
-    if (dial01 >= 1.0f) return 3;
-    return static_cast<int>(dial01 * 7.0f) - 3;  // seven positions, -3 to +3
-}
-
-float gateWidthForDial(float dial01) {
-    if (dial01 < 0.0f) return 0.0f;
-    if (dial01 > 1.0f) return 1.0f;
-    return dial01;
-}
-
-ArpSpeed arpSpeedForDial(float dial01) {
-    static const ArpSpeed kSpeeds[5] = {
-        {1, 2},  // half
-        {1, 4},  // quarter
-        {2, 1},  // double
-        {3, 2},  // triplet
-        {4, 1},  // quad
-    };
-    return kSpeeds[clampIndex(dial01, 5)];
-}
-
-float filterShiftForDial(float dial01) {
-    float v = dial01 * 2.0f - 1.0f;
-    if (v < -1.0f) return -1.0f;
-    if (v > 1.0f) return 1.0f;
-    return v;
-}
-
-int lfoTypeForDial(float dial01) {
-    return clampIndex(dial01, kLfoTypeCount);
+float hashUnit(uint32_t a, uint32_t b, uint32_t c) {
+    return static_cast<float>(hash32(a, b, c) >> 8) / 16777216.0f;
 }
 
 void LoopTrack::setBaseline(float value) {
@@ -128,9 +141,12 @@ float LoopTrack::valueAt(int step, float liveValue) {
     if (touched_) {
         values_[step] = liveValue;
         valid_[step] = true;
+        hold_ = liveValue;
+        holdValid_ = true;
         return liveValue;
     }
-    if (persistent_ && valid_[step]) return values_[step];
+    if (valid_[step]) return values_[step];
+    if (holdValid_) return hold_;
     return baseline_;
 }
 
@@ -138,16 +154,16 @@ void LoopTrack::turnaround() {
     if (touched_) {
         // Still being adjusted at the loop boundary: the recording becomes permanent.
         persistent_ = true;
-        return;
-    }
-    if (!persistent_) {
+    } else if (!persistent_) {
         // A change that was not held through the turnaround reverts, and nothing is kept.
         for (int i = 0; i < kLoopSteps; i++) valid_[i] = false;
     }
+    holdValid_ = false;
 }
 
 void LoopTrack::clear() {
     persistent_ = false;
+    holdValid_ = false;
     for (int i = 0; i < kLoopSteps; i++) valid_[i] = false;
 }
 
