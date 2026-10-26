@@ -141,7 +141,13 @@ void BassEngine::process(const ableton::Link::SessionState& state,
 }
 
 void BassEngine::tick(int64_t t) {
-    if (t % (static_cast<int64_t>(m_loopSteps) * ctl::kTicksPerStep) == 0) {
+    // Turn around on the shorter of the current and the pending length. Gating on the current
+    // length alone meant a shortened window only took effect after a full pass of the old one,
+    // so dropping the window to 1 bar still waited out the remaining 8 bars (32 beats).
+    const int64_t curTicks  = static_cast<int64_t>(m_loopSteps) * ctl::kTicksPerStep;
+    const int64_t pendTicks = static_cast<int64_t>(m_pendingLoopSteps) * ctl::kTicksPerStep;
+    const int64_t gateTicks = pendTicks < curTicks ? pendTicks : curTicks;
+    if (t % gateTicks == 0) {
         for (int c = 0; c < ctl::kControlCount; ++c) m_track[c].turnaround();
         m_loopSteps = m_pendingLoopSteps;
     }

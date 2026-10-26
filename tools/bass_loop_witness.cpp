@@ -77,6 +77,19 @@ static int64_t runBars(BassEngine& e, int64_t start, int bars, int dialIdx = -1,
     return end;
 }
 
+// Runs one bar from startUs and returns how many notes sounded in it. If dialIdx >= 0 the dial is
+// kept moving throughout, which keeps that setting touched for the recorder.
+static int notesInBar(BassEngine& e, int64_t startUs, int dialIdx = -1, float value = 0.0f) {
+    g_out.clear();
+    const int64_t end = startUs + kBarUs;
+    int n = 0;
+    for (int64_t t = startUs; t < end; t += kStepUs, ++n) {
+        if (dialIdx >= 0 && n % kDialEvery == 0) e.setDial(dialIdx, value, static_cast<uint64_t>(t));
+        e.process(g_state, std::chrono::microseconds(t), static_cast<uint64_t>(t));
+    }
+    return countNoteOn(0);
+}
+
 static void checkControlIndices() {
     CHECK("single pad 0 dial 0 is setting 0 (scale)", ctl::controlIndex(false, 0, 0) == 0);
     CHECK("double pad 3 dial 1 is setting 15 (aberration)", ctl::controlIndex(true, 3, 1) == 15);
@@ -103,6 +116,34 @@ static void checkEngineSounds() {
     for (const Msg& m : g_out) {
         if ((m.b[0] & 0xF0) == 0x90) CHECK("note numbers stay in the MIDI range", m.b[1] <= 127);
     }
+}
+
+// The window dial shortens the loop. It must take effect within the new length, not after a full
+// pass of the old one, or dropping to one bar still waits out the default eight bars (32 beats).
+static void checkWindowShortensPromptly() {
+    g_state.m_bpm = 145.0;
+    BassEngine e;
+    e.selectSingle(0);
+
+    // Pad 3 double-tap dial 0 is the loop window; 0.0 is one bar.
+    e.setDoubleHeld(3);
+    e.setDial(0, 0.0f, 0);
+    e.setDoubleHeld(-1);
+
+    int64_t t = 0;
+    const int baseline = notesInBar(e, t); t += kBarUs;
+    CHECK("the sequencer sounds notes with the default settings", baseline > 0);
+
+    // Hold the gate at zero through one bar, then release it. Pad 0 double-tap dial 0 is gate width.
+    e.setDoubleHeld(0);
+    const int muted = notesInBar(e, t, 0, 0.0f); t += kBarUs;
+    e.setDoubleHeld(-1);
+    CHECK("gate width held at zero silences the bar", muted == 0);
+
+    // The released change reverts at the turnaround. With a one-bar window that is one bar away.
+    int silentBars = 0;
+    while (silentBars < 4 && notesInBar(e, t) == 0) { t += kBarUs; ++silentBars; }
+    CHECK("a one-bar window turns around within two bars", silentBars <= 2);
 }
 
 static void checkGateZeroIsSilent() {
@@ -140,6 +181,7 @@ static void checkDoubleRoutesDials() {
 int main() {
     checkControlIndices();
     checkEngineSounds();
+    checkWindowShortensPromptly();
     checkGateZeroIsSilent();
     checkDropOutIsSilent();
     checkDoubleRoutesDials();
