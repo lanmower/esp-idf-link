@@ -180,18 +180,21 @@ void BassEngine::stepBoundary(int step) {
 
 void BassEngine::arpEvent(int step, int64_t loopTick, int period, int64_t t) {
     // Onset from the rhythm pattern.
-    const uint32_t rhythm = ctl::stepPattern(ctl::rhythmForDial(m_frame[SET_RHYTHM]));
-    if (!((rhythm >> (step % 32)) & 1u)) return;
-
     const float gate = ctl::gateWidthForDial(m_frame[SET_GATE]);
     if (gate <= 0.0f) return;
 
-    // Volume modulation: the trance-gate series, and the fake sidechain that skips the first
-    // sixteenth of every beat.
-    const uint32_t series = ctl::tranceGate(ctl::gateSeriesForDial(m_frame[SET_SERIES]),
-                                            m_entrySeed[SET_SERIES]);
-    if (!((series >> (step % 32)) & 1u)) return;
-    if (step % 4 == 0) return;
+    // Fill bypasses the rhythm, the trance gate and the sidechain, so every arp step sounds.
+    if (!m_fill) {
+        const uint32_t rhythm = ctl::stepPattern(ctl::rhythmForDial(m_frame[SET_RHYTHM]));
+        if (!((rhythm >> (step % 32)) & 1u)) return;
+
+        // Volume modulation: the trance-gate series, and the fake sidechain that skips the first
+        // sixteenth of every beat.
+        const uint32_t series = ctl::tranceGate(ctl::gateSeriesForDial(m_frame[SET_SERIES]),
+                                                m_entrySeed[SET_SERIES]);
+        if (!((series >> (step % 32)) & 1u)) return;
+        if (step % 4 == 0) return;
+    }
 
     // Pitch from the arp, around the selected pitch.
     const int64_t k = loopTick / period;
