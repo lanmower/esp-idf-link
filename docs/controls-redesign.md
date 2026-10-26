@@ -27,6 +27,9 @@ that pad's double settings. Releasing the pad returns them to the single setting
 - The loop is **8 bars, which is 32 beats**, not 8 beats. The window dial (pad 3 double-tap, dial 0) sets it
   from 1 to 8 bars. A shortened window takes effect at the next turnaround of the *new* length, so dropping to
   one bar does not wait out the remaining eight.
+- The window is **structural, not automation**: unlike the other settings it is not recorded to the loop and it
+  does not revert at the turnaround. A recorded loop length would snap back to the default at the very
+  boundary it was meant to apply at, so the loop never actually shortened.
 - Every setting is recorded through `ctl::LoopTrack`:
   - while a dial moves, its setting is recorded at each step it passes (touch expires 250 ms after the last move);
   - a released change holds until the turnaround;
