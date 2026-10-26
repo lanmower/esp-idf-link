@@ -499,7 +499,9 @@ don't "fix" it by editing its `.git/config`.
 drop files in `C:\dev\mc-420\.gm\`" note applied to a different setup; on this machine the agent is a session
 on the same socket and its project is the sibling `/config/workspace/mc-420`. Its `reassoc-watch.js` logs only
 `Date.now()` deltas, so its absolute times must be reconstructed. Any Pi ssh credential is for read-only
-probing on our own device and must never be committed.
+probing on our own device and must never be committed. One exception, by the owner's decision on 2026-10-26: the
+  Pi's fixed SSH host key may be committed to the public project git, because the device is a music instrument. The
+  repos are public, so a rotation is needed if that key is ever exposed beyond the device's use.
 
 ## ESP-IDF 6.x breaks absorbed, and comment sweep
 
