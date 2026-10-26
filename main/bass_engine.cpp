@@ -173,10 +173,10 @@ void BassEngine::stepBoundary(int step) {
         m_frame[c] = m_track[c].valueAt(step, m_live[c]);
     }
     if (m_fill) m_mask[step] = stepSounds(step);
-    if (step == 0) {
-        // The loop window is applied at the next turnaround, so a change never cuts a pass short.
-        m_pendingLoopSteps = ctl::loopBarsForDial(m_frame[SET_WINDOW]) * ctl::kStepsPerBar;
-    }
+    // The window is structural, not automation: it reads the live dial, not the track. A released
+    // change on the track reverts to its baseline at the turnaround, which would have snapped the
+    // loop straight back to the default eight bars at the very boundary it was meant to apply at.
+    m_pendingLoopSteps = ctl::loopBarsForDial(m_live[SET_WINDOW]) * ctl::kStepsPerBar;
     const float shift = ctl::filterShiftForDial(m_frame[SET_FILTER]);
     const int cc = std::clamp(64 + static_cast<int>(std::lround(shift * 64.0f)), 0, 127);
     if (cc != m_lastFilterCc) {
