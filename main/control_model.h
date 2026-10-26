@@ -36,7 +36,7 @@ int   rhythmForDial(float v);           // 32-step rhythm pattern index
 int   lfoTypeForDial(float v);          // 0 sine, 1 triangle, 2 saw, 3 square
 float lfoCyclesPerBarForDial(float v);  // 0.25 .. 4 cycles per bar
 float gateWidthForDial(float v);        // 0 .. 1 of the arp period
-int   arpSpeedIndexForDial(float v);    // 0 half, 1 quarter, 2 double, 3 triplet, 4 quad
+int   arpSpeedIndexForDial(float v);    // 0 half, 1 quarter, 2 16ths, 3 triplet, 4 quad
 int   arpPeriodTicks(int arpIndex);     // ticks between arp notes
 float probabilityForDial(float v);      // 0 .. 1 (random octave, drop-out, aberration)
 float lfoWidthForDial(float v);         // -1 .. +1 depth on the mod wheel

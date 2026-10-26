@@ -19,7 +19,7 @@ constexpr int kScaleSemitones[kScaleCount][kMaxScaleDegrees] = {
     {0, 2, 3, 6, 7, 8, 11},
 };
 
-constexpr int kArpPeriods[5] = {24, 48, 6, 9, 3};   // half, quarter, double, triplet, quad
+constexpr int kArpPeriods[5] = {24, 48, 12, 8, 3};   // half, quarter, 16ths (default), triplet, quad
 
 float clamp01(float v) {
     if (v <= 0.0f) return 0.0f;

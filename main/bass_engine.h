@@ -95,6 +95,9 @@ private:
     int      m_doubleHeld       = -1;
     bool     m_active           = false;
     bool     m_fill             = false;
+    bool     m_maskOn           = false;
+    bool     m_mask[ctl::kLoopSteps] = {};
+    bool     stepSounds(int step) const;
     int64_t  m_lastTick         = -1;
     int      m_lastFilterCc     = -1;
     int      m_lastLfoCc        = -1;

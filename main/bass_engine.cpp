@@ -57,13 +57,13 @@ BassEngine::BassEngine() {
         0.0f,   // scale
         0.0f,   // width
         0.5f,   // pitch offset (centre: the root)
-        0.5f,   // rhythm
+        0.97f,  // rhythm: every sixteenth (pattern 31)
         0.0f,   // LFO type
         0.25f,  // LFO speed
         0.0625f,  // trance-gate series 2: three onsets, clear of the skipped sixteenths
         0.5f,   // octave (centre)
         0.5f,   // gate width
-        0.1f,   // arp speed (half)
+        0.5f,   // arp speed: 16ths
         0.0f,   // random octave
         0.0f,   // random drop-out
         0.5f,   // LFO width (centre: none)
@@ -166,6 +166,7 @@ void BassEngine::stepBoundary(int step) {
     for (int c = 0; c < ctl::kControlCount; ++c) {
         m_frame[c] = m_track[c].valueAt(step, m_live[c]);
     }
+    if (m_fill) m_mask[step] = stepSounds(step);
     if (step == 0) {
         // The loop window is applied at the next turnaround, so a change never cuts a pass short.
         m_pendingLoopSteps = ctl::loopBarsForDial(m_frame[SET_WINDOW]) * ctl::kStepsPerBar;
@@ -182,19 +183,7 @@ void BassEngine::arpEvent(int step, int64_t loopTick, int period, int64_t t) {
     // Onset from the rhythm pattern.
     const float gate = ctl::gateWidthForDial(m_frame[SET_GATE]);
     if (gate <= 0.0f) return;
-
-    // Fill bypasses the rhythm, the trance gate and the sidechain, so every arp step sounds.
-    if (!m_fill) {
-        const uint32_t rhythm = ctl::stepPattern(ctl::rhythmForDial(m_frame[SET_RHYTHM]));
-        if (!((rhythm >> (step % 32)) & 1u)) return;
-
-        // Volume modulation: the trance-gate series, and the fake sidechain that skips the first
-        // sixteenth of every beat.
-        const uint32_t series = ctl::tranceGate(ctl::gateSeriesForDial(m_frame[SET_SERIES]),
-                                                m_entrySeed[SET_SERIES]);
-        if (!((series >> (step % 32)) & 1u)) return;
-        if (step % 4 == 0) return;
-    }
+    if (m_maskOn ? !m_mask[step] : !stepSounds(step)) return;
 
     // Pitch from the arp, around the selected pitch.
     const int64_t k = loopTick / period;
@@ -233,7 +222,7 @@ void BassEngine::arpEvent(int step, int64_t loopTick, int period, int64_t t) {
         m_activeNotes.erase(m_activeNotes.begin());
     }
     sendNoteOn(note);
-    m_activeNotes.push_back({note, m_fill ? t + 1000000000LL : t + length});
+    m_activeNotes.push_back({note, t + length});
 }
 
 void BassEngine::sendLfoAndFilter(int64_t loopTick) {
@@ -252,7 +241,6 @@ void BassEngine::sendLfoAndFilter(int64_t loopTick) {
 }
 
 void BassEngine::endDueNotes(int64_t t) {
-    if (m_fill) return;   // filled notes stay on until a clear
     for (auto it = m_activeNotes.begin(); it != m_activeNotes.end();) {
         if (it->offTick <= t) {
             sendNoteOff(it->note);
@@ -274,15 +262,26 @@ void BassEngine::stop() {
 void BassEngine::clearAll() {
     for (int c = 0; c < ctl::kControlCount; ++c) m_track[c].clear();
     m_fill = false;
+    m_maskOn = false;
     allNotesOff();
 }
 
 void BassEngine::setFill(bool on) {
     m_fill = on;
-    if (!on) {
-        // Notes sounded during fill have no end time: end them at the next tick.
-        for (ActiveNote& n : m_activeNotes) n.offTick = std::min(n.offTick, m_lastTick);
+    if (on && !m_maskOn) {
+        // First fill: the mask starts from the steps that sound now, then fill records over it.
+        for (int i = 0; i < ctl::kLoopSteps; i++) m_mask[i] = stepSounds(i);
+        m_maskOn = true;
     }
+}
+
+bool BassEngine::stepSounds(int step) const {
+    const uint32_t rhythm = ctl::stepPattern(ctl::rhythmForDial(m_frame[SET_RHYTHM]));
+    if (!((rhythm >> (step % 32)) & 1u)) return false;
+    const uint32_t series = ctl::tranceGate(ctl::gateSeriesForDial(m_frame[SET_SERIES]),
+                                            m_entrySeed[SET_SERIES]);
+    if (!((series >> (step % 32)) & 1u)) return false;
+    return step % 4 != 0;   // fake sidechain: the first sixteenth of every beat is skipped
 }
 
 void BassEngine::allNotesOff() {
