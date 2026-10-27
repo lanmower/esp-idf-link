@@ -94,8 +94,10 @@ void process_state_event(const InputEvent& event,
         }
     }
 
+    // The dials have no effect unless a touch is held.
+    g_bassEngine.setTouchHeld(raw_count > 0);
     for (int dial = 0; dial < NUM_POTS; dial++) {
-        if (event.pot_moved[dial]) {
+        if (event.pot_moved[dial] && raw_count > 0) {
             g_bassEngine.setDial(dial,
                                  static_cast<float>(event.pot_value[dial]) / MIDI_VALUE_MAX,
                                  event.timestamp_us);

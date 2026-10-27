@@ -128,9 +128,16 @@ void BassEngine::updateRecording() {
     }
 }
 
+void BassEngine::setTouchHeld(bool held) {
+    m_touchHeld = held;
+    if (!held) {
+        for (int c = 0; c < ctl::kControlCount; ++c) untouchSetting(c);
+    }
+}
+
 void BassEngine::expireTouches(uint64_t nowUs) {
-    // Recording is held by the tap, not by dial movement, so nothing expires while it is held.
-    if (m_fill || m_unfill) return;
+    // A touch lasts for as long as a pad is held, so nothing expires while one is.
+    if (m_touchHeld || m_fill || m_unfill) return;
     for (int c = 0; c < ctl::kControlCount; ++c) {
         if (m_touched[c] && nowUs - m_lastMoveUs[c] > kTouchHoldUs) {
             m_touched[c] = false;

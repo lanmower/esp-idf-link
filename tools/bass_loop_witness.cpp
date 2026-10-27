@@ -84,6 +84,7 @@ static int notesInBar(BassEngine& e, int64_t startUs, int dialIdx = -1, float va
     g_out.clear();
     const int64_t end = startUs + kBarUs;
     int n = 0;
+    if (dialIdx >= 0) e.setTouchHeld(true);
     for (int64_t t = startUs; t < end; t += kStepUs, ++n) {
         const int64_t into = t - startUs;
         if (dialIdx >= 0 && into >= dialFromUs && into < dialToUs && n % kDialEvery == 0) {
@@ -91,6 +92,7 @@ static int notesInBar(BassEngine& e, int64_t startUs, int dialIdx = -1, float va
         }
         e.process(g_state, std::chrono::microseconds(t), static_cast<uint64_t>(t));
     }
+    if (dialIdx >= 0) e.setTouchHeld(false);
     return countNoteOn(0);
 }
 

@@ -141,6 +141,11 @@ void LoopTrack::setBaseline(float value) {
 }
 
 void LoopTrack::setTouched(bool touched) {
+    if (touched && !touched_) {
+        // A new recording replaces the old one, so the line is clean and no history carries into it.
+        for (int i = 0; i < kLoopSteps; i++) valid_[i] = false;
+        persistent_ = false;
+    }
     touched_ = touched;
 }
 

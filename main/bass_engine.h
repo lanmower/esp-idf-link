@@ -21,6 +21,9 @@ public:
     int  doubleHeld() const { return m_doubleHeld; }
     int  activeSingle() const { return m_activeSingle; }
 
+    // Any pad held is a touch: the dials act only while it lasts, and releasing it ends the recording.
+    void setTouchHeld(bool held);
+
     // Dial position in [0, 1] at a timestamp. Moving a dial touches its setting for the recorder.
     void setDial(int dial, float v01, uint64_t nowUs);
 
@@ -105,6 +108,7 @@ private:
     bool     stepSounds(int step) const;
     bool     soundsAt(int step) const;
     void     touchSetting(int c);
+    bool     m_touchHeld = false;
     void     untouchSetting(int c);
     void     updateRecording();
     int64_t  m_lastTick         = -1;
