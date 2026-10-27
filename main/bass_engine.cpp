@@ -292,18 +292,12 @@ void BassEngine::clearFill() {
 
 void BassEngine::setFill(bool on) {
     m_fill = on;
-    if (on) {
-        m_unfill = false;
-        m_active = true;
-    }
+    if (on) m_unfill = false;
 }
 
 void BassEngine::setUnfill(bool on) {
     m_unfill = on;
-    if (on) {
-        m_fill = false;
-        m_active = true;
-    }
+    if (on) m_fill = false;
 }
 
 bool BassEngine::soundsAt(int step) const {
