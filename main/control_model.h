@@ -12,8 +12,10 @@ namespace ctl {
 constexpr int kStepsPerBar  = 16;                           // sixteenths per bar
 constexpr int kTicksPerStep = 12;                           // scheduler ticks per sixteenth
 constexpr int kTicksPerBar  = kStepsPerBar * kTicksPerStep;
-constexpr int kLoopBars     = 8;
-constexpr int kLoopSteps    = kStepsPerBar * kLoopBars;     // 128 steps: the largest loop
+// The loop is at most eight beats: two bars of sixteenths. No control lengthens it past that.
+constexpr int kLoopBars     = 2;
+constexpr int kLoopSteps    = kStepsPerBar * kLoopBars;     // 32 steps: the largest loop
+constexpr int kLoopMaxBeats = kLoopBars * 4;                // 8 beats
 
 constexpr int kPadCount     = 4;
 constexpr int kControlCount = 16;                           // 8 single-tap, 8 double-tap settings
@@ -43,7 +45,7 @@ float lfoWidthForDial(float v);         // -1 .. +1 depth on the mod wheel
 float filterShiftForDial(float v);      // -1 .. +1 around the centre cutoff
 int   gateSeriesForDial(float v);       // 0 .. 31 trance-gate series
 int   octaveForDial(float v);           // -3 .. +3
-int   loopBarsForDial(float v);         // 1 .. 8 bars
+int   loopBarsForDial(float v);         // 1 .. 2 bars (4 .. 8 beats)
 float aberrationForDial(float v);       // 0 .. 1
 
 // The 32-step bank. Pattern i is the Euclidean rhythm E(i + 1, 32); bit n is step n.

@@ -352,10 +352,13 @@ bpm spread <=0.05, `|phase_err_beats|` <=0.03, `eff_speed` spread <=0.005, sampl
   (`err=12`, inside an IGMP re-join). **Session bounce** `enable(false)`/`enable(true)` re-joins in 2540 ms;
   the per-boot auto bounce was removed, only on-demand `LRST` to `192.168.4.x:20811` remains.
 
-## Bass sequencer: 8-bar loop, pads and dials
+## Bass sequencer: 8-beat loop, pads and dials
 
 `main/bass_engine.cpp` is a tick scheduler (12 ticks per sixteenth, 48 per beat) driven by the Link beat.
 `main/state_machine.cpp` maps the pads and dials; `main/control_model.{h,cpp}` holds the 16 settings and the recorder.
+- **The loop is at most eight beats (two bars, 32 steps).** `ctl::kLoopBars` caps it, so no dial lengthens it past
+  that. The window dial reads the live value, not the track: a recorded window reverted to the default at the very
+  turnaround it should have applied at, so the loop never actually shortened.
 - **Single tap** selects that pad's single settings and starts the sequencer. Pad 0: scale, width. Pad 1: pitch
   offset, 32-step rhythm. Pad 2: LFO type, LFO speed (mod wheel CC 1). Pad 3: trance-gate series, octave.
 - **Double tap and hold** routes the dials to that pad's double settings. Pad 0: gate width, arp speed. Pad 1:

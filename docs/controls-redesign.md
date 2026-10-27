@@ -17,16 +17,16 @@ Pads are numbered 0 to 3. Dial 0 is the first pot, dial 1 the second.
 | 2 | single tap | LFO type (mod wheel, CC 1) | LFO speed |
 | 2 | double tap, held | LFO width, -100 to +100 percent | filter shift, -100 to +100 percent (CC 74) |
 | 3 | single tap | trance-gate series (32, repetitive to random) | octave, -3 to +3 |
-| 3 | double tap, held | loop window, 1 to 8 bars | chromatic aberration, by intensity |
+| 3 | double tap, held | loop window, 1-2 bars (4-8 beats) | chromatic aberration, by intensity |
 
 A single tap selects the pad's single settings and starts the sequencer. A double tap, while held, sends the dials to
 that pad's double settings. Releasing the pad returns them to the single settings.
 
 ## The loop and the recorder
 
-- The loop is **8 bars, which is 32 beats**, not 8 beats. The window dial (pad 3 double-tap, dial 0) sets it
-  from 1 to 8 bars. A shortened window takes effect at the next turnaround of the *new* length, so dropping to
-  one bar does not wait out the remaining eight.
+- The loop is **at most eight beats: two bars**. The window dial (pad 3 double-tap, dial 0) sets it to 1 bar
+  (4 beats) or 2 bars (8 beats), and no control lengthens it past eight beats. A shortened window takes effect
+  at the next turnaround of the *new* length.
 - The window is **structural, not automation**: unlike the other settings it is not recorded to the loop and it
   does not revert at the turnaround. A recorded loop length would snap back to the default at the very
   boundary it was meant to apply at, so the loop never actually shortened.
@@ -52,7 +52,7 @@ that pad's double settings. Releasing the pad returns them to the single setting
    entry gives the same pattern.
 8. **Defaults at boot:** scale 0, width 0, pitch offset 0, rhythm 31 (every sixteenth), LFO sine at 0.25 cycles
    per bar, volume modulation series 8 (fully open), octave 0, gate width 50 percent, arp 16ths, no random octave
-   or drop-out, LFO width 0, filter centred, loop 8 bars, no aberration. Those defaults are a gated
+   or drop-out, LFO width 0, filter centred, loop 2 bars (8 beats), no aberration. Those defaults are a gated
    sixteenth-note roll, because the rhythm is every sixteenth and the gate is fully open.
 
 ## Still open

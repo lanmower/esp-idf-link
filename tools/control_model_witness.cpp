@@ -34,7 +34,9 @@ static void checkMappings() {
     CHECK("pitch offset spans -1 to +1 octave", pitchOctaveForDial(0.0f) == -1.0f && pitchOctaveForDial(1.0f) == 1.0f);
     CHECK("pitch offset centre is the root", pitchOctaveForDial(0.5f) == 0.0f);
     CHECK("octave spans -3 to +3", octaveForDial(0.0f) == -3 && octaveForDial(1.0f) == 3);
-    CHECK("loop window spans 1 to 8 bars", loopBarsForDial(0.0f) == 1 && loopBarsForDial(1.0f) == 8);
+    CHECK("the window spans 1 to 2 bars", loopBarsForDial(0.0f) == 1 && loopBarsForDial(1.0f) == 2);
+    CHECK("no window setting exceeds eight beats", loopBarsForDial(1.0f) * 4 == kLoopMaxBeats);
+    CHECK("eight beats is the largest loop", kLoopMaxBeats == 8 && kLoopSteps == 32);
     CHECK("arp periods are half, quarter, double, triplet, quad", arpPeriodTicks(0) == 24 && arpPeriodTicks(1) == 48 && arpPeriodTicks(2) == 12 && arpPeriodTicks(3) == 8 && arpPeriodTicks(4) == 3);
     CHECK("filter shift spans -1 to +1", filterShiftForDial(0.0f) == -1.0f && filterShiftForDial(1.0f) == 1.0f);
     CHECK("LFO width spans -1 to +1", lfoWidthForDial(0.0f) == -1.0f && lfoWidthForDial(1.0f) == 1.0f);
