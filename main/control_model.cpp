@@ -161,9 +161,9 @@ float LoopTrack::valueAt(int step, float liveValue) {
 
 void LoopTrack::turnaround() {
     // Whatever was recorded is kept, whether it is still being touched or was released before the
-    // boundary, and replays on every later pass.
+    // boundary, and replays on every later pass. The last value stays as the fallback for steps
+    // never recorded, so a setting that was left where it was stays there.
     if (touched_ || holdValid_) persistent_ = true;
-    holdValid_ = false;
 }
 
 void LoopTrack::clear() {

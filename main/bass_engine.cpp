@@ -100,6 +100,8 @@ void BassEngine::setDoubleHeld(int pad) {
 
 void BassEngine::setDial(int dial, float v01, uint64_t nowUs) {
     if (dial < 0 || dial > 1) return;
+    // While the fill tap is held, the recording is not overridden by dial moves.
+    if (m_fill || m_unfill) return;
     const int c = settingFor(dial);
     if (!m_touched[c]) {
         // A new change: its random patterns are seeded afresh.

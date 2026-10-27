@@ -103,7 +103,7 @@ static void checkHoldUntilTurnaround() {
     t.setTouched(false);
     CHECK("a released change holds its last value until the turnaround", t.valueAt(5, 0.1f) == 0.9f);
     t.turnaround();
-    CHECK("after the turnaround the change returns to baseline", t.valueAt(5, 0.1f) == 0.1f);
+    CHECK("after the turnaround the released value stays where it was left", t.valueAt(5, 0.1f) == 0.9f);
 }
 
 static void checkTouchPersists() {
@@ -115,7 +115,7 @@ static void checkTouchPersists() {
     CHECK("touched at the turnaround becomes persistent", t.persistent());
     t.setTouched(false);
     CHECK("a persistent recording replays on the next pass", t.valueAt(4, 0.5f) == 0.8f);
-    CHECK("a position never recorded plays the baseline", t.valueAt(20, 0.5f) == 0.5f);
+    CHECK("a position never recorded plays the last value left", t.valueAt(20, 0.5f) == 0.8f);
     t.turnaround();
     CHECK("a persistent recording survives an untouched turnaround", t.persistent());
     CHECK("and replays again on the following pass", t.valueAt(9, 0.5f) == 0.8f);
