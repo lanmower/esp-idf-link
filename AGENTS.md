@@ -368,7 +368,7 @@ bpm spread <=0.05, `|phase_err_beats|` <=0.03, `eff_speed` spread <=0.005, sampl
   everything to defaults, clearing the marks too.
 - **Recording** (`ctl::LoopTrack`): moving a dial records its setting as the loop plays, overwriting what the track
   held at each step it passes. A released change holds until the turnaround; from the turnaround on, every recording
-  is kept and replays. Touch expires 250 ms after the last move.
+  is kept and replays. Outside a tap, a touch expires 250 ms after the last move. While two or three pads are held (the tap), the two dial settings are touched for as long as the tap lasts, so still positions are recorded too and overwrite what the track held; releasing the tap stops recording and the loop plays the recorded changes.
 - The volume modulation's fake sidechain skips the first sixteenth of every beat.
 - Witnesses, both run in the CI `host-witness` job: `tools/control-model-witness.sh`, `tools/bass-loop-witness.sh`.
 - Removed with the redesign: the eight approaches, the 64-bar phrase, the grooves, the bassline interpreter and the

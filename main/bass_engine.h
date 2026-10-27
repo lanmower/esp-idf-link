@@ -104,6 +104,9 @@ private:
     FillMark m_fillMark[ctl::kLoopSteps] = {};
     bool     stepSounds(int step) const;
     bool     soundsAt(int step) const;
+    void     touchSetting(int c);
+    void     untouchSetting(int c);
+    void     updateRecording();
     int64_t  m_lastTick         = -1;
     int      m_lastFilterCc     = -1;
     int      m_lastLfoCc        = -1;

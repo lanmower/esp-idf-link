@@ -100,20 +100,37 @@ void BassEngine::setDoubleHeld(int pad) {
 
 void BassEngine::setDial(int dial, float v01, uint64_t nowUs) {
     if (dial < 0 || dial > 1) return;
-    // While the fill tap is held, the recording is not overridden by dial moves.
-    if (m_fill || m_unfill) return;
     const int c = settingFor(dial);
-    if (!m_touched[c]) {
-        // A new change: its random patterns are seeded afresh.
-        m_touched[c] = true;
-        m_track[c].setTouched(true);
-        m_entrySeed[c] = ctl::hash32(m_seedCounter++, static_cast<uint32_t>(c), 0x51u) | 1u;
-    }
+    touchSetting(c);
     m_live[c] = std::clamp(v01, 0.0f, 1.0f);
     m_lastMoveUs[c] = nowUs;
 }
 
+void BassEngine::touchSetting(int c) {
+    if (m_touched[c]) return;
+    // A new change: its random patterns are seeded afresh.
+    m_touched[c] = true;
+    m_track[c].setTouched(true);
+    m_entrySeed[c] = ctl::hash32(m_seedCounter++, static_cast<uint32_t>(c), 0x51u) | 1u;
+}
+
+void BassEngine::untouchSetting(int c) {
+    m_touched[c] = false;
+    m_track[c].setTouched(false);
+}
+
+void BassEngine::updateRecording() {
+    if (m_fill || m_unfill) {
+        // While the tap is held the dial settings record and override the track at every step, even when still.
+        for (int dial = 0; dial < 2; ++dial) touchSetting(settingFor(dial));
+    } else {
+        for (int c = 0; c < ctl::kControlCount; ++c) untouchSetting(c);
+    }
+}
+
 void BassEngine::expireTouches(uint64_t nowUs) {
+    // Recording is held by the tap, not by dial movement, so nothing expires while it is held.
+    if (m_fill || m_unfill) return;
     for (int c = 0; c < ctl::kControlCount; ++c) {
         if (m_touched[c] && nowUs - m_lastMoveUs[c] > kTouchHoldUs) {
             m_touched[c] = false;
@@ -295,11 +312,13 @@ void BassEngine::clearFill() {
 void BassEngine::setFill(bool on) {
     m_fill = on;
     if (on) m_unfill = false;
+    updateRecording();
 }
 
 void BassEngine::setUnfill(bool on) {
     m_unfill = on;
     if (on) m_fill = false;
+    updateRecording();
 }
 
 bool BassEngine::soundsAt(int step) const {
