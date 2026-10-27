@@ -172,10 +172,13 @@ void BassEngine::stepBoundary(int step) {
     for (int c = 0; c < ctl::kControlCount; ++c) {
         m_frame[c] = m_track[c].valueAt(step, m_live[c]);
     }
-    if (m_fill) m_mask[step] = stepSounds(step);
-    // The window is structural, not automation: it reads the live dial, not the track. A released
-    // change on the track reverts to its baseline at the turnaround, which would have snapped the
-    // loop straight back to the default eight bars at the very boundary it was meant to apply at.
+    if (m_fill) {
+        m_mask[step] = true;
+    } else if (m_unfill) {
+        m_mask[step] = false;
+    }
+    // The window is structural, not automation: it reads the live dial, so the loop length follows
+    // the dial and is never a recorded track.
     m_pendingLoopSteps = ctl::loopBarsForDial(m_live[SET_WINDOW]) * ctl::kStepsPerBar;
     const float shift = ctl::filterShiftForDial(m_frame[SET_FILTER]);
     const int cc = std::clamp(64 + static_cast<int>(std::lround(shift * 64.0f)), 0, 127);
@@ -265,20 +268,51 @@ void BassEngine::stop() {
     allNotesOff();
 }
 
-void BassEngine::clearAll() {
-    for (int c = 0; c < ctl::kControlCount; ++c) m_track[c].clear();
+void BassEngine::resetAll() {
+    stop();
+    clearFill();
+    for (int c = 0; c < ctl::kControlCount; ++c) {
+        m_track[c].clear();
+        m_track[c].setTouched(false);
+        m_touched[c] = false;
+        m_live[c]  = m_track[c].baseline();
+        m_frame[c] = m_live[c];
+    }
+    m_activeSingle = 0;
+    m_doubleHeld   = -1;
+    m_pendingLoopSteps = ctl::loopBarsForDial(m_track[SET_WINDOW].baseline()) * ctl::kStepsPerBar;
+    m_loopSteps = m_pendingLoopSteps;
+}
+
+void BassEngine::clearFill() {
     m_fill = false;
+    m_unfill = false;
     m_maskOn = false;
-    allNotesOff();
 }
 
 void BassEngine::setFill(bool on) {
     m_fill = on;
-    if (on && !m_maskOn) {
-        // First fill: the mask starts from the steps that sound now, then fill records over it.
-        for (int i = 0; i < ctl::kLoopSteps; i++) m_mask[i] = stepSounds(i);
-        m_maskOn = true;
+    if (on) {
+        m_unfill = false;
+        m_active = true;
+        ensureFillMask();
     }
+}
+
+void BassEngine::setUnfill(bool on) {
+    m_unfill = on;
+    if (on) {
+        m_fill = false;
+        m_active = true;
+        ensureFillMask();
+    }
+}
+
+void BassEngine::ensureFillMask() {
+    if (m_maskOn) return;
+    // The first fill starts from the steps that sound now; fill and unfill then edit them.
+    for (int i = 0; i < ctl::kLoopSteps; i++) m_mask[i] = stepSounds(i);
+    m_maskOn = true;
 }
 
 bool BassEngine::stepSounds(int step) const {

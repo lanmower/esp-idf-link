@@ -62,12 +62,11 @@ uint32_t hash32(uint32_t a, uint32_t b, uint32_t c);
 float    hashUnit(uint32_t a, uint32_t b, uint32_t c);   // [0, 1)
 
 // Automation for one setting. KO2-style recording:
-//   - while the setting is touched, each step's value is written to the track and played live;
+//   - while the setting is touched, each step's value is written to the track and played live,
+//     overwriting whatever the track held at that step;
 //   - once a dial is released, its value is held until the loop turns around;
-//   - at the turnaround, a setting that is still touched becomes persistent: its track is kept
-//     and replayed on every later pass, and touching it again overwrites the positions it passes;
-//   - a setting that is not touched and not persistent reverts to its baseline;
-//   - a persistent track that is not touched keeps replaying, until it is cleared.
+//   - from the turnaround on, the recording is kept and replayed on every pass, and touching the
+//     setting again overwrites the positions it passes, until it is cleared.
 class LoopTrack {
 public:
     void setBaseline(float value);

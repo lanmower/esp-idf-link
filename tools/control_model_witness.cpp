@@ -121,15 +121,15 @@ static void checkTouchPersists() {
     CHECK("and replays again on the following pass", t.valueAt(9, 0.5f) == 0.8f);
 }
 
-static void checkReleaseReverts() {
+static void checkReleasePersists() {
     LoopTrack t;
     t.setBaseline(0.25f);
     t.setTouched(true);
     for (int s = 0; s < 6; s++) t.valueAt(s, 0.9f);
     t.setTouched(false);  // released before the turnaround
     t.turnaround();
-    CHECK("a change released before the turnaround does not persist", !t.persistent());
-    CHECK("it reverts to the baseline on the next pass", t.valueAt(2, 0.25f) == 0.25f);
+    CHECK("a change released before the turnaround persists", t.persistent());
+    CHECK("it replays its recording on the next pass", t.valueAt(2, 0.25f) == 0.9f);
 }
 
 static void checkOverwrite() {
@@ -166,7 +166,7 @@ int main() {
     checkUntouchedReadsBaseline();
     checkHoldUntilTurnaround();
     checkTouchPersists();
-    checkReleaseReverts();
+    checkReleasePersists();
     checkOverwrite();
     checkClear();
     std::printf("control model witness: %d checks, %d failed\n", g_checks, g_fail);

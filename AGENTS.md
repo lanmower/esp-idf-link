@@ -363,9 +363,11 @@ bpm spread <=0.05, `|phase_err_beats|` <=0.03, `eff_speed` spread <=0.005, sampl
   offset, 32-step rhythm. Pad 2: LFO type, LFO speed (mod wheel CC 1). Pad 3: trance-gate series, octave.
 - **Double tap and hold** routes the dials to that pad's double settings. Pad 0: gate width, arp speed. Pad 1:
   random octave, random drop-out. Pad 2: LFO width, filter shift (CC 74). Pad 3: loop window, chromatic aberration.
-- **Recording** (`ctl::LoopTrack`): moving a dial records its setting as the loop plays. A released change holds
-  until the turnaround; a change still touched at the turnaround becomes persistent; otherwise it reverts.
-  Touch expires 250 ms after the last move.
+- **Fill**: two pads held record fill (each step the loop passes while held joins it); three pads held unfill
+  (each step passed leaves it); four pads reset everything to defaults, clearing the fill too.
+- **Recording** (`ctl::LoopTrack`): moving a dial records its setting as the loop plays, overwriting what the track
+  held at each step it passes. A released change holds until the turnaround; from the turnaround on, every recording
+  is kept and replays. Touch expires 250 ms after the last move.
 - The volume modulation's fake sidechain skips the first sixteenth of every beat.
 - Witnesses, both run in the CI `host-witness` job: `tools/control-model-witness.sh`, `tools/bass-loop-witness.sh`.
 - Removed with the redesign: the eight approaches, the 64-bar phrase, the grooves, the bassline interpreter and the

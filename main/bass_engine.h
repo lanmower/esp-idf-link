@@ -31,10 +31,13 @@ public:
 
     void stop();
 
-    // Three pads held together clear the recordings and the sounding notes. Two pads held together
-    // turn fill on: sounding notes stay on and more keep sounding until a clear.
-    void clearAll();
+    // Two pads held together record fill: each step the loop passes while held joins the fill.
+    // Three pads held together unfill: each step passed while held leaves it. Four pads reset
+    // everything to its defaults, including the recorded fill.
     void setFill(bool on);
+    void setUnfill(bool on);
+    void clearFill();
+    void resetAll();
 
     bool isActive() const { return m_active; }
 
@@ -95,9 +98,11 @@ private:
     int      m_doubleHeld       = -1;
     bool     m_active           = false;
     bool     m_fill             = false;
+    bool     m_unfill           = false;
     bool     m_maskOn           = false;
     bool     m_mask[ctl::kLoopSteps] = {};
     bool     stepSounds(int step) const;
+    void     ensureFillMask();
     int64_t  m_lastTick         = -1;
     int      m_lastFilterCc     = -1;
     int      m_lastLfoCc        = -1;

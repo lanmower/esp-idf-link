@@ -21,14 +21,19 @@ void process_state_event(const InputEvent& event,
 
     int held_count = 0;
     for (int i = 0; i < NUM_TOUCH_PADS; i++) held_count += event.pad_held[i] ? 1 : 0;
-    if (held_count == 3 && s_held_count < 3) {
-        g_bassEngine.clearAll();
-    } else if (held_count == 2 && s_held_count != 2) {
+    if (held_count == 2 && s_held_count != 2) {
         ESP_LOGI(TAG, "two pads held -> fill on");
         g_bassEngine.setFill(true);
     } else if (held_count != 2 && s_held_count == 2) {
         ESP_LOGI(TAG, "fill off");
         g_bassEngine.setFill(false);
+    }
+    if (held_count == 3 && s_held_count != 3) {
+        ESP_LOGI(TAG, "three pads held -> unfill on");
+        g_bassEngine.setUnfill(true);
+    } else if (held_count != 3 && s_held_count == 3) {
+        ESP_LOGI(TAG, "unfill off");
+        g_bassEngine.setUnfill(false);
     }
     s_held_count = held_count;
     const bool all4 = event.pad_held[0] && event.pad_held[1]
@@ -36,7 +41,8 @@ void process_state_event(const InputEvent& event,
     if (all4) {
         if (!s_all4_latched) {
             s_all4_latched = true;
-            g_bassEngine.stop();
+            ESP_LOGI(TAG, "four pads held -> reset");
+            g_bassEngine.resetAll();
         }
         for (int i = 0; i < NUM_TOUCH_PADS; i++) {
             s_was_held[i] = event.pad_held[i];

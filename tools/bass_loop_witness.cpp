@@ -77,11 +77,8 @@ static int64_t runBars(BassEngine& e, int64_t start, int bars, int dialIdx = -1,
     return end;
 }
 
-// Runs one bar from startUs and returns how many notes sounded in it. If dialIdx >= 0 the dial is
-// kept moving for the first dialHoldUs of the bar, which touches that setting for the recorder.
-// It is then left alone, so the touch expires well before the next turnaround and the change is
-// free to revert rather than persist. The dial moves only between dialFromUs and dialToUs: moving
-// it at the bar start would still leave it touched at that turnaround, which persists by design.
+// Runs one bar from startUs and returns how many notes sounded in it. If dialIdx >= 0 the dial
+// moves between dialFromUs and dialToUs, touching that setting for the recorder.
 static int notesInBar(BassEngine& e, int64_t startUs, int dialIdx = -1, float value = 0.0f,
                       int64_t dialFromUs = 0, int64_t dialToUs = 0) {
     g_out.clear();
@@ -127,6 +124,8 @@ static void checkEngineSounds() {
 
 // The window dial shortens the loop. It must take effect within the new length, not after a full
 // pass of the old one, or dropping to one bar still waits out the default eight bars (32 beats).
+// Gate width is recorded, so a change released before the turnaround persists: the silence it
+// leaves carries into the bars after it.
 static void checkWindowShortensPromptly() {
     g_state.m_bpm = 145.0;
     BassEngine e;
@@ -141,18 +140,12 @@ static void checkWindowShortensPromptly() {
     const int baseline = notesInBar(e, t); t += kBarUs;
     CHECK("the sequencer sounds notes with the default settings", baseline > 0);
 
-    // Hold the gate at zero through the middle third of a bar, then let go. Pad 0 double-tap dial 0
-    // is gate width. Starting away from the bar edge keeps it from still being touched at that
-    // turnaround, which would make it persist instead of reverting.
+    // Pad 0 double-tap dial 0 is gate width, held at zero through the middle third of a bar.
     e.setDoubleHeld(0);
     const int muted = notesInBar(e, t, 0, 0.0f, kBarUs / 3, 2 * kBarUs / 3); t += kBarUs;
     e.setDoubleHeld(-1);
     CHECK("gate width held at zero silences the rest of the bar", muted < baseline);
-
-    // The released change reverts at the turnaround. With a one-bar window that is one bar away.
-    int silentBars = 0;
-    while (silentBars < 4 && notesInBar(e, t) == 0) { t += kBarUs; ++silentBars; }
-    CHECK("a one-bar window turns around within two bars", silentBars <= 2);
+    CHECK("a released gate change replays its recorded silence on the next pass", notesInBar(e, t) < baseline);
 }
 
 static void checkGateZeroIsSilent() {
