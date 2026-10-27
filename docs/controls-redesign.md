@@ -31,19 +31,19 @@ that pad's double settings. Releasing the pad returns them to the single setting
   does not revert at the turnaround. A recorded loop length would snap back to the default at the very
   boundary it was meant to apply at, so the loop never actually shortened.
 - Every setting is recorded through `ctl::LoopTrack`:
-  - while a dial moves, its setting is recorded at each step it passes (touch expires 250 ms after the last move);
-  - a released change holds until the turnaround;
-  - a change still touched at the turnaround becomes persistent: it replays on later passes, and touching it again
-    overwrites the positions it passes;
-  - a change not held through the turnaround reverts to the setting's baseline.
+  - dials act only while a pad is held; a touch lasts for the whole hold and ends on release;
+  - starting a touch replaces that setting's old recording with a clean line;
+  - while the pads are held, the dial settings record and override the track at each step, still positions included;
+  - the last value stays as the fallback for steps never recorded, so an adjusted setting stays where it was left.
 
 ## Defaults I chose where the request was open
 
 1. **Approach names** (ROLL, ACID and the rest) are removed. Their pads now carry the new settings.
 2. **The loop replaces the 64-bar phrase.** The loop is the phrase.
 3. **Adjustment period** means "touched at the turnaround". A different reading changes the recorder only.
-4. **Clearing** is three pads pressed together: it clears every recording and the sounding notes. Two pads
-   held together turn fill on, which snapshots the sounding sixteenths into a mute mask kept until a clear.
+4. **Fill and reset.** Two pads held record fill, marking each step the loop passes while held. Three pads held
+   unfill, removing each step passed. Four pads reset: they clear every recording and fill, and return every setting
+   to its default. Nothing is copied from the rhythm; steps never held keep following it.
 5. **Fake sidechain** is series 0 of the volume-modulation dial: it skips the first sixteenth of every
    beat. It is part of the dial's range, not always on, so a fully open gate is reachable.
 6. **Volume-modulation dial range:** series 0 fake sidechain, 1-8 repetitive tilings (8 is fully open,

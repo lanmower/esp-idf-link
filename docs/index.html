@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BASS CONTROLS</title>
+<style>
+  @page { size: A4; margin: 12mm; }
+  * { box-sizing: border-box; border-radius: 0; }
+  body {
+    margin: 0; padding: 16px;
+    background: #fff; color: #000;
+    font: 15px/1.35 "Courier New", Courier, monospace;
+  }
+  h1 { font-size: 40px; line-height: 1; margin: 0 0 12px; text-transform: uppercase; letter-spacing: -1px; }
+  h2 {
+    font-size: 18px; text-transform: uppercase; margin: 22px 0 8px;
+    border-top: 4px solid #000; padding-top: 6px;
+  }
+  p { margin: 0 0 8px; }
+  table { width: 100%; border-collapse: collapse; border: 4px solid #000; }
+  th, td { border: 2px solid #000; padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: #000; color: #fff; text-transform: uppercase; font-size: 13px; }
+  td.pad { font-size: 28px; font-weight: 700; text-align: center; width: 70px; }
+  .rule { border: 4px solid #000; padding: 10px; margin: 8px 0; }
+  .rule b { display: inline-block; min-width: 120px; text-transform: uppercase; }
+  .key { font-weight: 700; text-transform: uppercase; }
+  .foot { margin-top: 18px; font-size: 12px; border-top: 4px solid #000; padding-top: 6px; }
+  @media print {
+    body { padding: 0; }
+    th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    h2, table, .rule { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Bass<br>controls</h1>
+<p>Four pads. Two dials. Nothing else.</p>
+
+<h2>1 · Pads</h2>
+<div class="rule">
+  <b>Tap</b> selects that pad's single settings and starts the sequencer.<br>
+  <b>Double-tap, hold</b> sends the dials to that pad's double settings. Release to return.
+</div>
+
+<h2>2 · Dials</h2>
+<div class="rule">
+  <b>Dials act only while a pad is held.</b> With no pad held they do nothing.<br>
+  Moving or holding a dial still while a pad is held records it.
+</div>
+
+<h2>3 · Settings</h2>
+<table>
+  <tr><th>Pad</th><th>Tap: dial 1 / dial 2</th><th>Double-tap, hold: dial 1 / dial 2</th></tr>
+  <tr>
+    <td class="pad">1</td>
+    <td>scale / width<br>(held pitch to arp)</td>
+    <td>gate width / arp speed</td>
+  </tr>
+  <tr>
+    <td class="pad">2</td>
+    <td>pitch offset / rhythm<br>(32 step patterns)</td>
+    <td>random octave / random drop-out</td>
+  </tr>
+  <tr>
+    <td class="pad">3</td>
+    <td>LFO type / LFO speed<br>(mod wheel)</td>
+    <td>LFO width / filter shift<br>(CC 74)</td>
+  </tr>
+  <tr>
+    <td class="pad">4</td>
+    <td>trance gate / octave</td>
+    <td>loop window (1 or 2 bars) / aberration</td>
+  </tr>
+</table>
+
+<h2>4 · Record</h2>
+<div class="rule">
+  <b>Two pads</b> hold: record <span class="key">fill</span>. Each step the loop passes while held is marked.<br>
+  <b>Three pads</b> hold: record <span class="key">unfill</span>. Each step passed while held is removed.<br>
+  <b>Release</b> stops recording. The loop plays what is set, with the recorded changes.
+</div>
+
+<h2>5 · Reset</h2>
+<div class="rule">
+  <b>Four pads</b> at once: clear every recording and fill, and set every setting to its default. Stops the sequencer.
+</div>
+
+<h2>6 · Loop</h2>
+<p>The loop is at most two bars (eight beats). The loop window setting chooses one or two bars.</p>
+
+<div class="foot">ESP-IDF LINK · BASS SEQUENCER · CONTROL CARD · PRINT THIS PAGE</div>
+
+</body>
+</html>
