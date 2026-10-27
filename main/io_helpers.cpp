@@ -357,7 +357,7 @@ bool read_controls(
             pad_touched[i] = last_pad_touched[i];
         }
     }
-    if (pad_touched[0] && pad_touched[1] && pad_touched[2] && pad_touched[3]) {
+    if (changed && pad_touched[0] && pad_touched[1] && pad_touched[2] && pad_touched[3]) {
         ESP_LOGI(TAG, "ALL PADS HELD: [%d,%d,%d,%d] (values: [%u,%u,%u,%u])",
                 pad_touched[0], pad_touched[1], pad_touched[2], pad_touched[3],
                 touch_values[0], touch_values[1], touch_values[2], touch_values[3]);

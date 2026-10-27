@@ -61,6 +61,8 @@ void tickTask(void *userParam) {
     static bool was_playing = false;
     InputEvent current_input_event;
     uint32_t ulNotifiedValue;
+    static uint32_t s_input_tick = 0;
+    static constexpr uint32_t INPUT_POLL_TICKS = 8;  // 2 ms at LINK_TICK_PERIOD 250 us
 
     while (true) {
         if (xTaskNotifyWait(0, ULONG_MAX, &ulNotifiedValue, pdMS_TO_TICKS(20)) != pdTRUE)
@@ -75,7 +77,14 @@ void tickTask(void *userParam) {
         if (ulNotifiedValue & LINK_TICK_NOTIFY_BIT) {
             handle_link_sync(was_connected, start_wait_time, force_start,
                              was_playing, state, time);
-            update_input_state(current_input_event);
+            // Touch and pot reads are slow, so they run every INPUT_POLL_TICKS. The note step runs on
+            // every tick, so the reads no longer delay it.
+            if (s_input_tick++ % INPUT_POLL_TICKS == 0) {
+                update_input_state(current_input_event);
+            } else {
+                current_input_event.timestamp_us = esp_timer_get_time();
+                for (int i = 0; i < NUM_POTS; ++i) current_input_event.pot_moved[i] = false;
+            }
             process_state_event(current_input_event, state, time);
         }
     }
