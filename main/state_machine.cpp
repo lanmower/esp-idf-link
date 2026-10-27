@@ -7,6 +7,9 @@ static const char* TAG = "SM";
 // A second tap on the same pad within this window is a double tap.
 static const uint64_t DOUBLE_TAP_WINDOW_US = 300000;
 
+// How long a pad count must hold still before the fill and unfill taps act on it.
+static const uint64_t TAP_SETTLE_US = 40000;
+
 static uint64_t s_tap_stamp_us[NUM_TOUCH_PADS]   = {0, 0, 0, 0};
 static bool     s_tap_pending[NUM_TOUCH_PADS]    = {false, false, false, false};
 static bool     s_was_held[NUM_TOUCH_PADS]       = {false, false, false, false};
@@ -16,11 +19,23 @@ void process_state_event(const InputEvent& event,
                          const ableton::Link::SessionState& link_state,
                          const std::chrono::microseconds& link_time)
 {
-    static bool s_all4_latched = false;
-    static int  s_held_count = 0;
+    static bool     s_all4_latched = false;
+    static int      s_held_count = 0;
+    static int      s_candidate_count = 0;
+    static uint64_t s_candidate_since_us = 0;
 
-    int held_count = 0;
-    for (int i = 0; i < NUM_TOUCH_PADS; i++) held_count += event.pad_held[i] ? 1 : 0;
+    // The tap only counts once the pad count has held still for TAP_SETTLE_US: a flickering touch
+    // would otherwise end the recording and re-seed it on every bounce.
+    int raw_count = 0;
+    for (int i = 0; i < NUM_TOUCH_PADS; i++) raw_count += event.pad_held[i] ? 1 : 0;
+    if (raw_count != s_candidate_count) {
+        s_candidate_count = raw_count;
+        s_candidate_since_us = event.timestamp_us;
+    }
+    int held_count = s_held_count;
+    if (s_candidate_count != s_held_count && event.timestamp_us - s_candidate_since_us >= TAP_SETTLE_US) {
+        held_count = s_candidate_count;
+    }
     if (held_count == 2 && s_held_count != 2) {
         ESP_LOGI(TAG, "two pads held -> fill on");
         g_bassEngine.setFill(true);
