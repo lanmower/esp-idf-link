@@ -173,9 +173,9 @@ void BassEngine::stepBoundary(int step) {
         m_frame[c] = m_track[c].valueAt(step, m_live[c]);
     }
     if (m_fill) {
-        m_mask[step] = true;
+        m_fillMark[step] = MARK_ADD;
     } else if (m_unfill) {
-        m_mask[step] = false;
+        m_fillMark[step] = MARK_REMOVE;
     }
     // The window is structural, not automation: it reads the live dial, so the loop length follows
     // the dial and is never a recorded track.
@@ -192,7 +192,7 @@ void BassEngine::arpEvent(int step, int64_t loopTick, int period, int64_t t) {
     // Onset from the rhythm pattern.
     const float gate = ctl::gateWidthForDial(m_frame[SET_GATE]);
     if (gate <= 0.0f) return;
-    if (m_maskOn ? !m_mask[step] : !stepSounds(step)) return;
+    if (!soundsAt(step)) return;
 
     // Pitch from the arp, around the selected pitch.
     const int64_t k = loopTick / period;
@@ -287,7 +287,7 @@ void BassEngine::resetAll() {
 void BassEngine::clearFill() {
     m_fill = false;
     m_unfill = false;
-    m_maskOn = false;
+    for (FillMark& mark : m_fillMark) mark = MARK_NONE;
 }
 
 void BassEngine::setFill(bool on) {
@@ -295,7 +295,6 @@ void BassEngine::setFill(bool on) {
     if (on) {
         m_unfill = false;
         m_active = true;
-        ensureFillMask();
     }
 }
 
@@ -304,15 +303,15 @@ void BassEngine::setUnfill(bool on) {
     if (on) {
         m_fill = false;
         m_active = true;
-        ensureFillMask();
     }
 }
 
-void BassEngine::ensureFillMask() {
-    if (m_maskOn) return;
-    // The first fill starts from the steps that sound now; fill and unfill then edit them.
-    for (int i = 0; i < ctl::kLoopSteps; i++) m_mask[i] = stepSounds(i);
-    m_maskOn = true;
+bool BassEngine::soundsAt(int step) const {
+    switch (m_fillMark[step]) {
+        case MARK_ADD:    return true;
+        case MARK_REMOVE: return false;
+        default:          return stepSounds(step);
+    }
 }
 
 bool BassEngine::stepSounds(int step) const {

@@ -99,10 +99,11 @@ private:
     bool     m_active           = false;
     bool     m_fill             = false;
     bool     m_unfill           = false;
-    bool     m_maskOn           = false;
-    bool     m_mask[ctl::kLoopSteps] = {};
+    // What the held pads recorded at each step. A step never held follows the rhythm.
+    enum FillMark : uint8_t { MARK_NONE, MARK_ADD, MARK_REMOVE };
+    FillMark m_fillMark[ctl::kLoopSteps] = {};
     bool     stepSounds(int step) const;
-    void     ensureFillMask();
+    bool     soundsAt(int step) const;
     int64_t  m_lastTick         = -1;
     int      m_lastFilterCc     = -1;
     int      m_lastLfoCc        = -1;
