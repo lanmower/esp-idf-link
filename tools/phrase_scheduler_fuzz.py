@@ -1740,8 +1740,16 @@ def main() -> int:
     minimal_case = run_minimal_tempo_case(SEEDS[0], Fraction(120, 1), Fraction(60, 1), 1000)
     minimal_p3_cache: Dict[Tuple[str, str, int], Dict[str, Any]] = {}
     report = build_report(parity, results, minimal_case, minimal_p3_cache)
-    with open(args.report, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(report)
+    report_path = Path(args.report)
+    try:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        with report_path.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(report)
+    except OSError:
+        import tempfile
+        report_path = Path(tempfile.mkdtemp(prefix="phrase-fuzz-")) / "report.txt"
+        with report_path.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(report)
     all_violations = [v for result in results for v in result.violations]
     print(
         f"scenarios={len(results)} parity={parity['status']} "
@@ -1751,7 +1759,7 @@ def main() -> int:
             for prop in PROPERTY_NAMES
         )
     )
-    print(f"report={args.report}")
+    print(f"report={report_path}")
     known_p6 = sum(
         1 for v in all_violations
         if v.prop == "P6" and v.signature == "no_post_stall_callback"
