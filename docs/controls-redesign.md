@@ -1,4 +1,4 @@
-# Bassline controls: the 8-bar loop, four pads, two dials
+# Bassline controls: the eight-beat loop, four pads, two dials
 
 Status: **implemented in firmware** (`main/bass_engine.cpp`, `main/state_machine.cpp`, `main/control_model.{h,cpp}`)
 and host-witnessed in CI (`tools/control-model-witness.sh`, `tools/bass-loop-witness.sh`). The approach-based engine,
@@ -50,8 +50,9 @@ that pad's double settings. Releasing the pad returns them to the single setting
    every sixteenth), 9-24 polyrhythmic, 25-31 random. Every sixteenth is one dial position away.
 7. **Random patterns** are seeded when a setting is touched, so each new change gives a new pattern, and the same
    entry gives the same pattern.
-8. **Defaults at boot:** scale 0, width 0, pitch offset 0, rhythm 31 (every sixteenth), LFO sine at 0.25 cycles
-   per bar, volume modulation series 8 (fully open), octave 0, gate width 50 percent, arp 16ths, no random octave
+8. **Defaults at boot:** scale 0, width 0, pitch offset 0, rhythm 31 (every sixteenth), LFO sine with the speed dial
+   at 0.25 (`lfoCyclesPerBarForDial(0.25)` = 1.1875 cycles per bar), volume modulation series 8 (fully open),
+   octave 0, gate width 50 percent, arp 16ths, no random octave
    or drop-out, LFO width 0, filter centred, loop 2 bars (8 beats), no aberration. Those defaults are a gated
    sixteenth-note roll, because the rhythm is every sixteenth and the gate is fully open.
 

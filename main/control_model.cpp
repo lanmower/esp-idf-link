@@ -149,6 +149,14 @@ void LoopTrack::setTouched(bool touched) {
     touched_ = touched;
 }
 
+void LoopTrack::startRecording(float value) {
+    for (int i = 0; i < kLoopSteps; i++) valid_[i] = false;
+    persistent_ = false;
+    hold_ = value;
+    holdValid_ = true;
+    touched_ = true;
+}
+
 float LoopTrack::valueAt(int step, float liveValue) {
     if (step < 0) step = 0;
     if (step >= kLoopSteps) step = kLoopSteps - 1;

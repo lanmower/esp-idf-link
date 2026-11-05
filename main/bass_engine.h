@@ -6,7 +6,7 @@
 #include <ableton/Link.hpp>
 #include "control_model.h"
 
-// The bassline sequencer. An 8-bar loop of sixteenths, driven by the Link beat. Pads choose which
+// The bassline sequencer. An eight-beat loop of sixteenths (at most two bars), driven by the Link beat. Pads choose which
 // settings the two dials control (single tap), and double-tap-and-hold switches the dials to that
 // pad's double-tap settings. Every setting is recorded as the loop plays (see ctl::LoopTrack).
 class BassEngine {
@@ -81,7 +81,7 @@ private:
     void  tick(int64_t t);
     void  stepBoundary(int step);
     void  arpEvent(int step, int64_t loopTick, int period, int64_t t);
-    void  sendLfoAndFilter(int64_t loopTick);
+    void  sendLfoAndFilter(int64_t absTick);
     void  endDueNotes(int64_t t);
     void  allNotesOff();
     void  sendNoteOn(int note);
