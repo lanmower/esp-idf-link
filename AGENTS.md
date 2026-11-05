@@ -195,6 +195,13 @@ IDF 6.x breaks (each re-breaks on a bump): esp_netif_next() -> esp_netif_next_un
 mc-420 (Pi-side peer) reachable by SendMessage; sibling /config/workspace/mc-420; reassoc-watch.js logs only Date.now() deltas -> reconstruct absolute times; Pi ssh credentials are read-only probing, never commit. The fixed SSH host key is kept out of git (owner 2026-10-26); boot_tree_apkovl rebuilds drop it unless the key is wired into the build.
 ../aloopprime is fetch-only (origin.pushurl = no-push): git_finalize commits, gm refuses push push_disabled_by_config; local commits intended, don't edit .git/config. Campaign PRD rows live in gm's PRD store, not here.
 
+## Comment-sweep facts (INVARIANT 4, 2026-11-05)
+Verified against current main/; facts formerly carried as code comments.
+- g_role_epoch (wifi_config.cpp:76) bumps before role teardown; relay snapshots it before an esp_netif_tcpip_exec emit and re-checks after, dropping work if the role moved. Relay waits on select() with RELAY_SELECT_TIMEOUT_US=20 ms, not SO_RCVTIMEO; wifi_stop_link_relay waits 250 x 20 ms = 5 s and clears g_relay_stop on a failed stop. relay_wake_recv() still sends to 127.0.0.1 but LWIP_NETIF_LOOPBACK is off — vestigial, investigate.
+- After AP->STA yield the supervisor zeroes igmp_reassert_countdown so the next 2 s tick re-asserts IGMP (else IGMP_REASSERT_PERIOD_TICKS=15 x 2 s = 30 s). wifi_supervisor_task stack 8192 bytes (tie-break runs stop/destroy/start/connect/join inline). Flag-on WIFI_NO_TEARDOWN_ROLE_SWITCH gates console witnesses role: and ap cfg: (docs/netif-redesign-plan.md H3/H2).
+- main.cpp INPUT_POLL_TICKS=8 x LINK_TICK_PERIOD 250 us = 2 ms: touch/pot reads every 8 ticks, note step every tick. state_machine.cpp DOUBLE_TAP_WINDOW_US=300 ms; TAP_SETTLE_US=40 ms debounces pad-count changes (flicker would end and re-seed the recorder).
+- tools/failover-outage.sh runs ON THE PI as root (mc-420), busybox-safe, default 100 s: autoap stop -> kill hostapd -> hold -> autoap start; EXIT trap with started=0 restores the AP once; ESP judged from its own serial log; outage-only iw scan only between STOP and START.
+
 ## gm usage gotchas
 
 - codesearch canonical: exhaustive literal/regex/filename REFUSE unknown fields; scope path/files/glob (not scope); literal tree only -> dual for commit messages; stale_tree = local-only results, no proven zero.

@@ -1,4 +1,3 @@
-// Host stub of io_helpers.h: the two emitters the bass engine calls.
 #pragma once
 #include <cstddef>
 #include <cstdint>

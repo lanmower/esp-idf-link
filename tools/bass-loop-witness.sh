@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Build and run the bass loop witness off-device (no ESP-IDF, no board).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/.." && pwd)"

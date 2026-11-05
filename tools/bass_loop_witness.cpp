@@ -1,5 +1,3 @@
-// Host witness for the bass loop sequencer (main/bass_engine.cpp). Build and run with
-// tools/bass-loop-witness.sh. Each check states the property it witnesses.
 #include "bass_engine.h"
 
 #include <cstdio>
@@ -60,16 +58,15 @@ static bool hasCc(size_t from, uint8_t cc) {
 }
 
 static ableton::Link::SessionState g_state;
-static constexpr int64_t kStepUs = 1000;                 // one simulated millisecond per call
-static constexpr int64_t kBarUs  = 1655172;              // 4 beats at 145 bpm
-static constexpr int kDialEvery  = 10;                   // keep a dial touched across the run
+static constexpr int64_t kStepUs = 1000;
+static constexpr int64_t kBarUs  = 1655172;
+static constexpr int kDialTouchIntervalCalls = 10;
 
-// Runs `bars` bars from `start`. If `dialIdx` >= 0, the dial is kept at `value` throughout.
 static int64_t runBars(BassEngine& e, int64_t start, int bars, int dialIdx = -1, float value = 0.0f) {
     const int64_t end = start + static_cast<int64_t>(bars) * kBarUs;
     int n = 0;
     for (int64_t t = start; t <= end; t += kStepUs, n++) {
-        if (dialIdx >= 0 && n % kDialEvery == 0) {
+        if (dialIdx >= 0 && n % kDialTouchIntervalCalls == 0) {
             e.setDial(dialIdx, value, static_cast<uint64_t>(t));
         }
         e.process(g_state, std::chrono::microseconds(t), static_cast<uint64_t>(t));
@@ -77,8 +74,6 @@ static int64_t runBars(BassEngine& e, int64_t start, int bars, int dialIdx = -1,
     return end;
 }
 
-// Runs one bar from startUs and returns how many notes sounded in it. If dialIdx >= 0 the dial
-// moves between dialFromUs and dialToUs, touching that setting for the recorder.
 static int notesInBar(BassEngine& e, int64_t startUs, int dialIdx = -1, float value = 0.0f,
                       int64_t dialFromUs = 0, int64_t dialToUs = 0) {
     g_out.clear();
@@ -87,7 +82,7 @@ static int notesInBar(BassEngine& e, int64_t startUs, int dialIdx = -1, float va
     if (dialIdx >= 0) e.setTouchHeld(true);
     for (int64_t t = startUs; t < end; t += kStepUs, ++n) {
         const int64_t into = t - startUs;
-        if (dialIdx >= 0 && into >= dialFromUs && into < dialToUs && n % kDialEvery == 0) {
+        if (dialIdx >= 0 && into >= dialFromUs && into < dialToUs && n % kDialTouchIntervalCalls == 0) {
             e.setDial(dialIdx, value, static_cast<uint64_t>(t));
         }
         e.process(g_state, std::chrono::microseconds(t), static_cast<uint64_t>(t));
@@ -113,8 +108,6 @@ static void checkEngineSounds() {
     CHECK("filter CC74 is sent on the first step", hasCc(0, 74));
     CHECK("mod wheel CC1 is sent by the LFO", hasCc(0, 1));
 
-    // Four bars at 145 bpm hold 64 sixteenths. The default rhythm is every sixteenth and the
-    // default volume modulation is fully open, so the default is a note on every sixteenth.
     CHECK("the default plays a note on every sixteenth", countNoteOn(0) >= 60);
 
     e.stop();
@@ -124,16 +117,11 @@ static void checkEngineSounds() {
     }
 }
 
-// The window dial shortens the loop. It must take effect within the new length, not after a full
-// pass of the old one, or dropping to one bar still waits out the default eight bars (32 beats).
-// Gate width is recorded, so a change released before the turnaround persists: the silence it
-// leaves carries into the bars after it.
 static void checkWindowShortensPromptly() {
     g_state.m_bpm = 145.0;
     BassEngine e;
     e.selectSingle(0);
 
-    // Pad 3 double-tap dial 0 is the loop window; 0.0 is one bar.
     e.setDoubleHeld(3);
     e.setDial(0, 0.0f, 0);
     e.setDoubleHeld(-1);
@@ -142,7 +130,6 @@ static void checkWindowShortensPromptly() {
     const int baseline = notesInBar(e, t); t += kBarUs;
     CHECK("the sequencer sounds notes with the default settings", baseline > 0);
 
-    // Pad 0 double-tap dial 0 is gate width, held at zero through the middle third of a bar.
     e.setDoubleHeld(0);
     const int muted = notesInBar(e, t, 0, 0.0f, kBarUs / 3, 2 * kBarUs / 3); t += kBarUs;
     e.setDoubleHeld(-1);
@@ -155,7 +142,6 @@ static void checkGateZeroIsSilent() {
     BassEngine e;
     e.selectSingle(0);
     e.setDoubleHeld(0);
-    // Double-tap pad 0, dial 0: gate width, held at zero.
     runBars(e, 0, 2, 0, 0.0f);
     CHECK("gate width held at zero plays nothing", countNoteOn(0) == 0);
     e.setDoubleHeld(-1);
@@ -166,15 +152,12 @@ static void checkDropOutIsSilent() {
     BassEngine e;
     e.selectSingle(1);
     e.setDoubleHeld(1);
-    // Double-tap pad 1, dial 1: random note drop-out, held at full.
     runBars(e, 0, 2, 1, 1.0f);
     CHECK("random drop-out at full removes every note", countNoteOn(0) == 0);
     e.setDoubleHeld(-1);
 }
 
 static void checkDoubleRoutesDials() {
-    // With no pad double-held, dial 0 belongs to the active single pad. A tap on pad 2 selects
-    // its settings, and the notes still sound.
     g_out.clear();
     BassEngine e;
     e.selectSingle(2);

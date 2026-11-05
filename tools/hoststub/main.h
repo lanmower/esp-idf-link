@@ -1,4 +1,3 @@
-// Host stub of main.h: the minimum the bass engine needs to compile off-device.
 #pragma once
 #include <cstdint>
 #include <cstddef>

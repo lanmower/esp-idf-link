@@ -1,4 +1,3 @@
-// Host stub of esp_random.h: deterministic, so a witness run is reproducible.
 #pragma once
 #include <cstdint>
 #include <random>

@@ -1,5 +1,3 @@
-// Host witness for main/control_model.{h,cpp}. Build and run with tools/control-model-witness.sh.
-// Each check states the property it witnesses; a failed check exits non-zero with its name.
 #include "control_model.h"
 
 #include <cstdio>
@@ -67,12 +65,10 @@ static void checkTranceGates() {
     }
     CHECK("series 0 to 8 repeat every 8 steps", repetitive);
 
-    // Series 0 is the fake sidechain: it mutes only the first sixteenth of every beat.
     const uint32_t sc = tranceGate(0, 7u);
     CHECK("series 0 mutes the first sixteenth of every beat", !(sc & 0x1u) && !(sc & (1u << 4)));
     CHECK("series 0 sounds every other sixteenth", popcount32(sc) == 24);
 
-    // Series 8 is the fully open gate, so a roll of every sixteenth is one dial position away.
     CHECK("series 8 is fully open", popcount32(tranceGate(8, 0u)) == 32);
 
     CHECK("series 9 is polyrhythmic with three onsets", popcount32(tranceGate(9, 0u)) == 3);
@@ -111,7 +107,7 @@ static void checkTouchPersists() {
     t.setBaseline(0.5f);
     t.setTouched(true);
     for (int s = 0; s < 10; s++) t.valueAt(s, 0.8f);
-    t.turnaround();  // still touched at the loop boundary, so the recording is kept
+    t.turnaround();
     CHECK("touched at the turnaround becomes persistent", t.persistent());
     t.setTouched(false);
     CHECK("a persistent recording replays on the next pass", t.valueAt(4, 0.5f) == 0.8f);
@@ -126,7 +122,7 @@ static void checkReleasePersists() {
     t.setBaseline(0.25f);
     t.setTouched(true);
     for (int s = 0; s < 6; s++) t.valueAt(s, 0.9f);
-    t.setTouched(false);  // released before the turnaround
+    t.setTouched(false);
     t.turnaround();
     CHECK("a change released before the turnaround persists", t.persistent());
     CHECK("it replays its recording on the next pass", t.valueAt(2, 0.25f) == 0.9f);
@@ -138,7 +134,7 @@ static void checkOverwrite() {
     t.setTouched(true);
     for (int s = 0; s < 8; s++) t.valueAt(s, 0.3f);
     t.turnaround();
-    t.setTouched(true);  // second pass: touched again over steps 4 to 7
+    t.setTouched(true);
     for (int s = 4; s < 8; s++) t.valueAt(s, 0.7f);
     t.setTouched(false);
     CHECK("touching a persistent setting overwrites the recorded position", t.valueAt(5, 0.0f) == 0.7f);

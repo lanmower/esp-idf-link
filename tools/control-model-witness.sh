@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Build and run the control-model witness off-device (no ESP-IDF needed).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/.." && pwd)"

@@ -70,16 +70,10 @@ static void remember_ap_sta_ip(uint32_t ip) {
 
 static esp_netif_t* g_sta_netif = NULL;
 static esp_netif_t* g_ap_netif = NULL;
-// Bumped when a role teardown begins. The relay snapshots this before an emit and re-reads it
-// around every point where it touches the netif it cached, so a relay that was mid-emit when the
-// role changed drops the work instead of sending through a netif that is being destroyed.
 static volatile uint32_t g_role_epoch = 0;
 static SemaphoreHandle_t g_ap_netif_lock = NULL;
 static TaskHandle_t volatile g_relay_task = NULL;
 static volatile bool g_relay_stop = false;
-// The relay's receive socket, published so wifi_stop_link_relay can wake it. A blocked recvfrom
-// never observes g_relay_stop, and no timeout can be trusted to unblock it, so the stop has to be
-// a wake-up rather than a request.
 static volatile int g_relay_sock = -1;
 
 static int g_fwd_sock = -1;
@@ -197,8 +191,6 @@ static void role_activate_netif(esp_netif_t* n) {
     esp_netif_set_default_netif(n);
 }
 
-// Witness for the flag-on plan (docs/netif-redesign-plan.md, H3): the state of both netifs after
-// every role switch, so the parked netif's admin state and address are read from the console.
 static void role_log(esp_netif_t* in_role) {
     esp_netif_ip_info_t sta_info = {};
     esp_netif_ip_info_t ap_info = {};
@@ -396,7 +388,6 @@ esp_err_t wifi_start_link_ap(const char* ssid) {
     ESP_ERROR_CHECK(ap_cfg_err);
 #if WIFI_NO_TEARDOWN_ROLE_SWITCH
     {
-        // Witness for H2 (the AP is reconfigured on a running APSTA): what the driver reports it applied.
         wifi_config_t applied = {};
         uint8_t ap_mac[6] = {0};
         esp_wifi_get_config(WIFI_IF_AP, &applied);
@@ -794,8 +785,6 @@ extern "C" void wifi_link_multicast_forward(const uint8_t* data, unsigned len, u
 
 static const uint32_t RELAY_RECV_TIMEOUT_MS = 20;
 static const uint32_t RELAY_STOP_POLL_MS = 20;
-// The relay's own wait quantum. This, not SO_RCVTIMEO, is what bounds how long the relay can sit
-// before it re-reads g_relay_stop.
 static const long RELAY_SELECT_TIMEOUT_US = 20 * 1000;
 
 struct RelayEmit {
@@ -891,11 +880,6 @@ static void link_multicast_relay_task(void*) {
 
     for (;;) {
         if (g_relay_stop) break;
-        // select() paces the loop and bounds the block. A plain blocking recvfrom cannot be
-        // relied on to return: SO_RCVTIMEO is not guaranteed to be honoured, and measured over
-        // two failover runs the relay sat in recvfrom across 2 s, then 5 s, then a wake-up
-        // datagram, without ever reaching its g_relay_stop check. With select the wait is ours,
-        // and the flag is seen within RELAY_SELECT_TIMEOUT_MS whatever lwIP does with timeouts.
         fd_set readset;
         FD_ZERO(&readset);
         FD_SET(rs, &readset);
@@ -906,8 +890,6 @@ static void link_multicast_relay_task(void*) {
         struct sockaddr_in src = {};
         socklen_t sl = sizeof(src);
         int n = recvfrom(rs, payload, sizeof(payload), 0, (struct sockaddr*)&src, &sl);
-        // Check again on the way out: the wake-up datagram that unblocks the wait arrives here,
-        // and it must be dropped rather than relayed on the way to the exit.
         if (g_relay_stop) break;
         if (n <= 0) continue;
 
@@ -970,9 +952,6 @@ static void link_multicast_relay_task(void*) {
 
         pbuf_free(p);
 
-        // The emit can block on the tcpip thread across a teardown, so re-read the epoch once it
-        // has retired: if the role moved while it was in flight, the netif it just used is on its
-        // way out and the relay drops the work instead of looping back for another emit.
         if (emit_epoch != g_role_epoch) {
             ESP_LOGW(RELAY_TAG, "role changed mid-emit -- dropping the relay");
             break;
@@ -981,15 +960,8 @@ static void link_multicast_relay_task(void*) {
     link_relay_release(rs, rpcb);
 }
 
-// 250 x 20 ms = 5 s. The relay can be parked inside an esp_netif_tcpip_exec that only retires
-// once the tcpip thread gets a turn, so a 2 s ceiling was not enough on a busy core; a caller
-// that must not proceed with a live relay checks g_relay_task afterwards rather than trusting
-// this to have worked.
 static const int RELAY_STOP_MAX_POLLS = 250;
 
-// Send one throwaway datagram to the relay's own port so a blocked recvfrom returns. Measured:
-// the relay never observed g_relay_stop across 2 s, then 5 s, so the yield deferred forever and
-// the mesh sat in a dual-host state. Asking politely did not work; this wakes it.
 static void relay_wake_recv() {
     const int rs = g_relay_sock;
     if (rs < 0) return;
@@ -1016,9 +988,6 @@ void wifi_stop_link_relay() {
     }
     if (g_relay_task) {
         ESP_LOGE(TAG, "relay did not stop after %d polls -- leaving it running", polls);
-        // Clear the latch. Leaving g_relay_stop set means every later wifi_start_link_relay
-        // creates a relay that exits on its first pass, so one failed stop turns the ESP into a
-        // permanently relay-less host. Failing to stop is recoverable; staying latched is not.
         g_relay_stop = false;
         return;
     }
@@ -1255,11 +1224,6 @@ static void wifi_supervisor_task(void* arg) {
                 esp_wifi_stop();
                 g_wifi_started = false;
                 if (g_sta_netif) {
-                    // destroy_DEFAULT_wifi, not destroy: the plain call leaves IDF's own
-                    // WIFI_EVENT / IP_EVENT handlers registered against a freed netif. The yield
-                    // then creates a second STA netif, so after esp_wifi_start the driver's
-                    // connect events run esp_netif_action_connected on both handler sets -- an
-                    // indirect call through freed memory, which is what PC 0xffffffff was.
                     esp_netif_destroy_default_wifi(g_sta_netif);
                     g_sta_netif = NULL;
                 }
@@ -1296,16 +1260,7 @@ static void wifi_supervisor_task(void* arg) {
             const bool bssid_is_self = wifi_get_own_ap_mac(own_ap_mac) && memcmp(best, own_ap_mac, 6) == 0;
             if (matches > 0 && !bssid_is_self && memcmp(best, my_mac, 6) < 0) {
                 ESP_LOGW(TAG, "Lost dual-host tie-break (lower BSSID seen) -- dropping AP, joining");
-                // The teardown starts here, ahead of the stop wait: a relay that is mid-emit has to
-                // see the role move while wifi_stop_link_relay is still waiting on it, or it
-                // finishes that emit against the netif this branch is about to destroy.
                 g_role_epoch = g_role_epoch + 1;
-                // Stop OUR traffic before the teardown, and refuse to tear down if it will not
-                // stop. Measured on the first host-AP failover: `wifi_stop_link_relay()` hit its
-                // poll ceiling, logged "relay did not stop after 100 polls -- leaving it running",
-                // and the yield then destroyed the AP netif and restarted Wi-Fi underneath that
-                // still-running task -- Core 0 panicked InstrFetchProhibited at PC 0xffffffff
-                // 70 ms later. Deferring is self-correcting: the supervisor retries next tick.
                 wifi_stop_link_relay();
                 if (g_relay_task) {
                     ESP_LOGW(TAG, "relay still running -- deferring the yield, not tearing down under it");
@@ -1322,13 +1277,7 @@ static void wifi_supervisor_task(void* arg) {
                 SemaphoreHandle_t ap_lock = ap_netif_lock();
                 xSemaphoreTake(ap_lock, portMAX_DELAY);
                 if (g_ap_netif) {
-                    // Settle BEFORE the destroy: esp_wifi_stop posts WIFI_EVENT_AP_STOP
-                    // asynchronously, and destroying the netif first means that event is
-                    // delivered to a handler set whose object is already gone.
                     vTaskDelay(pdMS_TO_TICKS(200));
-                    // destroy_DEFAULT_wifi, not destroy: the plain call leaves IDF's own
-                    // WIFI_EVENT / IP_EVENT handlers registered against a freed netif, and the
-                    // ESP then panicked at PC 0xffffffff once the driver came back up.
                     esp_netif_destroy_default_wifi(g_ap_netif);
                     g_ap_netif = NULL;
                 }
@@ -1336,8 +1285,6 @@ static void wifi_supervisor_task(void* arg) {
                 ensure_sta_started();
 #endif
                 wifi_connect_sta(ssid, "");
-                // The AP-role countdown would hold the station's first join back by up to 30 s.
-                // Zeroing it lets the next tick join once the station has an IP.
                 igmp_reassert_countdown = 0;
                 wifi_join_link_multicast();
             }
@@ -1346,9 +1293,6 @@ static void wifi_supervisor_task(void* arg) {
 }
 
 void wifi_start_supervisor(const char* ssid) {
-    // Stack for the whole role switch, not just the poll loop: the tie-break branch runs
-    // esp_wifi_stop, esp_netif_destroy, esp_wifi_start, the STA connect and an IGMP join
-    // inline, and 4096 bytes was not enough for that depth.
     xTaskCreate(wifi_supervisor_task, "wifi_super", 8192, (void*)ssid, 4, NULL);
 }
 

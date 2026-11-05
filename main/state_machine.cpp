@@ -4,10 +4,8 @@
 
 static const char* TAG = "SM";
 
-// A second tap on the same pad within this window is a double tap.
 static const uint64_t DOUBLE_TAP_WINDOW_US = 300000;
 
-// How long a pad count must hold still before the fill and unfill taps act on it.
 static const uint64_t TAP_SETTLE_US = 40000;
 
 static uint64_t s_tap_stamp_us[NUM_TOUCH_PADS]   = {0, 0, 0, 0};
@@ -24,8 +22,6 @@ void process_state_event(const InputEvent& event,
     static int      s_candidate_count = 0;
     static uint64_t s_candidate_since_us = 0;
 
-    // The tap only counts once the pad count has held still for TAP_SETTLE_US: a flickering touch
-    // would otherwise end the recording and re-seed it on every bounce.
     int raw_count = 0;
     for (int i = 0; i < NUM_TOUCH_PADS; i++) raw_count += event.pad_held[i] ? 1 : 0;
     if (raw_count != s_candidate_count) {
@@ -82,7 +78,6 @@ void process_state_event(const InputEvent& event,
             s_tap_pending[i] = !doubleTap;
             s_tap_stamp_us[i] = event.timestamp_us;
             if (doubleTap) {
-                // Double-tap and hold: the dials control this pad's double-tap settings.
                 s_double_held_by[i] = true;
                 g_bassEngine.setDoubleHeld(i);
             } else {
@@ -94,7 +89,6 @@ void process_state_event(const InputEvent& event,
         }
     }
 
-    // The dials have no effect unless a touch is held.
     g_bassEngine.setTouchHeld(raw_count > 0);
     for (int dial = 0; dial < NUM_POTS; dial++) {
         if (event.pot_moved[dial] && raw_count > 0) {

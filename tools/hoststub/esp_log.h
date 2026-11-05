@@ -1,4 +1,3 @@
-// Host stub of esp_log.h: silent unless PSYLOG is set in the environment.
 #pragma once
 #include <cstdio>
 #include <cstdlib>

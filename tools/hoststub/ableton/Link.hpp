@@ -1,4 +1,3 @@
-// Host stub of ableton/Link.hpp: a linear-tempo SessionState, which is all the bass engine reads.
 #pragma once
 #include <chrono>
 #include <cmath>
