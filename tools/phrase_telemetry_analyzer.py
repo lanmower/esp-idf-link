@@ -865,22 +865,22 @@ def generate_synthetic_rows():
     return rows
 
 
-def write_self_test_data(rows):
-    path = Path(SELF_TEST_DATA)
+def write_self_test_data(rows, data_path=SELF_TEST_DATA):
+    path = Path(data_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, separators=(",", ":")) + "\n")
 
 
-def write_self_test_report(result):
-    path = Path(SELF_TEST_REPORT)
+def write_self_test_report(result, report_path=SELF_TEST_REPORT, data_path=SELF_TEST_DATA):
+    path = Path(report_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "PHRASE TELEMETRY SYNTHETIC SELF-TEST",
         "RESULT: " + ("PASS" if result["passed"] else "FAIL"),
         "GENERATED_UTC: " + result["generated_utc"],
-        "GENERATED_DATA: " + SELF_TEST_DATA,
+        "GENERATED_DATA: " + data_path,
         "REQUIRED_FLAGS: " + ", ".join(result["required_flags"]),
         "FLAG_COUNTS: " + json.dumps(result["flag_counts"], sort_keys=True),
         "ASSERTIONS:",
@@ -897,8 +897,16 @@ def write_self_test_report(result):
 
 def run_self_test(args, constants):
     rows = generate_synthetic_rows()
-    write_self_test_data(rows)
-    loaded, parse_errors, start_epoch = load_rows(SELF_TEST_DATA)
+    data_path, report_path = SELF_TEST_DATA, SELF_TEST_REPORT
+    try:
+        write_self_test_data(rows, data_path)
+    except OSError:
+        import tempfile
+        scratch = tempfile.mkdtemp(prefix="phrase-self-test-")
+        data_path = str(Path(scratch) / "data.jsonl")
+        report_path = str(Path(scratch) / "report.txt")
+        write_self_test_data(rows, data_path)
+    loaded, parse_errors, start_epoch = load_rows(data_path)
     analysis = analyze(loaded, args, constants, parse_errors)
     flags = set(analysis["anomaly_counts"].keys())
     required_flags = [
@@ -924,9 +932,15 @@ def run_self_test(args, constants):
         "no_reply_vs_peers0": no_reply_vs_peers0,
         "boundary_anomalies": [item for item in analysis["anomalies"] if item["type"].startswith("phrase_") or item["type"].startswith("reset_")][:20],
         "generated_utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-        "report": SELF_TEST_REPORT,
+        "report": report_path,
     }
-    write_self_test_report(result)
+    try:
+        write_self_test_report(result, report_path, data_path)
+    except OSError:
+        import tempfile
+        report_path = str(Path(tempfile.mkdtemp(prefix="phrase-self-test-")) / "report.txt")
+        result["report"] = report_path
+        write_self_test_report(result, report_path, data_path)
     if not result["passed"]:
         raise AssertionError("synthetic self-test missing required flags")
     return result
@@ -1996,7 +2010,7 @@ def main(argv=None):
         try:
             self_test = run_self_test(args, constants)
         except Exception as exc:
-            print(json.dumps({"ok": False, "status": "SELF_TEST", "self_test": {"passed": False, "error": repr(exc)}}, separators=(",", ":")))
+            print(json.dumps({"ok": False, "status": "SELF_TEST", "self_test": {"passed": False, "error": repr(exc), "path": str(getattr(exc, "filename", "") or "")}}, separators=(",", ":")))
             return 1
         print(json.dumps({"ok": True, "status": "SELF_TEST", "self_test": {key: self_test[key] for key in ("passed", "generated_rows", "required_flags", "assertions", "flag_counts", "report")}}, separators=(",", ":")))
         return 0
