@@ -319,7 +319,11 @@ QuantumInfo detectQuantumBoundary(const ableton::Link::SessionState& state,
     info.beatFraction = info.phaseWithinQuantum - std::floor(info.phaseWithinQuantum);
 
     info.phaseWithinPhrase = state.phaseAtTime(time, PHRASE_BEATS);
-    info.currentPhraseNumber = static_cast<int>(std::floor(info.sessionBeat / PHRASE_BEATS));
+    // beatAtTime is phase-encoded: with quantum 16 its value can sit up to 48 beats off the
+    // 64-beat phrase grid when beatOrigin is not 64-aligned. Derive the phrase number from a
+    // 64-beat encoding so a boundary is always a true phrase downbeat.
+    info.phraseBeat = state.beatAtTime(time, PHRASE_BEATS);
+    info.currentPhraseNumber = static_cast<int>(std::floor(info.phraseBeat / PHRASE_BEATS));
 
     if (!s_quantum_baseline_captured) {
         s_quantum_baseline_captured = true;
@@ -756,7 +760,7 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
         }
 
         if (crossedPhraseBoundary) {
-            send_song_position(sessionBeat);
+            send_song_position(quantumInfo.phraseBeat);
             if (s_pending_realign && (is_playing || force_start)) {
                 const uint8_t start_msg = s_transport_running ? MIDI_CONTINUE : MIDI_START;
                 send_midi_bytes(&start_msg, 1);

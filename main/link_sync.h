@@ -9,6 +9,7 @@
 
 struct QuantumInfo {
     double sessionBeat;
+    double phraseBeat;
     double phaseWithinQuantum;
     int currentQuantumNumber;
     bool crossedQuantumBoundary;
