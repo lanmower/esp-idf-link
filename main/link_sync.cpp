@@ -406,7 +406,10 @@ void link_sync_send_boot_panic() {
 }
 
 static void send_song_position(double sessionBeat) {
-    uint16_t spp_units = static_cast<uint16_t>(sessionBeat * MIDI_SPP_UNITS_PER_BEAT) & MIDI_SPP_UNITS_MASK;
+    constexpr double kSppWrap = static_cast<double>(MIDI_SPP_UNITS_MASK) + 1.0;
+    double units = std::fmod(sessionBeat * MIDI_SPP_UNITS_PER_BEAT, kSppWrap);
+    if (units < 0.0) units += kSppWrap;
+    const uint16_t spp_units = static_cast<uint16_t>(units);
     const uint8_t spp[] = { MIDI_SONG_POSITION_POINTER,
                             (uint8_t)(spp_units & MIDI_DATA_BYTE_MASK),
                             (uint8_t)((spp_units >> MIDI_DATA_BYTE_SHIFT) & MIDI_DATA_BYTE_MASK) };
