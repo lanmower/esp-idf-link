@@ -75,6 +75,9 @@ public:
     void setTouched(bool touched);
     bool touched() const { return touched_; }
 
+    // Start a clean recording whose unvisited steps fall back to the current dial value.
+    void startRecording(float value);
+
     // The value at a loop step. While touched, the live value is recorded at the step and returned.
     float valueAt(int step, float liveValue);
 

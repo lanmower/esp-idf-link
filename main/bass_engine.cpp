@@ -101,16 +101,16 @@ void BassEngine::setDoubleHeld(int pad) {
 void BassEngine::setDial(int dial, float v01, uint64_t nowUs) {
     if (dial < 0 || dial > 1) return;
     const int c = settingFor(dial);
-    touchSetting(c);
     m_live[c] = std::clamp(v01, 0.0f, 1.0f);
     m_lastMoveUs[c] = nowUs;
+    touchSetting(c);
 }
 
 void BassEngine::touchSetting(int c) {
     if (m_touched[c]) return;
-    // A new change: its random patterns are seeded afresh.
+    // A new change: its random patterns are seeded afresh and the clean line starts at this value.
     m_touched[c] = true;
-    m_track[c].setTouched(true);
+    m_track[c].startRecording(m_live[c]);
     m_entrySeed[c] = ctl::hash32(m_seedCounter++, static_cast<uint32_t>(c), 0x51u) | 1u;
 }
 
@@ -153,14 +153,17 @@ void BassEngine::process(const ableton::Link::SessionState& state,
     if (!m_active) return;
 
     const double beat = state.beatAtTime(time, LINK_QUANTUM);
-    if (beat < 0.0) return;
+    if (beat < 0.0) {
+        if (!m_activeNotes.empty()) allNotesOff();
+        m_lastTick = -1;
+        return;
+    }
     const int64_t now = static_cast<int64_t>(std::floor(beat * static_cast<double>(kTicksPerBeat)));
 
     if (m_lastTick < 0 || now < m_lastTick || now - m_lastTick > kMaxCatchUpTicks) {
         // First call, a stall or a backward jump: resynchronise without catching up.
         allNotesOff();
-        m_lastTick = now;
-        return;
+        m_lastTick = now - 1;
     }
     for (int64_t t = m_lastTick + 1; t <= now; ++t) tick(t);
     m_lastTick = now;
@@ -190,7 +193,7 @@ void BassEngine::tick(int64_t t) {
         arpEvent(static_cast<int>(p / ctl::kTicksPerStep), p, period, t);
     }
     if (p % kLfoEveryTicks == 0) {
-        sendLfoAndFilter(p);
+        sendLfoAndFilter(t);
     }
 }
 
@@ -260,9 +263,9 @@ void BassEngine::arpEvent(int step, int64_t loopTick, int period, int64_t t) {
     m_activeNotes.push_back({note, t + length});
 }
 
-void BassEngine::sendLfoAndFilter(int64_t loopTick) {
+void BassEngine::sendLfoAndFilter(int64_t absTick) {
     const float cycles = ctl::lfoCyclesPerBarForDial(m_frame[SET_LFO_SPEED]);
-    const float bars = static_cast<float>(loopTick) / static_cast<float>(ctl::kTicksPerBar);
+    const float bars = static_cast<float>(absTick) / static_cast<float>(ctl::kTicksPerBar);
     float frac = bars * cycles;
     frac -= std::floor(frac);
     const float shape = lfoShape(ctl::lfoTypeForDial(m_frame[SET_LFO_TYPE]), frac);

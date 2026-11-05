@@ -449,13 +449,13 @@ static void schedule_next_event(const ableton::Link::SessionState& state) {
             ESP_LOGW(TAG_LINK, "clock %lld pulse(s) behind -- resyncing to beat %.2f (no burst)",
                      (long long)(dueNow - s_next_pulse), beatNow);
         s_next_pulse = dueNow;
-    } else if (s_next_pulse - dueNow > MIDI_CLOCK_RESYNC_THRESHOLD) {
+    } else if (s_next_pulse - dueNow > 1) {
         ESP_LOGW(TAG_LINK, "clock %lld pulse(s) ahead of the timeline -- re-anchoring to beat %.2f",
                  (long long)(s_next_pulse - dueNow), beatNow);
         s_next_pulse = dueNow;
     }
     int64_t due = state.timeAtBeat((double)s_next_pulse / MIDI_PULSES_PER_QUARTER_NOTE, LINK_QUANTUM).count();
-    for (int guard = 0; due < nowLink && guard < MAX_CATCHUP_PULSES_PER_SCHEDULE; guard++) {
+    for (int guard = 0; due <= nowLink && guard < MAX_CATCHUP_PULSES_PER_SCHEDULE; guard++) {
         s_next_pulse++;
         due = state.timeAtBeat((double)s_next_pulse / MIDI_PULSES_PER_QUARTER_NOTE, LINK_QUANTUM).count();
     }
@@ -482,11 +482,10 @@ static void link_event_cb(void*) {
             esp_timer_start_once(s_buzzer_off_timer, (uint64_t)s_next_click_ms * 1000);
         }
     }
-    const uint8_t timing_msg = MIDI_TIMING_CLOCK;
-    send_midi_bytes(&timing_msg, 1);
-
     s_next_pulse++;
     if (s_evt_enabled) {
+        const uint8_t timing_msg = MIDI_TIMING_CLOCK;
+        send_midi_bytes(&timing_msg, 1);
         schedule_next_event(g_link->captureAppSessionState());
     } else {
         s_next_pulse_valid = false;
@@ -520,9 +519,11 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
             ESP_LOGI(TAG_LINK, "Phase forced to loop downbeat (q=%.2f)", s_phaseReqQuantum);
         }
         g_link->commitAppSessionState(ss);
-        if (phaseApplied && s_evt_enabled) {
+        if (s_evt_enabled) {
+            // Any accepted request changes the timeline: a tempo-only setTempo is phase-continuous,
+            // but the armed deadline was computed from the old tempo, so re-arm for both shapes.
             s_next_pulse_valid = false;
-            s_pending_realign  = true;
+            if (phaseApplied) s_pending_realign = true;
             schedule_next_event(g_link->captureAppSessionState());
         }
     }
