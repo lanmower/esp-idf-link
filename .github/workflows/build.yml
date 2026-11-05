@@ -142,3 +142,12 @@ jobs:
 
       - name: Bass loop witness
         run: bash tools/bass-loop-witness.sh
+
+      - name: Phrase predictability witness
+        run: bash tools/phrase-predictability-witness.sh
+
+      - name: Phrase telemetry analyzer self-test
+        run: python3 tools/phrase_telemetry_analyzer.py --self-test
+
+      - name: Phrase scheduler fuzz (1000 seeds)
+        run: python3 tools/phrase_scheduler_fuzz.py --seeds 1000 --source-root .
