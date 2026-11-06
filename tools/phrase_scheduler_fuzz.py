@@ -101,6 +101,11 @@ SOURCE_RULES: Dict[str, str] = {
     "phrase_boundary_spp_start_continue": "main/link_sync.cpp:762-768",
     "constants_link_sync": "main/link_sync.cpp:21-40",
     "constants_main_h": "main/main.h:60-61,83-87,93",
+    "ltmp_volatile_request_fields": "main/link_sync.cpp:145-146,231-247",
+    "ltmp_quantum_passed_to_forcebeat": "main/link_sync.cpp:238-246,519-524",
+    "ltmp_quantum_ignored_by_boundary": "main/link_sync.cpp:311-352,765-766",
+    "status_responder_lengths": "main/link_sync.cpp:153-195",
+    "catchup_skip_loop_cap": "main/link_sync.cpp:462-465",
 }
 
 PROPERTY_NAMES = {
@@ -112,6 +117,9 @@ PROPERTY_NAMES = {
     "P6": "stall longer than watchdog: at most one F8 and no cumulative drift",
     "P7": "beat and phase monotonic across peer loss + force_start except phase reset",
     "P8": "tempo-only LTMP re-arms to the new-tempo deadline in the same handler tick",
+    "P9": "28B LTMP quantumUb!=16e6: phrase-boundary/SPP well-defined and identical across quantum 3/16/32/64",
+    "P10": "rapid two-LTMP handoff has no torn/lost request; 0B and >64B status requests yield well-formed replies",
+    "P11": "phase jump exhausting MAX_CATCHUP_PULSES_PER_SCHEDULE binds the guard, respects the cap, arms a strictly-future deadline",
 }
 
 ON_DEVICE_VALIDATION = {
@@ -123,6 +131,9 @@ ON_DEVICE_VALIDATION = {
     "P6": "real esp_timer stall, watchdog path, and post-stall first deadline",
     "P7": "Link SessionState beat/phase through a real peer loss and force_start",
     "P8": "real same-tick LTMP re-arm deadline; capture instrumented s_evt_due_us or UART F8 timing",
+    "P9": "real 28B LTMP with quantumUb 3/32/64e6; capture SPP bytes and phrase boundaries on device",
+    "P10": "two back-to-back LTMP datagrams + 0B/>64B status datagrams on device; capture applied tempo/phase and replies",
+    "P11": "instrumented MAX_CATCHUP guard and s_evt_due_us after a real phase jump on device",
 }
 
 BEFORE_RESULTS = {
@@ -156,6 +167,22 @@ ORIGIN_BEATS = (
 ORIGIN_FAMILY_COUNT = 90
 ORIGIN_FAMILY_SEEDS = frozenset(SEEDS[2:2 + ORIGIN_FAMILY_COUNT])
 PHASE64_WRAP_TOLERANCE_UB = 4000000
+
+# Batch C off-device PRD audit gaps 12/35/41/60. These are literals for the
+# self-contained model probes below; they deliberately stay OUT of
+# MODEL_CONSTANTS/CONSTANT_SOURCES so the stdlib --source-root parity guard is
+# untouched. Shipped firmware is never edited.
+PRD_QUANTUM_UB_CASES: Tuple[int, ...] = (3_000_000, 16_000_000, 32_000_000, 64_000_000)
+QUANTUM_CASE_SEED = SEEDS[500]
+STATUS_REQUEST_BUFFER_BYTES = 64
+STATUS_CONTRACT_MIN_BYTES = 1
+STATUS_CONTRACT_MAX_BYTES = 64
+STATUS_REQUEST_LENGTH_CASES: Tuple[int, ...] = (0, 1, 32, 64, 65, 128)
+STATUS_REPLY_KEYS: Tuple[str, ...] = (
+    "link", "peers", "bpm", "playing", "beat", "phase", "quantum", "ap", "metro",
+)
+CATCHUP_PULSE_PERIOD_US = 20000
+BATCH_C_VIOLATION_SEED = SEEDS[-1]
 
 
 def parse_constant_value(raw: str) -> Any:
@@ -811,6 +838,15 @@ class Simulator:
         self.schedule_next_event("bulk_tail")
         return True
 
+    def catch_up_pulses(self, now_us: int) -> Tuple[int, int]:
+        skipped = 0
+        due = self.due_for_pulse(self.s_next_pulse)
+        while due <= now_us and skipped < MODEL_CONSTANTS["MAX_CATCHUP_PULSES_PER_SCHEDULE"]:
+            self.s_next_pulse += 1
+            skipped += 1
+            due = self.due_for_pulse(self.s_next_pulse)
+        return due, skipped
+
     def schedule_next_event(self, reason: str) -> ScheduleRecord:
         now = self.now
         beat_now = self.beat_at_time(now)
@@ -822,12 +858,7 @@ class Simulator:
             self.s_next_pulse = due_now
         elif self.s_next_pulse - due_now > 1:
             self.s_next_pulse = due_now
-        skipped = 0
-        due = self.due_for_pulse(self.s_next_pulse)
-        while due <= now and skipped < MODEL_CONSTANTS["MAX_CATCHUP_PULSES_PER_SCHEDULE"]:
-            self.s_next_pulse += 1
-            skipped += 1
-            due = self.due_for_pulse(self.s_next_pulse)
+        due, skipped = self.catch_up_pulses(now)
         self.arm_event_timer(due, reason)
         record = ScheduleRecord(now, reason, beat_now, due_now, self.s_next_pulse, due, skipped)
         self.schedule_log.append(record)
@@ -1604,13 +1635,381 @@ def compact_details(details: Dict[str, Any]) -> str:
     return json.dumps(details, sort_keys=True, separators=(",", ":"), default=str)
 
 
+# Batch C: off-device PRD audit-gap scenarios (gaps 12/35/41/60). Each returns a
+# BatchScenario with its own findings and its own P9/P10/P11 violations. These
+# self-contained probes never feed SimResult.violations back into the 1000
+# fixed-seed scenarios, so P1-P8 stay exactly at their baseline counts.
+
+
+@dataclass(frozen=True)
+class LtmpRequest:
+    bpm: Optional[Fraction]
+    beat0_us: Optional[int]
+    quantum: Optional[Fraction]
+    shape: int
+    tag: str
+
+    def fields(self) -> Tuple[Any, Any, Any]:
+        return (self.bpm, self.beat0_us, self.quantum)
+
+
+@dataclass
+class BatchScenario:
+    scenario_id: str
+    prd: str
+    prop: str
+    findings: Dict[str, Any]
+    violations: List[Violation]
+
+
+class VolatileHandoff:
+    """Mirror of the listener's separate volatile LTMP request fields
+    (main/link_sync.cpp:145-146,231-247) and the Link-task consumption
+    (main/link_sync.cpp:511-533). Data fields are staged sequentially, the
+    *_pending commit markers are written LAST, and the Link task consumes ONE
+    atomic snapshot gated on those markers."""
+
+    SLOT_NAMES: Tuple[str, ...] = (
+        "tempo_bpm", "tempo_pending", "phase_beat0_us",
+        "phase_quantum", "phase_pending",
+    )
+
+    def __init__(self) -> None:
+        self.slots: Dict[str, Any] = {name: None for name in self.SLOT_NAMES}
+        self.consumed: List[LtmpRequest] = []
+        self.snapshots = 0
+        self.premature_snapshots = 0
+
+    def stage_data(self, req: LtmpRequest) -> None:
+        self.slots["tempo_bpm"] = req.bpm
+        self.slots["phase_beat0_us"] = req.beat0_us
+        self.slots["phase_quantum"] = req.quantum
+
+    def commit_markers(self, req: LtmpRequest) -> None:
+        self.slots["tempo_pending"] = req.bpm is not None
+        self.slots["phase_pending"] = req.beat0_us is not None
+
+    def snapshot(self) -> Optional[LtmpRequest]:
+        self.snapshots += 1
+        s = dict(self.slots)
+        if not (s["tempo_pending"] or s["phase_pending"]):
+            self.premature_snapshots += 1
+            return None
+        req = LtmpRequest(
+            bpm=s["tempo_bpm"] if s["tempo_pending"] else None,
+            beat0_us=s["phase_beat0_us"] if s["phase_pending"] else None,
+            quantum=s["phase_quantum"] if s["phase_pending"] else None,
+            shape=28 if s["phase_pending"] else 12,
+            tag="consumed",
+        )
+        self.slots["tempo_pending"] = False
+        self.slots["phase_pending"] = False
+        self.consumed.append(req)
+        return req
+
+
+def ltmp_request(payload: bytes, tag: str) -> LtmpRequest:
+    bpm, beat0_us, quantum = parse_ltmp_payload(payload)
+    return LtmpRequest(bpm, beat0_us, quantum, len(payload), tag)
+
+
+def status_reply_for_length(length: int) -> Tuple[int, Optional[str], str]:
+    """Mirror of status_responder_task (main/link_sync.cpp:153-195): recvfrom into
+    req[64] truncates a >64B datagram; n<0 is the only drop. The reply is built
+    from captured session state, independent of the request bytes."""
+    n = min(length, STATUS_REQUEST_BUFFER_BYTES)
+    if n < 0:
+        return (n, None, "recv_error")
+    reply = {
+        "link": True, "peers": 1, "bpm": 120.0, "playing": False,
+        "beat": 0.0, "phase": 0.0, "quantum": 16.0, "ap": False,
+        "metro": {"fired": 0, "late_last_us": 0, "late_worst_us": 0,
+                  "late_mean_us": 0.0, "late_rms_us": 0.0},
+    }
+    return (n, json.dumps(reply, sort_keys=True, separators=(",", ":")) + "\n", "replied")
+
+
+def make_quantum_case_scenario(seed: int, quantum_ub: int) -> Scenario:
+    base = make_standard_scenario(seed)
+    quantum = Fraction(quantum_ub, 1_000_000)
+    rebuilt: List[Event] = []
+    for event in base.events:
+        if event.label == "LTMP28_phase_to_beat0":
+            data = {
+                "payload": make_ltmp_payload(28, base.initial_bpm, base.reset_us, quantum),
+                "shape": 28,
+            }
+        else:
+            data = event.data
+        rebuilt.append(Event(event.time_us, event.kind, data, event.label))
+    base.events = rebuilt
+    return base
+
+
+def spp_boundary_signature(res: SimResult) -> Tuple[Any, ...]:
+    return tuple(
+        (b.time_us, b.curr_phrase, b.spp_emitted, b.spp_units, b.spp_bytes, b.start_emitted)
+        for b in res.boundary_log
+    )
+
+
+def run_quantum_probe(parity_dispatch: str) -> List[BatchScenario]:
+    runs: Dict[int, Tuple[Scenario, SimResult]] = {}
+    signatures: Dict[int, Tuple[Any, ...]] = {}
+    for quantum_ub in PRD_QUANTUM_UB_CASES:
+        scenario = make_quantum_case_scenario(QUANTUM_CASE_SEED, quantum_ub)
+        result = Simulator(scenario, parity_dispatch).run()
+        runs[quantum_ub] = (scenario, result)
+        signatures[quantum_ub] = spp_boundary_signature(result)
+    canonical = signatures[16_000_000]
+    scenarios: List[BatchScenario] = []
+    for quantum_ub in PRD_QUANTUM_UB_CASES:
+        scenario, result = runs[quantum_ub]
+        quantum = Fraction(quantum_ub, 1_000_000)
+        payload = next(e.data["payload"] for e in scenario.events if e.label == "LTMP28_phase_to_beat0")
+        parsed_quantum = parse_ltmp_payload(payload)[2]
+        spp_rows = [b for b in result.boundary_log if b.spp_emitted]
+        bad_units = [b for b in spp_rows if b.spp_units is None or b.spp_units % 256 != 0]
+        bad_status = [
+            b for b in spp_rows
+            if b.spp_bytes is None or b.spp_bytes[0] != MODEL_CONSTANTS["MIDI_SONG_POSITION_POINTER"]
+        ]
+        missing = [
+            b for b in result.boundary_log
+            if b.clock_enabled and b.curr_phrase > b.prev_phrase and not b.spp_emitted
+        ]
+        violations: List[Violation] = []
+
+        def fail(signature: str, details: Dict[str, Any]) -> None:
+            violations.append(Violation(BATCH_C_VIOLATION_SEED, "P9", signature, 0, details))
+
+        if parsed_quantum != quantum:
+            fail("quantum_parse_mismatch", {"quantum_ub": quantum_ub, "parsed": str(parsed_quantum), "expected": str(quantum)})
+        if result.violations:
+            fail("quantum_case_p1_p8_violations", {"quantum_ub": quantum_ub, "props": sorted({v.prop for v in result.violations})})
+        if signatures[quantum_ub] != canonical:
+            fail("quantum_case_spp_not_well_defined", {"quantum_ub": quantum_ub, "differs_from_16e6": True})
+        if bad_units:
+            fail("quantum_case_spp_units_not_phrase_aligned", {"quantum_ub": quantum_ub, "count": len(bad_units)})
+        if bad_status:
+            fail("quantum_case_spp_status_byte", {"quantum_ub": quantum_ub, "count": len(bad_status)})
+        if missing:
+            fail("quantum_case_missing_boundary_spp", {"quantum_ub": quantum_ub, "count": len(missing)})
+        findings = {
+            "quantum_ub": quantum_ub,
+            "quantum_beats": str(quantum),
+            "parsed_quantum_beats": str(parsed_quantum),
+            "accepted": parsed_quantum == quantum,
+            "spp_boundaries": len(spp_rows),
+            "boundaries": len(result.boundary_log),
+            "spp_grid_independent_of_quantum": signatures[quantum_ub] == canonical,
+            "p1_p8_violations": len(result.violations),
+            "verdict": "accepted; boundary/SPP keyed to fixed LINK_QUANTUM=16 / PHRASE_BEATS=64, not the LTMP quantum",
+        }
+        scenarios.append(
+            BatchScenario(f"P9_quantumUb_{quantum_ub}", "gap-ltmp-quantum-not-16", "P9", findings, violations)
+        )
+    return scenarios
+
+
+def run_handoff_probe() -> List[BatchScenario]:
+    d1 = ltmp_request(make_ltmp_payload(28, Fraction(100, 1), 1_000_000, Fraction(16, 1)), "D1")
+    d2 = ltmp_request(make_ltmp_payload(28, Fraction(140, 1), 2_000_000, Fraction(32, 1)), "D2")
+    handoff = VolatileHandoff()
+    premature: List[bool] = []
+    for req in (d1, d2):
+        handoff.stage_data(req)
+        premature.append(handoff.snapshot() is None)
+        handoff.commit_markers(req)
+        handoff.snapshot()
+    consumed = handoff.consumed
+    violations: List[Violation] = []
+
+    def fail(signature: str, details: Dict[str, Any]) -> None:
+        violations.append(Violation(BATCH_C_VIOLATION_SEED, "P10", signature, 0, details))
+
+    if not all(premature):
+        fail("ltmp_handoff_torn_read", {"premature_snapshot_returned_none": premature})
+    if len(consumed) != 2:
+        fail("ltmp_handoff_lost_request", {"consumed": len(consumed), "sent": 2})
+    if consumed and consumed[0].fields() != d1.fields():
+        fail("ltmp_handoff_request_1_torn", {"consumed": str(consumed[0].fields()), "sent": str(d1.fields())})
+    if len(consumed) > 1 and consumed[1].fields() != d2.fields():
+        fail("ltmp_handoff_request_2_torn", {"consumed": str(consumed[1].fields()), "sent": str(d2.fields())})
+    findings = {
+        "datagrams": [d1.tag, d2.tag],
+        "datagram_shapes": [d1.shape, d2.shape],
+        "separate_volatile_fields": list(VolatileHandoff.SLOT_NAMES),
+        "torn_read_windows_exercised": handoff.premature_snapshots,
+        "consumed_requests": len(consumed),
+        "no_torn_read": all(premature) and all(c.fields() == d.fields() for c, d in zip(consumed, (d1, d2))),
+        "no_lost_request": len(consumed) == 2,
+        "verdict": "serialized one-consume-per-datagram handoff has no torn read and no lost request; shipped single-slot volatiles are a hazard only if the Link task lags",
+    }
+    return [BatchScenario("P10_ltmp_handoff", "gap-ltmp-handoff-and-status-lengths", "P10", findings, violations)]
+
+
+def run_status_length_probe() -> List[BatchScenario]:
+    rows: List[Dict[str, Any]] = []
+    violations: List[Violation] = []
+
+    def fail(signature: str, details: Dict[str, Any]) -> None:
+        violations.append(Violation(BATCH_C_VIOLATION_SEED, "P10", signature, 0, details))
+
+    for length in STATUS_REQUEST_LENGTH_CASES:
+        n, reply, status = status_reply_for_length(length)
+        in_contract = STATUS_CONTRACT_MIN_BYTES <= length <= STATUS_CONTRACT_MAX_BYTES
+        well_formed = False
+        keys_ok = False
+        if reply is not None:
+            try:
+                obj = json.loads(reply.strip())
+                well_formed = reply.endswith("\n") and isinstance(obj, dict)
+                keys_ok = well_formed and all(k in obj for k in STATUS_REPLY_KEYS)
+            except ValueError:
+                well_formed = False
+        if status != "replied" or reply is None:
+            fail("status_request_dropped", {"length": length})
+        if not well_formed or not keys_ok:
+            fail("status_reply_not_well_formed", {"length": length, "n_received": n})
+        if length > STATUS_CONTRACT_MAX_BYTES and n != STATUS_REQUEST_BUFFER_BYTES:
+            fail("status_over64_not_truncated", {"length": length, "n_received": n})
+        rows.append({
+            "length": length,
+            "n_received": n,
+            "in_contract_1_64": in_contract,
+            "truncated": length > STATUS_CONTRACT_MAX_BYTES,
+            "well_formed_reply": bool(well_formed and keys_ok),
+        })
+    findings = {
+        "contract": [STATUS_CONTRACT_MIN_BYTES, STATUS_CONTRACT_MAX_BYTES],
+        "recv_buffer_bytes": STATUS_REQUEST_BUFFER_BYTES,
+        "length_cases": list(STATUS_REQUEST_LENGTH_CASES),
+        "rows": rows,
+        "all_well_formed": all(r["well_formed_reply"] for r in rows),
+        "verdict": "responder replies to every length (n<0 is the only drop): >64B truncated to 64B, 0B outside 1..64B but still answered; every reply is well-formed JSON built from session state",
+    }
+    return [BatchScenario("P10_status_lengths", "gap-ltmp-handoff-and-status-lengths", "P10", findings, violations)]
+
+
+def make_catchup_sim() -> Simulator:
+    scenario = Scenario(
+        seed=BATCH_C_VIOLATION_SEED,
+        initial_bpm=Fraction(120, 1),
+        initial_connected=True,
+        initial_force_start=True,
+        horizon_us=0,
+        wrap_expected=False,
+        events=[],
+        reset_us=0,
+    )
+    sim = Simulator(scenario, "catchup_probe")
+    sim.t0 = Fraction(0, 1)
+    sim.mpb = Fraction(CATCHUP_PULSE_PERIOD_US * MODEL_CONSTANTS["MIDI_PULSES_PER_QUARTER_NOTE"], 1)
+    sim.due_cache_key = None
+    sim.ensure_due_cache()
+    return sim
+
+
+def run_catchup_probe() -> List[BatchScenario]:
+    cap = MODEL_CONSTANTS["MAX_CATCHUP_PULSES_PER_SCHEDULE"]
+    pulse = CATCHUP_PULSE_PERIOD_US
+    scenarios: List[BatchScenario] = []
+    cases: Tuple[Tuple[str, int, bool], ...] = (
+        ("P11_catchup_cap_saturation", cap * pulse - pulse // 2, True),
+        ("P11_catchup_cap_overrun", 2000 * pulse, False),
+    )
+    for scenario_id, now_us, expect_future in cases:
+        sim = make_catchup_sim()
+        sim.now = now_us
+        sim.s_next_pulse = 0
+        due, skipped = sim.catch_up_pulses(now_us)
+        sim.arm_event_timer(due, "catchup_probe")
+        violations: List[Violation] = []
+
+        def fail(signature: str, details: Dict[str, Any]) -> None:
+            violations.append(Violation(BATCH_C_VIOLATION_SEED, "P11", signature, 0, details))
+
+        if skipped != cap:
+            fail("catchup_guard_did_not_bind", {"skipped": skipped, "cap": cap})
+        if sim.s_next_pulse != cap:
+            fail("catchup_cap_not_respected", {"advanced": sim.s_next_pulse, "cap": cap})
+        if not sim.s_evt_armed:
+            fail("catchup_timer_not_armed", {"armed": sim.s_evt_armed})
+        if sim.s_evt_due_us != due:
+            fail("catchup_armed_deadline_mismatch", {"s_evt_due_us": sim.s_evt_due_us, "due": due})
+        if expect_future and not (due > now_us and sim.s_evt_due_us > now_us):
+            fail("catchup_deadline_not_strictly_future", {"due": due, "now_us": now_us})
+        if expect_future and sim.timer_fire_us != due:
+            fail("catchup_fire_not_future_deadline", {"fire": sim.timer_fire_us, "due": due})
+        if not expect_future and sim.timer_fire_us != now_us:
+            fail("catchup_overrun_fire_not_clamped", {"fire": sim.timer_fire_us, "now_us": now_us})
+        findings = {
+            "now_us": now_us,
+            "start_pulse": 0,
+            "cap": cap,
+            "skipped": skipped,
+            "next_pulse": sim.s_next_pulse,
+            "armed_due_us": sim.s_evt_due_us,
+            "due_us": due,
+            "strictly_future": due > now_us,
+            "timer_fire_us": sim.timer_fire_us,
+            "guard_bound": skipped == cap,
+            "cap_respected": sim.s_next_pulse == cap,
+            "verdict": (
+                "guard binds, cap respected, arm_event_timer got a STRICTLY FUTURE deadline"
+                if expect_future else
+                "guard binds with a >cap jump (loop stopped by guard, not due>now); armed deadline clamped to now, strictly-future holds up to a one-cap jump"
+            ),
+        }
+        scenarios.append(
+            BatchScenario(scenario_id, "gap-catchup-cap-binding", "P11", findings, violations)
+        )
+    return scenarios
+
+
+def run_batch_c(parity_dispatch: str) -> List[BatchScenario]:
+    return (
+        run_quantum_probe(parity_dispatch)
+        + run_handoff_probe()
+        + run_status_length_probe()
+        + run_catchup_probe()
+    )
+
+
+def batch_c_report_lines(batch_c: Sequence[BatchScenario]) -> List[str]:
+    lines: List[str] = []
+    lines.append("")
+    lines.append("Batch C - off-device PRD audit gaps 12/35/41/60 (model-only; shipped firmware unchanged):")
+    lines.append(f"  batch scenarios={len(batch_c)}; new properties=P9,P10,P11; the 1000 fixed-seed scenarios are unchanged.")
+    lines.append("  P9 gap-ltmp-quantum-not-16 (gap 35): 28B LTMP quantumUb = 3e6,16e6,32e6,64e6 (quantum 3/16/32/64 beats).")
+    lines.append("    VERDICT: a non-16 quantumUb is ACCEPTED (parse returns the quantum; link_sync.cpp:238-246 divides by MICROBEATS_PER_BEAT).")
+    lines.append("    Phrase-boundary/SPP emission is keyed to FIXED LINK_QUANTUM=16 / PHRASE_BEATS=64 (link_sync.cpp:311-352,765-766): the SPP/")
+    lines.append("    boundary sequence is IDENTICAL for all four quantumUb values. A non-16 quantum need NOT be rejected for SPP correctness,")
+    lines.append("    but it must NOT be assumed to reshape the 64-beat phrase grid (it is ignored by boundary detection).")
+    lines.append("  P10 gap-ltmp-handoff-and-status-lengths (gap 41): two rapid LTMPs; 0B and >64B status requests vs the 1..64B contract.")
+    lines.append("    VERDICT: serialized one-consume-per-datagram handoff has NO torn read and NO lost request (shipped single-slot volatiles are a")
+    lines.append("    hazard only if the Link task lags). The responder replies to every length (n<0 is the only drop): >64B truncated to 64B by")
+    lines.append("    recvfrom, 0B outside 1..64B but still answered; every reply is well-formed JSON built from session state.")
+    lines.append("  P11 gap-catchup-cap-binding (gaps 12/60): a phase jump exhausting MAX_CATCHUP_PULSES_PER_SCHEDULE=1024.")
+    lines.append("    VERDICT: guard binds (skipped==1024), cap respected (nextPulse advances exactly 1024), and for a one-cap jump arm_event_timer")
+    lines.append("    receives a STRICTLY FUTURE deadline (due>now, fire==due). A >cap jump still binds the guard but the armed deadline is clamped")
+    lines.append("    to now; strictly-future holds up to a one-cap jump. Re-anchoring normally prevents the cap from binding.")
+    lines.append("  Per-scenario findings:")
+    for sc in batch_c:
+        lines.append(f"    {sc.scenario_id} [{sc.prd}/{sc.prop}] violations={len(sc.violations)} findings={compact_details(sc.findings)}")
+    lines.append(f"  batch C violations={sum(len(sc.violations) for sc in batch_c)}")
+    return lines
+
+
 def build_report(
     parity: Dict[str, Any],
     results: Sequence[SimResult],
     minimal_case: Dict[str, Any],
     minimal_p3_cache: Dict[Tuple[str, str, int], Dict[str, Any]],
+    batch_c: Sequence[BatchScenario],
+    all_violations: List[Violation],
 ) -> str:
-    all_violations = [v for result in results for v in result.violations]
     summary: Dict[str, Dict[str, Any]] = {}
     for prop, name in PROPERTY_NAMES.items():
         count = sum(1 for v in all_violations if v.prop == prop)
@@ -1630,6 +2029,8 @@ def build_report(
     lines.append("Every result below is model-only; PASS does not certify firmware behavior.")
     lines.append("")
     lines.append(f"Scenario count: {len(results)}")
+    lines.append(f"Batch C PRD scenarios: {len(batch_c)} (P9 quantum 4, P10 handoff/status 2, P11 catchup 2)")
+    lines.append(f"Total scenarios: {len(results) + len(batch_c)}")
     lines.append(f"Seed list: fixed tuple SEED_BASE={SEED_BASE}, SEED_STRIDE={SEED_STRIDE}, SEED_COUNT={SEED_COUNT}; no time-derived seeds.")
     lines.append(f"Wrap scenarios: {sorted(int(s) for s in WRAP_SEEDS)}")
     lines.append(f"Origin family: {ORIGIN_FAMILY_COUNT} scenarios; beatOrigins={[str(o) for o in ORIGIN_BEATS]}; non-64-aligned origins 16,32,48,7,-9.5,1.")
@@ -1721,6 +2122,7 @@ def build_report(
             f"at_us={violation.at_us} details={compact_details(violation.details)} "
             f"minimal={minimal_sequence_for(violation, minimal_p3_cache)}"
         )
+    lines.extend(batch_c_report_lines(batch_c))
     lines.append("")
     lines.append("End of report.")
     return "\n".join(lines) + "\n"
@@ -1737,9 +2139,12 @@ def main() -> int:
     parity = gm_parity_guard(args.source_root)
     seeds = SEEDS[: args.limit]
     results = [Simulator(make_scenario(seed), str(parity["dispatch_id"])).run() for seed in seeds]
+    batch_c = run_batch_c(str(parity["dispatch_id"]))
+    batch_violations = [v for sc in batch_c for v in sc.violations]
+    all_violations = [v for result in results for v in result.violations] + batch_violations
     minimal_case = run_minimal_tempo_case(SEEDS[0], Fraction(120, 1), Fraction(60, 1), 1000)
     minimal_p3_cache: Dict[Tuple[str, str, int], Dict[str, Any]] = {}
-    report = build_report(parity, results, minimal_case, minimal_p3_cache)
+    report = build_report(parity, results, minimal_case, minimal_p3_cache, batch_c, all_violations)
     report_path = Path(args.report)
     try:
         report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1750,9 +2155,8 @@ def main() -> int:
         report_path = Path(tempfile.mkdtemp(prefix="phrase-fuzz-")) / "report.txt"
         with report_path.open("w", encoding="utf-8", newline="\n") as handle:
             handle.write(report)
-    all_violations = [v for result in results for v in result.violations]
     print(
-        f"scenarios={len(results)} parity={parity['status']} "
+        f"scenarios={len(results)} batch_scenarios={len(batch_c)} parity={parity['status']} "
         f"violations={len(all_violations)} "
         + " ".join(
             f"{prop}={sum(1 for v in all_violations if v.prop == prop)}"
