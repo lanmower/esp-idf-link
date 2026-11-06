@@ -8,18 +8,24 @@ constexpr int kMaxScaleDegrees = 7;
 
 constexpr int kScaleSizes[kScaleCount] = {7, 7, 5, 7, 7, 7};
 
-// Semitones above the root for each degree. Aeolian, phrygian, minor pentatonic, phrygian dominant,
-// harmonic minor, hungarian minor.
-constexpr int kScaleSemitones[kScaleCount][kMaxScaleDegrees] = {
-    {0, 2, 3, 5, 7, 8, 10},
-    {0, 1, 3, 5, 7, 8, 10},
-    {0, 3, 5, 7, 10, 0, 0},
-    {0, 1, 4, 5, 7, 8, 10},
-    {0, 2, 3, 5, 7, 8, 11},
-    {0, 2, 3, 6, 7, 8, 11},
+constexpr int kAeolian[kMaxScaleDegrees]          = {0, 2, 3, 5, 7, 8, 10};
+constexpr int kPhrygian[kMaxScaleDegrees]         = {0, 1, 3, 5, 7, 8, 10};
+constexpr int kMinorPentatonic[kMaxScaleDegrees]  = {0, 3, 5, 7, 10, 0, 0};
+constexpr int kPhrygianDominant[kMaxScaleDegrees] = {0, 1, 4, 5, 7, 8, 10};
+constexpr int kHarmonicMinor[kMaxScaleDegrees]    = {0, 2, 3, 5, 7, 8, 11};
+constexpr int kHungarianMinor[kMaxScaleDegrees]   = {0, 2, 3, 6, 7, 8, 11};
+constexpr const int* kScaleSemitones[kScaleCount] = {
+    kAeolian, kPhrygian, kMinorPentatonic, kPhrygianDominant, kHarmonicMinor, kHungarianMinor
 };
 
-constexpr int kArpPeriods[5] = {24, 48, 12, 8, 3};   // half, quarter, 16ths (default), triplet, quad
+constexpr int kArpPeriodHalf       = 24;
+constexpr int kArpPeriodQuarter    = 48;
+constexpr int kArpPeriodSixteenths = 12;
+constexpr int kArpPeriodTriplet    = 8;
+constexpr int kArpPeriodQuad       = 3;
+constexpr int kArpPeriods[5] = {
+    kArpPeriodHalf, kArpPeriodQuarter, kArpPeriodSixteenths, kArpPeriodTriplet, kArpPeriodQuad
+};
 
 float clamp01(float v) {
     if (v <= 0.0f) return 0.0f;
@@ -32,7 +38,6 @@ int indexFor(float v, int count) {
     return idx >= count ? count - 1 : idx;
 }
 
-// Euclidean rhythm E(k, n): step i is an onset when (i * k) mod n is less than k.
 uint32_t euclidean(int k, int n) {
     uint32_t bits = 0;
     for (int i = 0; i < n; i++) {
@@ -41,7 +46,15 @@ uint32_t euclidean(int k, int n) {
     return bits;
 }
 
-}  // namespace
+uint32_t fakeSidechainGate() {
+    uint32_t bits = 0;
+    for (int i = 0; i < 32; i++) {
+        if (i % 4 != 0) bits |= (1u << i);
+    }
+    return bits;
+}
+
+}
 
 int scaleSize(int scale) {
     if (scale < 0) scale = 0;
@@ -89,16 +102,9 @@ uint32_t tranceGate(int seriesIndex, uint32_t entrySeed) {
     if (seriesIndex >= kGateSeriesCount) seriesIndex = kGateSeriesCount - 1;
 
     if (seriesIndex == 0) {
-        // Fake sidechain: everything sounds except the first sixteenth of every beat.
-        uint32_t bits = 0;
-        for (int i = 0; i < 32; i++) {
-            if (i % 4 != 0) bits |= (1u << i);
-        }
-        return bits;
+        return fakeSidechainGate();
     }
     if (seriesIndex <= 8) {
-        // Repetitive: an 8-step Euclidean figure, tiled over the 32 steps. Series 8 is E(8,8),
-        // which is every step: the fully open gate.
         const uint32_t base = euclidean(seriesIndex, 8);
         uint32_t bits = 0;
         for (int i = 0; i < 32; i++) {
@@ -107,16 +113,14 @@ uint32_t tranceGate(int seriesIndex, uint32_t entrySeed) {
         return bits;
     }
     if (seriesIndex <= 24) {
-        // Polyrhythmic: E(k, 32) with k from 3 to 18.
         return euclidean(seriesIndex - 9 + 3, 32);
     }
-    // Random: density rises with the index; the bits come from the entry seed.
     uint32_t state = entrySeed * 2654435761u + static_cast<uint32_t>(seriesIndex) * 40503u + 1u;
-    const uint32_t threshold = static_cast<uint32_t>((seriesIndex - 25 + 1) * 64);  // of 1024
+    const uint32_t threshold = static_cast<uint32_t>((seriesIndex - 25 + 1) * 64);
     uint32_t bits = 0;
     for (int i = 0; i < 32; i++) {
         state = state * 1664525u + 1013904223u;
-        const uint32_t r = state >> 22;  // 0..1023
+        const uint32_t r = state >> 22;
         if (r < threshold) bits |= (1u << i);
     }
     return bits;
@@ -142,7 +146,6 @@ void LoopTrack::setBaseline(float value) {
 
 void LoopTrack::setTouched(bool touched) {
     if (touched && !touched_) {
-        // A new recording replaces the old one, so the line is clean and no history carries into it.
         for (int i = 0; i < kLoopSteps; i++) valid_[i] = false;
         persistent_ = false;
     }
@@ -173,9 +176,6 @@ float LoopTrack::valueAt(int step, float liveValue) {
 }
 
 void LoopTrack::turnaround() {
-    // Whatever was recorded is kept, whether it is still being touched or was released before the
-    // boundary, and replays on every later pass. The last value stays as the fallback for steps
-    // never recorded, so a setting that was left where it was stays there.
     if (touched_ || holdValid_) persistent_ = true;
 }
 
@@ -190,4 +190,4 @@ bool LoopTrack::hasRecordedStep(int step) const {
     return valid_[step];
 }
 
-}  // namespace ctl
+}
