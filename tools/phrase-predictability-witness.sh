@@ -5,6 +5,10 @@
 #     lwip/g_link) is modelled by a clearly-labelled MIRROR in the witness .cpp.
 #     This script runs a PARITY GUARD first: it re-reads the shipped source and
 #     refuses to build if any mirrored constant or formula has drifted.
+#   * The boot-panic / 16-channel CC123 sweep check (audit gaps 53/54) is a
+#     GUARDED HOST MIRROR, NOT captured DIN bytes: there is no on-device
+#     DIN/UART byte-capture path in this run. The parity guard re-reads the
+#     shipped sweep loop, the boot-panic call order and the fill-mark keying.
 # Nothing is copied into the repo; all work happens in a temp dir that is removed.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,9 +28,12 @@ WITNESS = sys.argv[2]
 
 REL = [
     "main/main.h",
+    "main/main.cpp",
+    "main/io_helpers.cpp",
     "main/link_sync.cpp",
     "main/link_sync.h",
     "main/bass_engine.cpp",
+    "main/bass_engine.h",
     "main/control_model.h",
     "main/control_model.cpp",
     "components/link-esp/link/include/ableton/link/Tempo.hpp",
@@ -43,7 +50,10 @@ with open(WITNESS, "r", encoding="utf-8", errors="replace") as f:
 LS = "main/link_sync.cpp"
 LSH = "main/link_sync.h"
 MH = "main/main.h"
+MAINCPP = "main/main.cpp"
+IOH = "main/io_helpers.cpp"
 BE = "main/bass_engine.cpp"
+BEH = "main/bass_engine.h"
 CMH = "main/control_model.h"
 CMC = "main/control_model.cpp"
 TEMPO = "components/link-esp/link/include/ableton/link/Tempo.hpp"
@@ -293,6 +303,65 @@ else:
     ]:
         if not re.search(rx, body):
             complain("FIX (j) startRecording body drift: %s missing" % label)
+
+# ---- Audit gaps 53/54: boot panic + 16-channel CC123 sweep parity ----------
+# These are EXPLICIT checks outside CONST/FORMULA, so the parity guard's
+# "23 constants + 77 formulas" shape and the peer-loss drift test are intact.
+# The witness models main/link_sync.cpp:398-410 as a GUARDED HOST MIRROR (no
+# on-device DIN byte capture exists this run); these checks tie the mirror's
+# channel range, status byte, controller number and data byte to shipped code.
+for label, rx, rel in [
+    ("user channel MIN = 1", r'extern constexpr uint8_t MIDI_USER_CHANNEL_MIN = 1;', IOH),
+    ("user channel MAX = 16", r'extern constexpr uint8_t MIDI_USER_CHANNEL_MAX = 16;', IOH),
+    ("wire channel MIN = 0", r'static constexpr uint8_t MIDI_WIRE_CHANNEL_MIN = 0;', IOH),
+    ("user->wire channel map", r'MIDI_WIRE_CHANNEL_MIN \+ \(user_channel - MIDI_USER_CHANNEL_MIN\)', IOH),
+    ("all-channels loop bounds", r'for \(uint8_t user_channel = MIDI_USER_CHANNEL_MIN; user_channel <= MIDI_USER_CHANNEL_MAX; \+\+user_channel\)', LS),
+    ("CC status OR wire channel", r'MIDI_CC_CMD \| midi_wire_channel_from_user_channel\(user_channel\)', LS),
+    ("CC123 with data byte 0", r'MIDI_CC_ALL_NOTES_OFF, 0 \}', LS),
+    ("boot panic = one Stop + sweep", r'void link_sync_send_boot_panic\(\) \{\s*const uint8_t stop_msg = MIDI_STOP;\s*send_midi_bytes\(&stop_msg, 1\);\s*send_all_notes_off_all_channels\(\);', LS),
+]:
+    if not re.search(rx, src[rel]):
+        complain("BOOT PANIC PARITY: %s missing in %s" % (label, rel))
+
+SWEEP_MIRROR = [
+    ("MIR_MIDI_USER_CHANNEL_MIN", IOH, r'MIDI_USER_CHANNEL_MIN = ([0-9]+);'),
+    ("MIR_MIDI_USER_CHANNEL_MAX", IOH, r'MIDI_USER_CHANNEL_MAX = ([0-9]+);'),
+    ("MIR_MIDI_WIRE_CHANNEL_MIN", IOH, r'MIDI_WIRE_CHANNEL_MIN = ([0-9]+);'),
+    ("MIR_MIDI_CC_SWEEP_VALUE", LS, r'MIDI_CC_ALL_NOTES_OFF, ([0-9]+) \}'),
+]
+for name, rel, rx in SWEEP_MIRROR:
+    mm = re.search(r'#define\s+' + re.escape(name) + r'\s+([^\s]+)', wit)
+    sm = re.search(rx, src[rel])
+    if not mm or not sm:
+        complain("BOOT PANIC PARITY: %s mirror or shipped value not found" % name)
+    elif parse_num(mm.group(1)) != parse_num(sm.group(1)):
+        complain("BOOT PANIC PARITY: MIRROR/SHIPPED VALUE DRIFT %s: mirror=%s shipped=%s" %
+                 (name, mm.group(1), sm.group(1)))
+
+# Boot panic must run BEFORE Link is constructed (no peers, no Link at boot).
+jpanic = src[MAINCPP].find("link_sync_send_boot_panic();")
+jlink = src[MAINCPP].find("std::make_unique<ableton::Link>")
+if not (jpanic >= 0 and jlink >= 0 and jpanic < jlink):
+    complain("BOOT PANIC PARITY: boot call must precede Link construction in main/main.cpp")
+
+# The shared sweep helper is used at all three emission sites: boot panic,
+# 1->0 peer loss, and transport stop.
+nsweep = len(re.findall(r'send_all_notes_off_all_channels\(\);', src[LS]))
+if nsweep != 3:
+    complain("BOOT PANIC PARITY: expected 3 sweep call sites (boot/peer-loss/stop), found %d" % nsweep)
+
+# ---- Audit gap 33: fill marks are keyed by fixed LOOP STEP, not by window ---
+# SHIPPED-code check in the witness; these lines tie the expectation to source.
+for label, rx, rel in [
+    ("fill writes m_fillMark[step] = MARK_ADD", r'm_fillMark\[step\] = MARK_ADD;', BE),
+    ("unfill writes m_fillMark[step] = MARK_REMOVE", r'm_fillMark\[step\] = MARK_REMOVE;', BE),
+    ("turnaround gates on min(current,pending)", r'pendTicks < curTicks \? pendTicks : curTicks', BE),
+    ("clearFill resets the whole fixed-size array", r'for \(FillMark& mark : m_fillMark\) mark = MARK_NONE;', BE),
+    ("resetAll calls clearFill", r'void BassEngine::resetAll\(\) \{\s*stop\(\);\s*clearFill\(\);', BE),
+    ("m_fillMark is sized by ctl::kLoopSteps", r'FillMark m_fillMark\[ctl::kLoopSteps\] = \{\};', BEH),
+]:
+    if not re.search(rx, src[rel]):
+        complain("FILL MARK PARITY: %s missing in %s" % (label, rel))
 
 if failures:
     print("PARITY GUARD: %d drift(s) detected -- REFUSING to build the witness." % failures)
