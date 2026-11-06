@@ -55,33 +55,33 @@ MODEL_CONSTANTS: Dict[str, Any] = {
     "MIDI_SONG_POSITION_POINTER": 0xF2,
 }
 
-CONSTANT_SOURCES: Dict[str, Tuple[str, int, str]] = {
-    "MIDI_PULSES_PER_QUARTER_NOTE": ("main/link_sync.cpp", 21, r"MIDI_PULSES_PER_QUARTER_NOTE\s*=\s*([^;]+)"),
-    "MIDI_SPP_UNITS_PER_BEAT": ("main/link_sync.cpp", 22, r"MIDI_SPP_UNITS_PER_BEAT\s*=\s*([^;]+)"),
-    "MIDI_SPP_UNITS_MASK": ("main/link_sync.cpp", 23, r"MIDI_SPP_UNITS_MASK\s*=\s*([^;]+)"),
-    "MIDI_DATA_BYTE_MASK": ("main/link_sync.cpp", 24, r"MIDI_DATA_BYTE_MASK\s*=\s*([^;]+)"),
-    "MIDI_DATA_BYTE_SHIFT": ("main/link_sync.cpp", 25, r"MIDI_DATA_BYTE_SHIFT\s*=\s*([^;]+)"),
-    "LINK_TEMPO_MIN_BPM": ("main/link_sync.cpp", 26, r"LINK_TEMPO_MIN_BPM\s*=\s*([^;]+)"),
-    "LINK_TEMPO_MAX_BPM": ("main/link_sync.cpp", 27, r"LINK_TEMPO_MAX_BPM\s*=\s*([^;]+)"),
-    "FALLBACK_TEMPO_BPM": ("main/link_sync.cpp", 28, r"FALLBACK_TEMPO_BPM\s*=\s*([^;]+)"),
-    "MICROS_PER_MINUTE": ("main/link_sync.cpp", 29, r"MICROS_PER_MINUTE\s*=\s*([^;]+)"),
-    "MICROBEATS_PER_BEAT": ("main/link_sync.cpp", 30, r"MICROBEATS_PER_BEAT\s*=\s*([^;]+)"),
-    "FORCE_START_AFTER_NO_PEERS_US": ("main/link_sync.cpp", 37, r"FORCE_START_AFTER_NO_PEERS_US\s*=\s*([^;]+)"),
-    "MAX_CATCHUP_PULSES_PER_SCHEDULE": ("main/link_sync.cpp", 38, r"MAX_CATCHUP_PULSES_PER_SCHEDULE\s*=\s*([^;]+)"),
-    "WATCHDOG_MISSED_PULSES": ("main/link_sync.cpp", 39, r"WATCHDOG_MISSED_PULSES\s*=\s*([^;]+)"),
-    "WATCHDOG_GRACE_US": ("main/link_sync.cpp", 40, r"WATCHDOG_GRACE_US\s*=\s*([^;]+)"),
-    "LINK_QUANTUM": ("main/main.h", 60, r"#define\s+LINK_QUANTUM\s+(\S+)"),
-    "PHRASE_BEATS": ("main/main.h", 61, r"#define\s+PHRASE_BEATS\s+(\S+)"),
-    "MIDI_CLOCK_RESYNC_THRESHOLD": ("main/main.h", 93, r"#define\s+MIDI_CLOCK_RESYNC_THRESHOLD\s+(\S+)"),
-    "MIDI_TIMING_CLOCK": ("main/main.h", 83, r"#define\s+MIDI_TIMING_CLOCK\s+(\S+)"),
-    "MIDI_START": ("main/main.h", 84, r"#define\s+MIDI_START\s+(\S+)"),
-    "MIDI_STOP": ("main/main.h", 85, r"#define\s+MIDI_STOP\s+(\S+)"),
-    "MIDI_CONTINUE": ("main/main.h", 86, r"#define\s+MIDI_CONTINUE\s+(\S+)"),
-    "MIDI_SONG_POSITION_POINTER": ("main/main.h", 87, r"#define\s+MIDI_SONG_POSITION_POINTER\s+(\S+)"),
+CONSTANT_SOURCES: Dict[str, Tuple[str, str]] = {
+    "MIDI_PULSES_PER_QUARTER_NOTE": ("main/link_sync.cpp", r"MIDI_PULSES_PER_QUARTER_NOTE\s*=\s*([^;]+)"),
+    "MIDI_SPP_UNITS_PER_BEAT": ("main/link_sync.cpp", r"MIDI_SPP_UNITS_PER_BEAT\s*=\s*([^;]+)"),
+    "MIDI_SPP_UNITS_MASK": ("main/link_sync.cpp", r"MIDI_SPP_UNITS_MASK\s*=\s*([^;]+)"),
+    "MIDI_DATA_BYTE_MASK": ("main/link_sync.cpp", r"MIDI_DATA_BYTE_MASK\s*=\s*([^;]+)"),
+    "MIDI_DATA_BYTE_SHIFT": ("main/link_sync.cpp", r"MIDI_DATA_BYTE_SHIFT\s*=\s*([^;]+)"),
+    "LINK_TEMPO_MIN_BPM": ("main/link_sync.cpp", r"LINK_TEMPO_MIN_BPM\s*=\s*([^;]+)"),
+    "LINK_TEMPO_MAX_BPM": ("main/link_sync.cpp", r"LINK_TEMPO_MAX_BPM\s*=\s*([^;]+)"),
+    "FALLBACK_TEMPO_BPM": ("main/link_sync.cpp", r"FALLBACK_TEMPO_BPM\s*=\s*([^;]+)"),
+    "MICROS_PER_MINUTE": ("main/link_sync.cpp", r"MICROS_PER_MINUTE\s*=\s*([^;]+)"),
+    "MICROBEATS_PER_BEAT": ("main/link_sync.cpp", r"MICROBEATS_PER_BEAT\s*=\s*([^;]+)"),
+    "FORCE_START_AFTER_NO_PEERS_US": ("main/link_sync.cpp", r"FORCE_START_AFTER_NO_PEERS_US\s*=\s*([^;]+)"),
+    "MAX_CATCHUP_PULSES_PER_SCHEDULE": ("main/link_sync.cpp", r"MAX_CATCHUP_PULSES_PER_SCHEDULE\s*=\s*([^;]+)"),
+    "WATCHDOG_MISSED_PULSES": ("main/link_sync.cpp", r"WATCHDOG_MISSED_PULSES\s*=\s*([^;]+)"),
+    "WATCHDOG_GRACE_US": ("main/link_sync.cpp", r"WATCHDOG_GRACE_US\s*=\s*([^;]+)"),
+    "LINK_QUANTUM": ("main/main.h", r"#define\s+LINK_QUANTUM\s+(\S+)"),
+    "PHRASE_BEATS": ("main/main.h", r"#define\s+PHRASE_BEATS\s+(\S+)"),
+    "MIDI_CLOCK_RESYNC_THRESHOLD": ("main/main.h", r"#define\s+MIDI_CLOCK_RESYNC_THRESHOLD\s+(\S+)"),
+    "MIDI_TIMING_CLOCK": ("main/main.h", r"#define\s+MIDI_TIMING_CLOCK\s+(\S+)"),
+    "MIDI_START": ("main/main.h", r"#define\s+MIDI_START\s+(\S+)"),
+    "MIDI_STOP": ("main/main.h", r"#define\s+MIDI_STOP\s+(\S+)"),
+    "MIDI_CONTINUE": ("main/main.h", r"#define\s+MIDI_CONTINUE\s+(\S+)"),
+    "MIDI_SONG_POSITION_POINTER": ("main/main.h", r"#define\s+MIDI_SONG_POSITION_POINTER\s+(\S+)"),
 }
 
-SYMBOL_SOURCES: Dict[str, Tuple[str, int, str]] = {
-    "QuantumInfo.phraseBeat": ("main/link_sync.h", 12, r"double\s+phraseBeat\s*;"),
+SYMBOL_SOURCES: Dict[str, Tuple[str, str]] = {
+    "QuantumInfo.phraseBeat": ("main/link_sync.h", r"double\s+phraseBeat\s*;"),
 }
 
 SOURCE_RULES: Dict[str, str] = {
@@ -197,17 +197,15 @@ def parse_constant_value(raw: str) -> Any:
 
 
 def stdlib_constant_snapshot(source_root: Path) -> Dict[str, Any]:
-    required = {(path, line) for path, line, _ in list(CONSTANT_SOURCES.values()) + list(SYMBOL_SOURCES.values())}
+    required = list(CONSTANT_SOURCES.values()) + list(SYMBOL_SOURCES.values())
     matches: List[str] = []
     for path in sorted({item[0] for item in required}):
         source_file = source_root / path
         if not source_file.is_file():
             raise SystemExit(f"parity guard missing source file: {source_file}")
         source_lines = source_file.read_text(encoding="utf-8").splitlines()
-        for line in sorted({item[1] for item in required if item[0] == path}):
-            if line < 1 or line > len(source_lines):
-                raise SystemExit(f"parity guard missing {path}:{line} in {source_file}")
-            matches.append(f"./{path}:{line}: {source_lines[line - 1]}")
+        for line_number, text in enumerate(source_lines, 1):
+            matches.append(f"./{path}:{line_number}: {text}")
     return {
         "verb": "stdlib",
         "dispatch_id": f"stdlib:{source_root}",
@@ -238,34 +236,46 @@ def gm_parity_guard(source_root: Path) -> Dict[str, Any]:
     if not isinstance(matches, list) or not matches:
         raise SystemExit("parity guard snapshot has no constant matches")
     line_re = re.compile(r"^\./(main/link_sync\.cpp|main/main\.h|main/link_sync\.h):(\d+):\s*(.*)$")
-    found: Dict[Tuple[str, int], str] = {}
+    found: Dict[str, List[Tuple[int, str]]] = {}
     for row in matches:
         if not isinstance(row, str):
             continue
         parsed = line_re.match(row.strip())
         if parsed:
-            found[(parsed.group(1), int(parsed.group(2)))] = parsed.group(3)
+            found.setdefault(parsed.group(1), []).append((int(parsed.group(2)), parsed.group(3)))
+    declaration_re = re.compile(r"^\s*(?:#define\b|static\s+constexpr\b|constexpr\b|static\s+const\b|const\b)")
     checked: List[Dict[str, Any]] = []
     for name, expected in MODEL_CONSTANTS.items():
-        path, line, pattern = CONSTANT_SOURCES[name]
-        text = found.get((path, line))
-        if text is None:
-            raise SystemExit(f"parity guard missing {path}:{line} for {name}")
+        path, pattern = CONSTANT_SOURCES[name]
+        definition = next(
+            (
+                (row_number, text)
+                for row_number, text in found.get(path, [])
+                if declaration_re.match(text)
+                and re.search(r"\b" + re.escape(name) + r"\b", text)
+                and re.search(pattern, text)
+            ),
+            None,
+        )
+        if definition is None:
+            raise SystemExit(f"parity guard missing {name} declaration in {path}")
+        actual_line, text = definition
         matched = re.search(pattern, text)
-        if matched is None:
-            raise SystemExit(f"parity guard could not parse {name} at {path}:{line}: {text}")
         actual = parse_constant_value(matched.group(1))
-        checked.append({"name": name, "source": f"{path}:{line}", "expected": str(expected), "actual": str(actual)})
+        checked.append({"name": name, "source": f"{path}:{actual_line}", "expected": str(expected), "actual": str(actual)})
         if actual != expected:
             raise SystemExit(
-                f"parity guard drift: {name} at {path}:{line} is {actual}, model has {expected}"
+                f"parity guard drift: {name} at {path}:{actual_line} is {actual}, model has {expected}"
             )
     checked_symbols: List[Dict[str, Any]] = []
-    for name, (path, line, pattern) in SYMBOL_SOURCES.items():
-        text = found.get((path, line))
-        if text is None or re.search(pattern, text) is None:
-            raise SystemExit(f"parity guard missing symbol {name} at {path}:{line}")
-        checked_symbols.append({"name": name, "source": f"{path}:{line}"})
+    for name, (path, pattern) in SYMBOL_SOURCES.items():
+        symbol_row = next(
+            ((row_number, text) for row_number, text in found.get(path, []) if re.search(pattern, text)),
+            None,
+        )
+        if symbol_row is None:
+            raise SystemExit(f"parity guard missing symbol {name} in {path}")
+        checked_symbols.append({"name": name, "source": f"{path}:{symbol_row[0]}"})
     return {
         "status": "PASS",
         "verb": snapshot.get("verb"),
