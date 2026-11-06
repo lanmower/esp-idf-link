@@ -293,44 +293,65 @@ struct PhraseEvents {
     }
 };
 
-// Mirrors handle_link_sync peer/clock/phrase logic main/link_sync.cpp:688-766,
-// including the 1->0 peer-loss branch, the clockEnabled transition (which sets
-// s_pending_realign), the force_start latch and the crossedPhraseBoundary block.
-// isPlaying is always false in this build (start/stop sync is OFF).
+// Mirrors handle_link_sync main/link_sync.cpp:500-775.
+// ADVERSARIAL CORRECTION: start_wait_time is set ONCE (main.cpp:59) and
+// isPlaying() is PERMANENTLY false (enableStartStopSync(false); zero
+// setIsPlaying in main/). Therefore (!is_connected || !isPlaying()) is ALWAYS
+// true and force_start latches UNCONDITIONALLY once elapsed >= 8 s -- even
+// while peers are CONNECTED. A mesh older than 8 s has forceStart already
+// latched and its realign already consumed at a phrase boundary; a later 1->0
+// loss produces NO clock-enable edge (:730) and NO peer-connect edge (:705).
+// peerLossQueuesRealign=false reproduces the PRE-FIX HIGH defect.
 struct TransportMirror {
-    bool wasConnected     = true;
-    bool evtEnabled       = true;
+    bool wasConnected     = false;   // main.cpp: was_connected = false
+    bool evtEnabled       = false;
     bool pendingRealign   = false;
-    bool transportRunning = true;
-    bool forceStart       = false;
+    bool transportRunning = false;
+    bool forceStart       = false;   // caller may init true for a mesh older than 8 s
+    bool peerLossQueuesRealign = true;   // FIX (link_sync.cpp:713)
+    int64_t startWaitTimeUs = 0;         // set ONCE at boot (main.cpp:59)
     std::vector<uint8_t> events;
-    int  f8Streaming      = 0;
+    int f8Streaming = 0;
+    int startCount  = 0;
+    int sppCount    = 0;
 
-    void tick(bool isConnected, bool crossedPhraseBoundary, double sessionBeat) {
+    void tick(bool isConnected, bool crossedPhraseBoundary, double sessionBeat,
+              int64_t nowUs) {
+        const bool isPlaying = false;   // enableStartStopSync(false); no setIsPlaying
+        // link_sync.cpp:536-538: the (!isConnected || !isPlaying) guard is
+        // ALWAYS satisfied here, so the latch fires unconditionally at 8 s.
+        if (!forceStart &&
+            (nowUs - startWaitTimeUs >= MIR_FORCE_START_AFTER_NO_PEERS_US) &&
+            (!isConnected || !isPlaying)) {
+            forceStart = true;
+        }
         if (isConnected != wasConnected) {
             if (isConnected) {
-                pendingRealign = true;                    // link_sync.cpp:700
+                pendingRealign = true;                    // :705
             } else {
                 events.push_back(static_cast<uint8_t>(MIR_MIDI_STOP));
                 events.push_back(static_cast<uint8_t>(MIR_MIDI_CC_CMD));
                 events.push_back(static_cast<uint8_t>(MIR_MIDI_CC_ALL_NOTES_OFF));
-                transportRunning = false;                 // link_sync.cpp:702
+                transportRunning = false;                 // :710
+                if (peerLossQueuesRealign) pendingRealign = true;   // FIX :713
             }
             wasConnected = isConnected;
         }
-        const bool clockEnabled = isConnected || forceStart;
+        const bool clockEnabled = isConnected || forceStart;   // :724
         if (clockEnabled != evtEnabled) {
             evtEnabled = clockEnabled;
-            if (clockEnabled) pendingRealign = true;      // link_sync.cpp:722
+            if (clockEnabled) pendingRealign = true;      // :730
         }
-        if (evtEnabled) ++f8Streaming;                     // one F8 per fire while enabled
-        if (clockEnabled && crossedPhraseBoundary) {
-            uint8_t spp[3]; encodeSpp(sessionBeat, spp);  // link_sync.cpp:758
+        if (evtEnabled) ++f8Streaming;                     // one F8 per fire
+        if (clockEnabled && crossedPhraseBoundary) {       // :766
+            uint8_t spp[3]; encodeSpp(sessionBeat, spp);  // :767
             events.push_back(spp[0]); events.push_back(spp[1]); events.push_back(spp[2]);
-            if (pendingRealign && (/*isPlaying=*/false || forceStart)) {
+            ++sppCount;
+            if (pendingRealign && (isPlaying || forceStart)) {   // :767
                 uint8_t start = transportRunning ? static_cast<uint8_t>(MIR_MIDI_CONTINUE)
                                                  : static_cast<uint8_t>(MIR_MIDI_START);
                 events.push_back(start);
+                ++startCount;
                 transportRunning = true;
                 pendingRealign = false;
             }
@@ -942,85 +963,146 @@ static void checkDetectQuantumBoundary() {
 }
 
 // =====================================================================
-// Coordinator audit check 4 -- peer-loss-without-return: after Stop + CC123,
-// force_start latches at 8s; F8/SPP keep streaming; is a Start/Continue
-// emitted before a peer returns? Document expected vs defect explicitly.
+// Coordinator audit check 4 (CORRECTED by the 46-agent adversarial verifier).
+// CONFIRMED HIGH DEFECT, now FIXED by s_pending_realign = true in the
+// peer-loss branch (link_sync.cpp:713). Drive a mesh up > 8 s (force_start
+// latch already consumed), then a 1->0 loss with NO peer return.
 // =====================================================================
+static int countByteIn(const TransportMirror& tr, uint8_t v) {
+    int n = 0; for (uint8_t b : tr.events) if (b == v) ++n; return n;
+}
+
+struct MeshResult {
+    TransportMirror tr;
+    bool forceStartAt8s     = false;
+    bool startBeforeLoss    = false;
+    bool clockEnabledAtLoss = false;
+    bool realignAtLoss      = false;
+    int  startsAtLoss              = 0;
+    int  startsOnePhraseLater      = 0;
+    int  startsTwoPhrasesLater     = 0;
+    int  f8AtLoss = 0, f8At100 = 0;
+    int  sppAtLoss = 0, sppAt100 = 0;
+};
+
+// Boot at t=0 (start_wait_time set once). 120 bpm -> phrase boundaries at
+// t=32s/64s/96s (64/128/192 beats). Peer connected t=1..60s, drops at 61s,
+// NEVER returns. forceStart is NEVER set manually -- it latches itself at 8s.
+static MeshResult runPeerlessMesh(bool fixed) {
+    MeshResult r;
+    r.tr.peerLossQueuesRealign = fixed;
+    r.tr.startWaitTimeUs = 0;
+    const int64_t sec = 1000000;
+    for (int t = 0; t <= 100; ++t) {
+        const bool conn = (t >= 1 && t <= 60);
+        const bool boundary = (t == 32 || t == 64 || t == 96);
+        const double beat = (t == 32) ? 64.0 : (t == 64) ? 128.0 : (t == 96) ? 192.0
+                                                            : static_cast<double>(t) * 2.0;
+        const int startsBefore = r.tr.startCount;
+        r.tr.tick(conn, boundary, beat, static_cast<int64_t>(t) * sec);
+        if (t == 8)  r.forceStartAt8s = r.tr.forceStart;
+        if (t == 32 && r.tr.startCount > startsBefore) r.startBeforeLoss = true;
+        if (t == 61) {
+            r.startsAtLoss = r.tr.startCount;
+            r.clockEnabledAtLoss = r.tr.evtEnabled;
+            r.realignAtLoss = r.tr.pendingRealign;
+            r.f8AtLoss = r.tr.f8Streaming;
+            r.sppAtLoss = r.tr.sppCount;
+        }
+        if (t == 64) r.startsOnePhraseLater = r.tr.startCount;
+        if (t == 96) r.startsTwoPhrasesLater = r.tr.startCount;
+    }
+    r.f8At100 = r.tr.f8Streaming;
+    r.sppAt100 = r.tr.sppCount;
+    return r;
+}
+
+// A mesh ALREADY older than 8 s: forceStart initialized true, realign already
+// consumed, so NO clock-enable edge can ever come again. loss at t=1, no return.
+static int runLongRunningMesh(bool fixed) {
+    TransportMirror tr;
+    tr.forceStart = true;             // mesh older than 8 s (allowed init)
+    tr.wasConnected = true;
+    tr.evtEnabled = true;
+    tr.transportRunning = true;
+    tr.pendingRealign = false;        // consumed at an earlier boundary
+    tr.peerLossQueuesRealign = fixed;
+    tr.startWaitTimeUs = -60000000;   // boot 60 s ago
+    const int64_t sec = 1000000;
+    for (int t = 0; t <= 40; ++t) {
+        const bool conn = (t < 1);            // 1->0 loss at t=1, no return
+        const bool boundary = (t == 32);      // one 64-beat phrase later
+        const double beat = boundary ? 64.0 : static_cast<double>(t) * 2.0;
+        tr.tick(conn, boundary, beat, static_cast<int64_t>(t) * sec);
+    }
+    return tr.startCount;
+}
+
 static void checkPeerLossForceStart() {
     CHECK_EQ("MIRROR [peerloss] FORCE_START_AFTER_NO_PEERS_US = 8s",
              MIR_FORCE_START_AFTER_NO_PEERS_US, 8000000);
 
-    TransportMirror tr;
-    auto countByte = [&](uint8_t v) {
-        int n = 0; for (uint8_t b : tr.events) if (b == v) ++n; return n;
-    };
+    const MeshResult pre  = runPeerlessMesh(false);   // PRE-FIX: the HIGH defect
+    const MeshResult post = runPeerlessMesh(true);    // FIXED regression
 
-    // Connected, no boundary: nothing emitted, clock streaming.
-    tr.tick(true, false, 0.0);
-    CHECK("MIRROR [peerloss] no Stop/Start while connected", tr.events.empty());
+    // Verifier's key facts about the REAL latch.
+    CHECK("MIRROR [peerloss] force_start latches UNCONDITIONALLY at 8s even while CONNECTED (isPlaying()==false)",
+          pre.forceStartAt8s);
+    CHECK("MIRROR [peerloss] a Start/Continue fires at the PRE-loss phrase boundary (realign consumed)",
+          pre.startBeforeLoss);
+    CHECK("MIRROR [peerloss] clock stays ENABLED across the loss (no 0->1 clock edge)",
+          pre.clockEnabledAtLoss);
+    CHECK("MIRROR [peerloss] F8 keeps streaming after the loss", pre.f8At100 > pre.f8AtLoss);
+    CHECK("MIRROR [peerloss] SPP keeps firing at boundaries after the loss",
+          pre.sppAt100 > pre.sppAtLoss);
+    CHECK("MIRROR [peerloss] Stop+CC123 WAS emitted on the loss",
+          countByteIn(pre.tr, MIR_MIDI_STOP) == 1 &&
+          countByteIn(pre.tr, MIR_MIDI_CC_ALL_NOTES_OFF) == 1);
 
-    // 1->0 peer loss: Stop + All-Notes-Off (CC123), transport reset.
-    tr.tick(false, false, 10.0);
-    CHECK("MIRROR [peerloss] MIDI_STOP 0xFC emitted on 1->0", countByte(MIR_MIDI_STOP) == 1);
-    CHECK("MIRROR [peerloss] CC123 All-Notes-Off emitted on 1->0",
-          countByte(MIR_MIDI_CC_ALL_NOTES_OFF) == 1);
-    CHECK("MIRROR [peerloss] transport running reset on loss", !tr.transportRunning);
-    CHECK("MIRROR [peerloss] clock disabled during the no-peer gap (F8 stops)",
-          !tr.evtEnabled);
-    const int f8BeforeLatch = tr.f8Streaming;
+    // CONFIRMED HIGH DEFECT (pre-fix): NO Start/Continue within one phrase,
+    // nor two, after the loss -> gear stays silent while F8/SPP keep streaming.
+    CHECK("CONFIRMED HIGH DEFECT (pre-fix): ZERO Start/Continue within one 64-beat phrase after the loss",
+          pre.startsOnePhraseLater == pre.startsAtLoss);
+    CHECK("CONFIRMED HIGH DEFECT (pre-fix): still ZERO two phrases later (gear permanently silent)",
+          pre.startsTwoPhrasesLater == pre.startsAtLoss);
+    CHECK("CONFIRMED HIGH DEFECT (pre-fix): peer-loss branch did NOT queue realign",
+          !pre.realignAtLoss);
+    CHECK("CONFIRMED HIGH DEFECT: a mesh older than 8 s (forceStart pre-latched) emits NO Start after a loss WITHOUT the fix",
+          runLongRunningMesh(false) == 0);
 
-    // A few ticks with no peer, force_start not yet latched: no F8, no SPP/Start.
-    tr.tick(false, false, 20.0);
-    tr.tick(false, false, 30.0);
-    CHECK("MIRROR [peerloss] no F8 while force_start not latched",
-          tr.f8Streaming == f8BeforeLatch);
-
-    // force_start latches (8s). Clock re-enabled -> s_pending_realign set.
-    tr.forceStart = true;
-    tr.tick(false, false, 40.0);
-    CHECK("MIRROR [peerloss] clock re-enabled after force_start latch", tr.evtEnabled);
-    CHECK("MIRROR [peerloss] F8 streams again after the latch",
-          tr.f8Streaming > f8BeforeLatch);
-    CHECK("MIRROR [peerloss] realign set on clock-enable", tr.pendingRealign);
-    CHECK("MIRROR [peerloss] NO Start before a phrase boundary",
-          countByte(MIR_MIDI_START) == 0 && countByte(MIR_MIDI_CONTINUE) == 0);
-
-    // First phrase boundary after the latch, with NO peer returned.
-    tr.tick(false, true, 64.0);
-    CHECK("MIRROR [peerloss] SPP emitted at the phrase boundary (no peer)",
-          countByte(MIR_MIDI_SONG_POSITION_POINTER) == 1);
-    CHECK("MIRROR [peerloss] a Start/Continue IS emitted BEFORE any peer returns",
-          countByte(MIR_MIDI_START) + countByte(MIR_MIDI_CONTINUE) == 1);
-    CHECK("MIRROR [peerloss] it is MIDI_START (transport was reset on loss)",
-          countByte(MIR_MIDI_START) == 1);
-    CHECK("MIRROR [peerloss] Start follows the SPP trio (boundary ordering)",
-          tr.events.size() >= 4 && tr.events[tr.events.size() - 4] == MIR_MIDI_SONG_POSITION_POINTER);
-    CHECK("MIRROR [peerloss] realign consumed after the local Start", !tr.pendingRealign);
-
-    // A later boundary without realign: SPP only, no second Start.
-    const int startsSoFar = countByte(MIR_MIDI_START) + countByte(MIR_MIDI_CONTINUE);
-    tr.tick(false, true, 128.0);
-    CHECK("MIRROR [peerloss] no extra Start at a later boundary",
-          countByte(MIR_MIDI_START) + countByte(MIR_MIDI_CONTINUE) == startsSoFar);
-
-    // Peer returns: realign set; next boundary emits CONTINUE (transport running).
-    tr.tick(true, false, 130.0);
-    CHECK("MIRROR [peerloss] realign set on peer 0->1 return", tr.pendingRealign);
-    tr.tick(true, true, 192.0);
-    CHECK("MIRROR [peerloss] CONTINUE emitted at the boundary after peer return",
-          countByte(MIR_MIDI_CONTINUE) == 1);
+    // FIXED regression (link_sync.cpp:713): peer-loss branch queues realign ->
+    // a 0xFA/0xFB appears within ONE 64-beat phrase.
+    CHECK("FIX regression: peer-loss branch queues realign", post.realignAtLoss);
+    CHECK("FIX regression: a 0xFA/0xFB appears within ONE 64-beat phrase after the loss",
+          post.startsOnePhraseLater > post.startsAtLoss);
+    CHECK_EQ("FIX regression: exactly one Start/Continue within that phrase",
+             post.startsOnePhraseLater - post.startsAtLoss, 1);
+    CHECK("FIX regression: no further Start/Continue at the next phrase (realign consumed)",
+          post.startsTwoPhrasesLater == post.startsOnePhraseLater);
+    CHECK("FIX regression: the recovery byte 0xFA/0xFB is in the event stream",
+          countByteIn(post.tr, MIR_MIDI_START) + countByteIn(post.tr, MIR_MIDI_CONTINUE) >= 2);
+    CHECK("FIX regression: the SAME long-running mesh emits a Start within one phrase WITH the fix",
+          runLongRunningMesh(true) == 1);
 
     std::printf(
-        "PEERLESS verdict (MIRROR MODEL, link_sync.cpp:688-766): EXPECTED BEHAVIOUR, "
-        "not a defect. A MIDI_START IS emitted before any peer returns: at the "
-        "first phrase boundary after force_start latches at 8s, because the "
-        "clockEnabled false->true transition sets s_pending_realign (line 722) and "
-        "(is_playing||force_start) is satisfied by force_start (start/stop sync is "
-        "OFF so isPlaying() is false). F8 pauses for the <=8s gap while the clock is "
-        "disabled, then resumes; SPP fires at every phrase boundary. This is the "
-        "documented local-clock fallback (AGENTS.md: realign-on-enable fix made the "
-        "force_start path emit SPP+Start instead of F8 only). On peer return a "
-        "CONTINUE (not START) is emitted. Needs on-device confirmation, not a fix.\n");
+        "PEERLESS verdict (MIRROR MODEL, link_sync.cpp:500-775): CONFIRMED HIGH "
+        "DEFECT, now FIXED. The 46-agent adversarial verification is correct and "
+        "my earlier 'EXPECTED BEHAVIOUR' verdict was WRONG: the old TransportMirror "
+        "modelled a loss inside the first 8 s with forceStart=false, then MANUALLY "
+        "latched forceStart AFTER the loss. In the real firmware start_wait_time is "
+        "set once (main.cpp:59) and isPlaying() is permanently false "
+        "(enableStartStopSync(false); zero setIsPlaying in main/), so force_start "
+        "latches UNCONDITIONALLY at 8 s even while peers are connected. A mesh up "
+        ">8 s has force_start already latched and s_pending_realign already consumed "
+        "at a phrase boundary; a later 1->0 loss gives NO clock-enable edge (:730) "
+        "and NO peer-connect edge (:705). The peer-loss branch sent Stop+CC123 and "
+        "reset s_transport_running but did NOT set s_pending_realign, so F8/SPP kept "
+        "streaming while slaved gear stayed SILENT indefinitely. Pre-fix regression: "
+        "ZERO Start/Continue within one 64-beat phrase, nor two. FIX (:713, "
+        "s_pending_realign = true in the peer-loss branch): a MIDI_START now appears "
+        "within ONE phrase after the loss. LIMITATION: all four CI witnesses are "
+        "host mirrors -- there is NO on-device DIN/UART byte capture, so this verdict "
+        "needs on-device confirmation.\n");
 }
 
 // =====================================================================
@@ -1072,14 +1154,17 @@ static void checkCoverage() {
         "schedule_next_event, link_event_cb, tempo_listener_task, "
         "broadcast_ticker_timeline, Tempo.hpp microsPerBeat. FIX (a)-(d) regressions "
         "(LTMP immediate re-arm, ahead-threshold >1, skip-loop <=, F8-gated) and the "
-        "quantum phraseBeat regression are also mirrors. SHIPPED code EXECUTED: "
+        "quantum phraseBeat regression and the CONFIRMED peer-less silent-gear "
+        "defect + its FIX are also mirrors. SHIPPED code EXECUTED: "
         "main/control_model.cpp + main/bass_engine.cpp (BassEngine, "
         "LoopTrack::startRecording, fill/reset, hash32/tranceGate, negative-beat "
         "note release, resync-current-tick, LFO absolute-tick continuity). "
         "send_song_position and handle_link_sync CANNOT be linked host-side "
         "(ESP-IDF esp_timer/gptimer/lwip/g_link); their real esp_timer/Link/wifi "
         "behaviour needs ON-DEVICE validation -- the mirrors prove "
-        "arithmetic/ordering only.\n");
+        "arithmetic/ordering only. LIMITATION (completeness critic): all four CI "
+        "witnesses are host mirrors; there is NO on-device DIN/UART byte capture, "
+        "so no emitted MIDI byte is observed on real hardware.\n");
 }
 
 // ---- shipped-code driver ---------------------------------------------------

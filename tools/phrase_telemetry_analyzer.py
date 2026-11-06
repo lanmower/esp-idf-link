@@ -37,7 +37,7 @@ CONTROL_ESP_META = ".gm/witness-out/esp-status-control-20261105.meta.json"
 CONTROL_ESP_PID = ".gm/witness-out/esp-status-control-20261105.pid"
 CONTROL_REPORT = ".gm/witness-out/phrase-control-report-20261105.txt"
 FINAL_WITNESS = ".gm/witness-out/phrase-telemetry-final-witness-20261105.json"
-DEFAULT_LIMITATIONS = "Cross-tree findings confirmed by 420 and NOT visible in telemetry: mc-420 MidiClock sends a bare 0xFA with no SPP and no 0xFC; the enableStartStopSync documentation is stale. These are excluded from the telemetry-based score."
+DEFAULT_LIMITATIONS = "Cross-tree DIN transport behaviour (mc-420 MidiClock SPP/Stop bytes and the enableStartStopSync documentation) is NOT visible in 1 Hz 4445 telemetry; it is excluded from the telemetry-based score and judged separately."
 NO_PERTURBATIONS_SENT = "NO_PERTURBATIONS_SENT"
 
 

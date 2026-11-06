@@ -708,6 +708,9 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
             send_midi_bytes(stop_msg, 1);
             send_all_notes_off_all_channels();
             s_transport_running = false;
+            // force_start may already be latched, so no clock-enable edge is coming: queue the
+            // realign here or the local clock keeps streaming F8/SPP with silent slaved gear.
+            s_pending_realign = true;
             s_peer_lost_at_us = esp_timer_get_time();
             wifi_log_peer_loss_state();
             ESP_LOGI(TAG_LINK, "Link peer lost -- sent Stop + All Notes Off.");

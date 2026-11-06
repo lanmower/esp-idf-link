@@ -158,6 +158,8 @@ FORMULA = [
     ("peer-loss Stop + All Notes Off log", LS, r'Link peer lost -- sent Stop \+ All Notes Off\.', True),
     ("peer-loss transport reset", LS, r's_transport_running\s*=\s*false;', True),
     ("peer-loss STOP msg", LS, r'const uint8_t stop_msg\[\]\s*=\s*\{\s*MIDI_STOP\s*\};', True),
+    ("peer-loss realign FIX comment (latched force_start)", LS, r'force_start may already be latched, so no clock-enable edge is coming', True),
+    ("peer-loss realign FIX setter in branch (5th site)", LS, r'// force_start may already be latched[\s\S]{0,240}?s_pending_realign\s*=\s*true;', True),
     ("send_all_notes_off_all_channels call", LS, r'send_all_notes_off_all_channels\(\);', True),
     ("crossedPhraseBoundary block", LS, r'if\s*\(crossedPhraseBoundary\)\s*\{', True),
     ("SPP sent from quantumInfo.phraseBeat (quantum FIX)", LS, r'send_song_position\(quantumInfo\.phraseBeat\);', True),
@@ -221,10 +223,26 @@ nsend = len(re.findall(r'send_midi_bytes\(&start_msg,\s*1\)', src[LS]))
 if nsend != 1:
     complain("Start/Continue send-site count drifted: expected 1, found %d" % nsend)
 
-# s_pending_realign must be set on the phase-req, peer-edge, clock-enable, playing paths.
+# s_pending_realign must be set on the phase-req, peer-connect, peer-loss,
+# clock-enable and playing paths (5 setter sites after the peer-loss FIX).
 nrealign = len(re.findall(r's_pending_realign\s*=\s*true;', src[LS]))
-if nrealign < 3:
-    complain("s_pending_realign=true site count drifted: expected >=3, found %d" % nrealign)
+if nrealign < 5:
+    complain("s_pending_realign=true site count drifted: expected >=5 (incl. peer-loss FIX), found %d" % nrealign)
+
+# Peer-loss branch FIX: must queue s_pending_realign (the 5th setter site).
+ipl = src[LS].find('ESP_LOGI(TAG_LINK, "Link peer lost -- sent Stop + All Notes Off.");')
+if ipl < 0:
+    complain("peer-loss branch log line not found")
+else:
+    # Restrict to the 1->0 } else { branch so the connect-branch setter at
+    # :705 cannot mask a missing peer-loss setter.
+    jelse = src[LS].rfind("} else {", 0, ipl)
+    pblk = src[LS][jelse:ipl] if jelse >= 0 else src[LS][max(0, ipl - 700):ipl]
+    if not re.search(r's_transport_running\s*=\s*false;', pblk):
+        complain("peer-loss branch drift: s_transport_running = false missing")
+    if not re.search(r's_pending_realign\s*=\s*true;', pblk):
+        complain("PEER-LOSS FIX DRIFT: the 1->0 branch must set s_pending_realign = true "
+                 "(else gear stays silent while F8/SPP stream)")
 
 # FIX (a): the LTMP handler block must gate on s_evt_enabled, clear
 # s_next_pulse_valid, set pendingRealign ONLY when phaseApplied, and re-arm.

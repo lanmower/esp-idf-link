@@ -128,7 +128,7 @@ Metro jitter worst 13798 us/mean 264/rms 822; ENOMEM send failure unreproduced i
 
 ## Phrase-predictability campaign (2026-11-05)
 
-Witnesses (untracked): tools/phrase-predictability-witness.sh (MIRROR + python PARITY GUARD over main/main.h, main/link_sync.cpp, main/bass_engine.cpp, vendored Tempo.hpp/Link.hpp, refuses drift), tools/phrase_predictability_witness.cpp (C++ mirror), tools/phrase_scheduler_fuzz.py (1000-seed property harness), tools/phrase_telemetry_analyzer.py (1 Hz telemetry + phrase-boundary scoring, synthetic self-test). CI host-witness runs the C++ control-model/bass-loop witnesses; phrase witness not in build.yml. Campaign PRDs live in gm's PRD store, not here.
+Witnesses tracked, all in CI host-witness (build.yml): phrase-predictability-witness.sh + .cpp (guarded MIRROR, parity guard over main/ + vendored Link, refuses drift), phrase_scheduler_fuzz.py (1000 seeds), phrase_telemetry_analyzer.py (1 Hz scoring + self-test), plus control-model/bass-loop witnesses. Campaign PRDs live in gm's PRD store, not here. Peer loss after the 8 s force_start latch used to leave gear stopped (Stop+CC123, no realign edge); link_sync.cpp now sets s_pending_realign on 1->0 so Start/Continue fires at the next 64-beat boundary.
 30-min 1 Hz baseline 19:59:38Z-20:29:38Z: 1798 samples, zero gaps, post-t+60 s retention 100%, bpm/phase_err_beats/eff_speed spreads 0, no anomaly; 56 phrase boundaries, mean spacing 31.999937 s vs 32.0 s expected, max error 0.176821 s; witness .gm/witness-out/phrase-telemetry-report-20261105.txt (FINAL, self-test passed).
 
 ## Bass sequencer: eight-beat loop, pads and dials
