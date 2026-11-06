@@ -1828,7 +1828,7 @@ def run_handoff_probe() -> List[BatchScenario]:
         "consumed_requests": len(consumed),
         "no_torn_read": all(premature) and all(c.fields() == d.fields() for c, d in zip(consumed, (d1, d2))),
         "no_lost_request": len(consumed) == 2,
-        "verdict": "serialized one-consume-per-datagram handoff has no torn read and no lost request; shipped single-slot volatiles are a hazard only if the Link task lags",
+        "verdict": "serialized one-consume-per-datagram handoff has no torn read and no lost request; legacy mirror's single-slot volatiles are a hazard only if the Link task lags",
     }
     return [BatchScenario("P10_ltmp_handoff", "gap-ltmp-handoff-and-status-lengths", "P10", findings, violations)]
 
@@ -1972,7 +1972,7 @@ def batch_c_report_lines(batch_c: Sequence[BatchScenario]) -> List[str]:
     lines.append("    boundary sequence is IDENTICAL for all four quantumUb values. A non-16 quantum need NOT be rejected for SPP correctness,")
     lines.append("    but it must NOT be assumed to reshape the 64-beat phrase grid (it is ignored by boundary detection).")
     lines.append("  P10 gap-ltmp-handoff-and-status-lengths (gap 41): two rapid LTMPs; 0B and >64B status requests vs the 1..64B contract.")
-    lines.append("    VERDICT: serialized one-consume-per-datagram handoff has NO torn read and NO lost request (shipped single-slot volatiles are a")
+    lines.append("    VERDICT: serialized one-consume-per-datagram handoff has NO torn read and NO lost request (legacy mirror's single-slot volatiles are a")
     lines.append("    hazard only if the Link task lags). The responder replies to every length (n<0 is the only drop): >64B truncated to 64B by")
     lines.append("    recvfrom, 0B outside 1..64B but still answered; every reply is well-formed JSON built from session state.")
     lines.append("  P11 gap-catchup-cap-binding (gaps 12/60): a phase jump exhausting MAX_CATCHUP_PULSES_PER_SCHEDULE=1024.")
