@@ -306,7 +306,9 @@ void BassEngine::resetAll() {
         m_touched[c] = false;
         m_live[c]  = m_track[c].baseline();
         m_frame[c] = m_live[c];
+        m_entrySeed[c] = 1u + static_cast<uint32_t>(c);
     }
+    m_seedCounter = 1;
     m_activeSingle = 0;
     m_doubleHeld   = -1;
     m_pendingLoopSteps = ctl::loopBarsForDial(m_track[SET_WINDOW].baseline()) * ctl::kStepsPerBar;
