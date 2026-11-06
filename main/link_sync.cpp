@@ -13,6 +13,7 @@
 #include "esp_heap_caps.h"
 #include "esp_system.h"
 #include "wifi_config.h"
+#include "ltmp_request.h"
 
 extern const uint8_t MIDI_USER_CHANNEL_MIN;
 extern const uint8_t MIDI_USER_CHANNEL_MAX;
@@ -139,11 +140,8 @@ static void broadcast_ticker_timeline(const ableton::Link::SessionState& state,
 }
 
 #define LINK_TEMPO_PORT 20811
-static volatile bool   s_tempoReqPending = false;
-static volatile double s_tempoReqBpm     = 0.0;
-static volatile bool   s_phaseReqPending = false;
-static volatile int64_t s_phaseReqBeat0us = 0;
-static volatile double  s_phaseReqQuantum = 4.0;
+static LtmpRequest s_ltmpRequest;
+static LtmpGate s_ltmpGate;
 
 #define LINK_STATUS_PORT 20813
 
@@ -231,19 +229,26 @@ static void tempo_listener_task(void*) {
         if (n >= 12 && memcmp(buf, "LTMP", 4) == 0) {
             int64_t mpb;
             memcpy(&mpb, buf + 4, 8);
+            bool hasTempo = false;
+            double bpm = 0.0;
             if (mpb > 0) {
-                double bpm = MICROS_PER_MINUTE / (double)mpb;
-                if (bpm >= LINK_TEMPO_MIN_BPM && bpm <= LINK_TEMPO_MAX_BPM) { s_tempoReqBpm = bpm; s_tempoReqPending = true; }
+                bpm = MICROS_PER_MINUTE / (double)mpb;
+                hasTempo = bpm >= LINK_TEMPO_MIN_BPM && bpm <= LINK_TEMPO_MAX_BPM;
             }
+            bool hasPhase = false;
+            int64_t beat0us = 0;
+            double quantum = 4.0;
             if (n >= 28) {
-                int64_t beat0us, quantumUb;
+                int64_t quantumUb;
                 memcpy(&beat0us,  buf + 12, 8);
                 memcpy(&quantumUb, buf + 20, 8);
                 if (quantumUb > 0) {
-                    s_phaseReqBeat0us = beat0us;
-                    s_phaseReqQuantum = (double)quantumUb / MICROBEATS_PER_BEAT;
-                    s_phaseReqPending = true;
+                    quantum = (double)quantumUb / MICROBEATS_PER_BEAT;
+                    hasPhase = true;
                 }
+            }
+            if (hasTempo || hasPhase) {
+                ltmpPublish(s_ltmpRequest, s_ltmpGate, hasTempo, bpm, hasPhase, beat0us, quantum);
             }
         }
     }
@@ -505,25 +510,26 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     broadcast_link_clock(time.count());
     broadcast_ticker_timeline(state, time.count());
 
-    if ((s_tempoReqPending || s_phaseReqPending) && g_link) {
-        bool phaseApplied = false;
-        auto ss = g_link->captureAppSessionState();
-        if (s_tempoReqPending) {
-            s_tempoReqPending = false;
-            ss.setTempo(s_tempoReqBpm, g_link->clock().micros());
-            ESP_LOGI(TAG_LINK, "Tempo set to %.2f BPM by looper (LTMP)", s_tempoReqBpm);
-        }
-        if (s_phaseReqPending) {
-            s_phaseReqPending = false;
-            ss.forceBeatAtTime(0.0, std::chrono::microseconds(s_phaseReqBeat0us), s_phaseReqQuantum);
-            phaseApplied = true;
-            ESP_LOGI(TAG_LINK, "Phase forced to loop downbeat (q=%.2f)", s_phaseReqQuantum);
-        }
-        g_link->commitAppSessionState(ss);
-        if (s_evt_enabled) {
-            s_next_pulse_valid = false;
-            if (phaseApplied) s_pending_realign = true;
-            schedule_next_event(g_link->captureAppSessionState());
+    if (g_link) {
+        LtmpRequest req = ltmpTakeSnapshot(s_ltmpRequest, s_ltmpGate);
+        if (req.tempoPending || req.phasePending) {
+            bool phaseApplied = false;
+            auto ss = g_link->captureAppSessionState();
+            if (req.tempoPending) {
+                ss.setTempo(req.tempoBpm, g_link->clock().micros());
+                ESP_LOGI(TAG_LINK, "Tempo set to %.2f BPM by looper (LTMP)", req.tempoBpm);
+            }
+            if (req.phasePending) {
+                ss.forceBeatAtTime(0.0, std::chrono::microseconds(req.phaseBeat0Us), req.phaseQuantum);
+                phaseApplied = true;
+                ESP_LOGI(TAG_LINK, "Phase forced to loop downbeat (q=%.2f)", req.phaseQuantum);
+            }
+            g_link->commitAppSessionState(ss);
+            if (s_evt_enabled) {
+                s_next_pulse_valid = false;
+                if (phaseApplied) s_pending_realign = true;
+                schedule_next_event(g_link->captureAppSessionState());
+            }
         }
     }
 

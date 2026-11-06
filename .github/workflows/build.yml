@@ -151,3 +151,6 @@ jobs:
 
       - name: Phrase scheduler fuzz (1000 seeds)
         run: python3 tools/phrase_scheduler_fuzz.py --seeds 1000 --source-root .
+
+      - name: LTMP request witness
+        run: bash tools/ltmp-request-witness.sh
