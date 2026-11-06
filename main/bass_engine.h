@@ -6,37 +6,26 @@
 #include <ableton/Link.hpp>
 #include "control_model.h"
 
-// The bassline sequencer. An eight-beat loop of sixteenths (at most two bars), driven by the Link beat. Pads choose which
-// settings the two dials control (single tap), and double-tap-and-hold switches the dials to that
-// pad's double-tap settings. Every setting is recorded as the loop plays (see ctl::LoopTrack).
 class BassEngine {
 public:
     BassEngine();
 
-    // A single tap on a pad selects its single-tap settings and starts the sequencer.
     void selectSingle(int pad);
 
-    // Double-tap-and-hold: the dials control this pad's double-tap settings. -1 when released.
     void setDoubleHeld(int pad);
     int  doubleHeld() const { return m_doubleHeld; }
     int  activeSingle() const { return m_activeSingle; }
 
-    // Any pad held is a touch: the dials act only while it lasts, and releasing it ends the recording.
     void setTouchHeld(bool held);
 
-    // Dial position in [0, 1] at a timestamp. Moving a dial touches its setting for the recorder.
     void setDial(int dial, float v01, uint64_t nowUs);
 
-    // nowUs is the input clock that setDial stamps, so touches expire on one clock.
     void process(const ableton::Link::SessionState& state,
                  const std::chrono::microseconds& time,
                  uint64_t nowUs);
 
     void stop();
 
-    // Two pads held together record fill: each step the loop passes while held joins the fill.
-    // Three pads held together unfill: each step passed while held leaves it. Four pads reset
-    // everything to its defaults, including the recorded fill.
     void setFill(bool on);
     void setUnfill(bool on);
     void clearFill();
@@ -69,10 +58,10 @@ private:
         int64_t offTick;
     };
 
-    static constexpr int64_t kMaxCatchUpTicks = 48;   // one beat; a longer gap is resynchronised
+    static constexpr int64_t kMaxCatchUpTicks = 48;
     static constexpr uint64_t kTouchHoldUs    = 250000;
     static constexpr int     kLfoEveryTicks   = 3;
-    static constexpr int     kRootNote        = 33;   // A1
+    static constexpr int     kRootNoteA1      = 33;
     static constexpr int     kNoteVelocity    = 100;
     static constexpr size_t  kMaxActiveNotes  = 24;
 
@@ -102,7 +91,6 @@ private:
     bool     m_active           = false;
     bool     m_fill             = false;
     bool     m_unfill           = false;
-    // What the held pads recorded at each step. A step never held follows the rhythm.
     enum FillMark : uint8_t { MARK_NONE, MARK_ADD, MARK_REMOVE };
     FillMark m_fillMark[ctl::kLoopSteps] = {};
     bool     stepSounds(int step) const;

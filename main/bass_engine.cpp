@@ -10,7 +10,7 @@ namespace {
 
 constexpr uint8_t kNoteOnStatus  = 0x90;
 constexpr uint8_t kNoteOffStatus = 0x80;
-constexpr uint8_t kChannelOne    = 1;      // user channel, as send_midi_cc takes it
+constexpr uint8_t kUserChannelOne = 1;
 constexpr uint8_t kCcModWheel    = 1;
 constexpr uint8_t kCcFilter      = 74;
 constexpr uint8_t kCcAllNotesOff = 123;
@@ -18,12 +18,17 @@ constexpr int     kMaxArpOffsets = 16;
 constexpr int64_t kTicksPerBeat  = 4 * ctl::kTicksPerStep;
 constexpr float   kPi            = 3.14159265f;
 
+enum LfoWave : int {
+    kLfoSine = 0,
+    kLfoTriangle,
+    kLfoSaw,
+    kLfoSquare
+};
+
 int floorDiv(int a, int b) {
     return a >= 0 ? a / b : -((-a + b - 1) / b);
 }
 
-// Arp offsets in scale degrees. Width 0 is the held pitch; wider arps go higher, and past the
-// halfway point they come back down through the lower degrees.
 int arpOffsets(float width, int out[kMaxArpOffsets]) {
     const float w = ctl::widthForDial(width);
     const int span = static_cast<int>(std::lround(w * 4.0f));
@@ -39,38 +44,36 @@ int arpOffsets(float width, int out[kMaxArpOffsets]) {
     return n;
 }
 
-// LFO shape in [0, 1] at a fractional cycle position.
 float lfoShape(int type, float frac) {
     switch (type) {
-        case 1:  return frac < 0.5f ? 2.0f * frac : 2.0f - 2.0f * frac;   // triangle
-        case 2:  return frac;                                              // saw
-        case 3:  return frac < 0.5f ? 1.0f : 0.0f;                         // square
-        default: return 0.5f + 0.5f * std::sin(2.0f * kPi * frac);         // sine
+        case kLfoTriangle: return frac < 0.5f ? 2.0f * frac : 2.0f - 2.0f * frac;
+        case kLfoSaw:      return frac;
+        case kLfoSquare:   return frac < 0.5f ? 1.0f : 0.0f;
+        case kLfoSine:
+        default:           return 0.5f + 0.5f * std::sin(2.0f * kPi * frac);
     }
 }
 
-}  // namespace
+}
 
 BassEngine::BassEngine() {
-    // Baseline for each setting: the value it has when a loop starts.
-    const float defaults[ctl::kControlCount] = {
-        0.0f,   // scale
-        0.0f,   // width
-        0.5f,   // pitch offset (centre: the root)
-        0.97f,  // rhythm: every sixteenth (pattern 31)
-        0.0f,   // LFO type
-        0.25f,  // LFO speed
-        0.25f,  // volume modulation: series 8, fully open, so every sixteenth sounds
-        0.5f,   // octave (centre)
-        0.5f,   // gate width
-        0.5f,   // arp speed: 16ths
-        0.0f,   // random octave
-        0.0f,   // random drop-out
-        0.5f,   // LFO width (centre: none)
-        0.5f,   // filter shift (centre)
-        1.0f,   // loop window (8 bars)
-        0.0f,   // chromatic aberration
-    };
+    float defaults[ctl::kControlCount] = {};
+    defaults[SET_SCALE]      = 0.0f;
+    defaults[SET_WIDTH]      = 0.0f;
+    defaults[SET_PITCH]      = 0.5f;
+    defaults[SET_RHYTHM]     = 0.97f;
+    defaults[SET_LFO_TYPE]   = 0.0f;
+    defaults[SET_LFO_SPEED]  = 0.25f;
+    defaults[SET_SERIES]     = 0.25f;
+    defaults[SET_OCTAVE]     = 0.5f;
+    defaults[SET_GATE]       = 0.5f;
+    defaults[SET_ARP]        = 0.5f;
+    defaults[SET_RAND_OCT]   = 0.0f;
+    defaults[SET_RAND_DROP]  = 0.0f;
+    defaults[SET_LFO_WIDTH]  = 0.5f;
+    defaults[SET_FILTER]     = 0.5f;
+    defaults[SET_WINDOW]     = 1.0f;
+    defaults[SET_ABERRATION] = 0.0f;
     for (int c = 0; c < ctl::kControlCount; ++c) {
         m_track[c].setBaseline(defaults[c]);
         m_live[c]  = defaults[c];
@@ -108,7 +111,6 @@ void BassEngine::setDial(int dial, float v01, uint64_t nowUs) {
 
 void BassEngine::touchSetting(int c) {
     if (m_touched[c]) return;
-    // A new change: its random patterns are seeded afresh and the clean line starts at this value.
     m_touched[c] = true;
     m_track[c].startRecording(m_live[c]);
     m_entrySeed[c] = ctl::hash32(m_seedCounter++, static_cast<uint32_t>(c), 0x51u) | 1u;
@@ -121,7 +123,6 @@ void BassEngine::untouchSetting(int c) {
 
 void BassEngine::updateRecording() {
     if (m_fill || m_unfill) {
-        // While the tap is held the dial settings record and override the track at every step, even when still.
         for (int dial = 0; dial < 2; ++dial) touchSetting(settingFor(dial));
     } else {
         for (int c = 0; c < ctl::kControlCount; ++c) untouchSetting(c);
@@ -136,7 +137,6 @@ void BassEngine::setTouchHeld(bool held) {
 }
 
 void BassEngine::expireTouches(uint64_t nowUs) {
-    // A touch lasts for as long as a pad is held, so nothing expires while one is.
     if (m_touchHeld || m_fill || m_unfill) return;
     for (int c = 0; c < ctl::kControlCount; ++c) {
         if (m_touched[c] && nowUs - m_lastMoveUs[c] > kTouchHoldUs) {
@@ -161,7 +161,6 @@ void BassEngine::process(const ableton::Link::SessionState& state,
     const int64_t now = static_cast<int64_t>(std::floor(beat * static_cast<double>(kTicksPerBeat)));
 
     if (m_lastTick < 0 || now < m_lastTick || now - m_lastTick > kMaxCatchUpTicks) {
-        // First call, a stall or a backward jump: resynchronise without catching up.
         allNotesOff();
         m_lastTick = now - 1;
     }
@@ -170,9 +169,6 @@ void BassEngine::process(const ableton::Link::SessionState& state,
 }
 
 void BassEngine::tick(int64_t t) {
-    // Turn around on the shorter of the current and the pending length. Gating on the current
-    // length alone meant a shortened window only took effect after a full pass of the old one,
-    // so dropping the window to 1 bar still waited out the remaining 8 bars (32 beats).
     const int64_t curTicks  = static_cast<int64_t>(m_loopSteps) * ctl::kTicksPerStep;
     const int64_t pendTicks = static_cast<int64_t>(m_pendingLoopSteps) * ctl::kTicksPerStep;
     const int64_t gateTicks = pendTicks < curTicks ? pendTicks : curTicks;
@@ -206,24 +202,20 @@ void BassEngine::stepBoundary(int step) {
     } else if (m_unfill) {
         m_fillMark[step] = MARK_REMOVE;
     }
-    // The window is structural, not automation: it reads the live dial, so the loop length follows
-    // the dial and is never a recorded track.
     m_pendingLoopSteps = ctl::loopBarsForDial(m_live[SET_WINDOW]) * ctl::kStepsPerBar;
     const float shift = ctl::filterShiftForDial(m_frame[SET_FILTER]);
     const int cc = std::clamp(64 + static_cast<int>(std::lround(shift * 64.0f)), 0, 127);
     if (cc != m_lastFilterCc) {
-        send_midi_cc(kChannelOne, kCcFilter, static_cast<uint8_t>(cc));
+        send_midi_cc(kUserChannelOne, kCcFilter, static_cast<uint8_t>(cc));
         m_lastFilterCc = cc;
     }
 }
 
 void BassEngine::arpEvent(int step, int64_t loopTick, int period, int64_t t) {
-    // Onset from the rhythm pattern.
     const float gate = ctl::gateWidthForDial(m_frame[SET_GATE]);
     if (gate <= 0.0f) return;
     if (!soundsAt(step)) return;
 
-    // Pitch from the arp, around the selected pitch.
     const int64_t k = loopTick / period;
     int offsets[kMaxArpOffsets];
     const int n = arpOffsets(m_frame[SET_WIDTH], offsets);
@@ -235,10 +227,9 @@ void BassEngine::arpEvent(int step, int64_t loopTick, int period, int64_t t) {
                                                     static_cast<float>(size))) + offset;
     const int octaveOfDegree = floorDiv(degree, size);
     const int index = degree - octaveOfDegree * size;
-    int note = kRootNote + 12 * octaveOfDegree + ctl::scaleSemitone(scale, index);
+    int note = kRootNoteA1 + 12 * octaveOfDegree + ctl::scaleSemitone(scale, index);
     note += 12 * ctl::octaveForDial(m_frame[SET_OCTAVE]);
 
-    // Random octave, drop-out and aberration: deterministic for each position and entry seed.
     const uint32_t s  = static_cast<uint32_t>(step);
     const uint32_t kk = static_cast<uint32_t>(k);
     if (ctl::hashUnit(m_entrySeed[SET_RAND_OCT], s, kk) < ctl::probabilityForDial(m_frame[SET_RAND_OCT])) {
@@ -273,7 +264,7 @@ void BassEngine::sendLfoAndFilter(int64_t absTick) {
     const int cc = std::clamp(64 + static_cast<int>(std::lround(depth * 63.0f * (2.0f * shape - 1.0f))),
                               0, 127);
     if (cc != m_lastLfoCc) {
-        send_midi_cc(kChannelOne, kCcModWheel, static_cast<uint8_t>(cc));
+        send_midi_cc(kUserChannelOne, kCcModWheel, static_cast<uint8_t>(cc));
         m_lastLfoCc = cc;
     }
 }
@@ -346,8 +337,6 @@ bool BassEngine::stepSounds(int step) const {
     if (!((rhythm >> (step % 32)) & 1u)) return false;
     const uint32_t series = ctl::tranceGate(ctl::gateSeriesForDial(m_frame[SET_SERIES]),
                                             m_entrySeed[SET_SERIES]);
-    // The volume modulation is the gate series alone; series 0 carries the fake sidechain, so
-    // there is no step this always mutes and a fully open gate is reachable.
     if (!((series >> (step % 32)) & 1u)) return false;
     return true;
 }
@@ -355,7 +344,7 @@ bool BassEngine::stepSounds(int step) const {
 void BassEngine::allNotesOff() {
     for (const ActiveNote& n : m_activeNotes) sendNoteOff(n.note);
     m_activeNotes.clear();
-    send_midi_cc(kChannelOne, kCcAllNotesOff, 0);
+    send_midi_cc(kUserChannelOne, kCcAllNotesOff, 0);
 }
 
 void BassEngine::sendNoteOn(int note) {
