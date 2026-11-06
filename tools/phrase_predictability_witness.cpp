@@ -1,32 +1,3 @@
-// Off-device phrase-predictability witness for esp-idf-link.
-// Build/run: tools/phrase-predictability-witness.sh
-//
-// IMPORTANT -- what this file does and does NOT do:
-//  * It links and EXECUTES the real shipped host-compilable sources
-//    main/control_model.cpp and main/bass_engine.cpp (checks 6-10 + fill/seed +
-//    the gap-33 fill-marks-across-window-change check). Those checks exercise
-//    shipped code.
-//  * It CANNOT compile main/link_sync.cpp (ESP-IDF: esp_timer, gptimer, lwip,
-//    g_link, wifi_config ...). For its MIDI-clock/SPP/phrase/LTMP/quantum/
-//    transport formulas this file contains a clearly-labelled MIRROR
-//    (namespace mirror, "MIR_" macros). A MIRROR MODELS the formula; it is
-//    NOT shipped code and must never be described as testing shipped code.
-//    In particular send_song_position() and handle_link_sync() (and
-//    detectQuantumBoundary, schedule_next_event, link_event_cb,
-//    tempo_listener_task, broadcast_ticker_timeline) are exercised ONLY by
-//    guarded host-mirrors here -- see checkCoverage() and the report.
-//    The boot-panic / 16-channel CC123 sweep (audit gaps 53/54) is ALSO a
-//    GUARDED HOST MIRROR of main/link_sync.cpp:398-410, NOT captured DIN bytes:
-//    no on-device DIN/UART byte-capture path exists in this run.
-//    tools/phrase-predictability-witness.sh runs a parity guard that re-reads
-//    main/link_sync.cpp, main/main.h, main/main.cpp, main/io_helpers.cpp,
-//    main/bass_engine.{h,cpp}, main/control_model.{h,cpp} and the three vendored
-//    Link headers and refuses to build if any mirrored constant or formula has
-//    drifted from the shipped source.
-//
-// Every MIR_ constant and every mirror() function names the exact
-// main/link_sync.cpp:<line> / main/main.h:<line> it mirrors (line numbers
-// refreshed against the 770-line file after the send_song_position fmod edit).
 #include <cstdint>
 #include <chrono>
 #include <vector>
@@ -42,11 +13,6 @@
 
 #include "control_model.h"
 
-// White-box read of BassEngine's private fields for the "window is structural"
-// and fill-mark checks. All libstdc++ and the Link stub are pre-included above,
-// so this macro touches ONLY bass_engine.h's own private: section. The shipped
-// .cpp files are compiled as separate translation units where `private` is
-// intact; access specifiers do not change layout or mangling (verified).
 #define private public
 #include "bass_engine.h"
 #undef private
@@ -83,7 +49,6 @@ static int g_checks = 0;
         }                                                                         \
     } while (0)
 
-// ---- hoststub MIDI capture (reused from tools/bass_loop_witness.cpp) --------
 struct Msg { uint8_t b[3]; int64_t tick; };
 static std::vector<Msg> g_out;
 static int64_t g_nowTick = -1;
@@ -117,49 +82,38 @@ static bool hasCc(size_t from, uint8_t cc) {
     return false;
 }
 
-// =====================================================================
-// MIRROR -- NOT SHIPPED CODE. Values mirror main/link_sync.cpp and
-// main/main.h; the exact file:line is in each trailing comment. The shell
-// script's parity guard re-reads those files and fails if any drift.
-// =====================================================================
-#define MIR_MIDI_PULSES_PER_QUARTER_NOTE     24        // main/link_sync.cpp:21
-#define MIR_MIDI_SPP_UNITS_PER_BEAT          4         // main/link_sync.cpp:22
-#define MIR_MIDI_SPP_UNITS_MASK              0x3FFF    // main/link_sync.cpp:23
-#define MIR_MIDI_DATA_BYTE_MASK              0x7F      // main/link_sync.cpp:24
-#define MIR_MIDI_DATA_BYTE_SHIFT             7         // main/link_sync.cpp:25
-#define MIR_MICROBEATS_PER_BEAT              1000000   // main/link_sync.cpp:30 (1e6)
-#define MIR_FORCE_START_AFTER_NO_PEERS_US    8000000   // main/link_sync.cpp:37
-#define MIR_MAX_CATCHUP_PULSES_PER_SCHEDULE  1024      // main/link_sync.cpp:38
-#define MIR_LTMP_TEMPO_ONLY_BYTES            12        // main/link_sync.cpp:231
-#define MIR_LTMP_TEMPO_PHASE_BYTES           28        // main/link_sync.cpp:238
-#define MIR_MIDI_CLOCK_RESYNC_THRESHOLD      24        // main/main.h:93
-#define MIR_PHRASE_BEATS                     64        // main/main.h:61 (64.0)
-#define MIR_LINK_QUANTUM                     16        // main/main.h:60 (16.0)
-#define MIR_METRONOME_ACCENT_CYCLE_BEATS     16        // main/main.h:79
-#define MIR_MIDI_TIMING_CLOCK                0xF8      // main/main.h:83
-#define MIR_MIDI_START                       0xFA      // main/main.h:84
-#define MIR_MIDI_STOP                        0xFC      // main/main.h:85
-#define MIR_MIDI_CONTINUE                    0xFB      // main/main.h:86
-#define MIR_MIDI_SONG_POSITION_POINTER       0xF2      // main/main.h:87
-#define MIR_MIDI_NOTE_ON_CMD                 0x90      // main/main.h:88
-#define MIR_MIDI_NOTE_OFF_CMD                0x80      // main/main.h:89
-#define MIR_MIDI_CC_CMD                      0xB0      // main/main.h:90
-#define MIR_MIDI_CC_ALL_NOTES_OFF            123       // main/main.h:91
-#define MIR_MIDI_USER_CHANNEL_MIN            1         // main/io_helpers.cpp:21
-#define MIR_MIDI_USER_CHANNEL_MAX            16        // main/io_helpers.cpp:22
-#define MIR_MIDI_WIRE_CHANNEL_MIN            0         // main/io_helpers.cpp:23
-#define MIR_MIDI_CC_SWEEP_VALUE              0         // main/link_sync.cpp:401
+#define MIR_MIDI_PULSES_PER_QUARTER_NOTE     24
+#define MIR_MIDI_SPP_UNITS_PER_BEAT          4
+#define MIR_MIDI_SPP_UNITS_MASK              0x3FFF
+#define MIR_MIDI_DATA_BYTE_MASK              0x7F
+#define MIR_MIDI_DATA_BYTE_SHIFT             7
+#define MIR_MICROBEATS_PER_BEAT              1000000
+#define MIR_FORCE_START_AFTER_NO_PEERS_US    8000000
+#define MIR_MAX_CATCHUP_PULSES_PER_SCHEDULE  1024
+#define MIR_LTMP_TEMPO_ONLY_BYTES            12
+#define MIR_LTMP_TEMPO_PHASE_BYTES           28
+#define MIR_MIDI_CLOCK_RESYNC_THRESHOLD      24
+#define MIR_PHRASE_BEATS                     64
+#define MIR_LINK_QUANTUM                     16
+#define MIR_METRONOME_ACCENT_CYCLE_BEATS     16
+#define MIR_MIDI_TIMING_CLOCK                0xF8
+#define MIR_MIDI_START                       0xFA
+#define MIR_MIDI_STOP                        0xFC
+#define MIR_MIDI_CONTINUE                    0xFB
+#define MIR_MIDI_SONG_POSITION_POINTER       0xF2
+#define MIR_MIDI_NOTE_ON_CMD                 0x90
+#define MIR_MIDI_NOTE_OFF_CMD                0x80
+#define MIR_MIDI_CC_CMD                      0xB0
+#define MIR_MIDI_CC_ALL_NOTES_OFF            123
+#define MIR_MIDI_USER_CHANNEL_MIN            1
+#define MIR_MIDI_USER_CHANNEL_MAX            16
+#define MIR_MIDI_WIRE_CHANNEL_MIN            0
+#define MIR_MIDI_CC_SWEEP_VALUE              0
 
 namespace mirror {
 
-constexpr double kSppWrap = static_cast<double>(MIR_MIDI_SPP_UNITS_MASK) + 1.0;  // 16384.0
+constexpr double kSppWrap = static_cast<double>(MIR_MIDI_SPP_UNITS_MASK) + 1.0;
 
-// Mirrors send_all_notes_off_all_channels() main/link_sync.cpp:398-404: one
-// 3-byte CC123 for each USER channel 1..16, mapped onto WIRE channels 0..15,
-// with the third (value) byte 0. GUARDED HOST MIRROR, NOT captured DIN bytes:
-// UART writes cannot be linked host-side, so the emitted bytes are modelled as
-// raw 3-byte messages in a host vector. The .sh parity guard re-reads the
-// shipped loop, the boot-panic function and the main/main.cpp boot call.
 inline void emitAllNotesOffSweep(std::vector<uint8_t>& out) {
     for (int userChannel = MIR_MIDI_USER_CHANNEL_MIN;
          userChannel <= MIR_MIDI_USER_CHANNEL_MAX; ++userChannel) {
@@ -171,10 +125,6 @@ inline void emitAllNotesOffSweep(std::vector<uint8_t>& out) {
     }
 }
 
-// Mirrors the shared Stop + sweep shape used by link_sync_send_boot_panic()
-// (main/link_sync.cpp:406-410, called at main/main.cpp:30 BEFORE Link exists)
-// AND by the peer-loss branch (main/link_sync.cpp:707-709) AND by the
-// transport-stop branch (main/link_sync.cpp:756-758).
 inline void emitStopAndAllNotesOffSweep(std::vector<uint8_t>& out) {
     out.push_back(static_cast<uint8_t>(MIR_MIDI_STOP));
     emitAllNotesOffSweep(out);
@@ -186,11 +136,6 @@ inline std::vector<uint8_t> bootPanicBytes() {
     return out;
 }
 
-// Mirrors send_song_position() main/link_sync.cpp:408-416 (EDITED: std::fmod
-// with a negative wrap instead of the undefined double->uint16_t cast).
-// Returns the 3 SPP bytes {0xF2, lsb, msb}; 14-bit units split LSB-first into
-// two 7-bit data bytes. Defined for ALL sessionBeat, including negative and
-// very large beats.
 inline void encodeSpp(double sessionBeat, uint8_t out[3]) {
     double units = std::fmod(sessionBeat * MIR_MIDI_SPP_UNITS_PER_BEAT, kSppWrap);
     if (units < 0.0) units += kSppWrap;
@@ -200,11 +145,6 @@ inline void encodeSpp(double sessionBeat, uint8_t out[3]) {
     out[2] = static_cast<uint8_t>((spp_units >> MIR_MIDI_DATA_BYTE_SHIFT) & MIR_MIDI_DATA_BYTE_MASK);
 }
 
-// The OLD expression in main/link_sync.cpp:409 (pre-edit):
-//   uint16_t spp_units = (uint16_t)(sessionBeat * 4) & 0x3FFF;
-// That double->uint16_t cast is UNDEFINED BEHAVIOUR (UB) for sessionBeat*4 < 0
-// or >= 65536. It is evaluated here ONLY for in-range values, to prove the new
-// formula is identical to it wherever the old one was defined.
 inline void encodeSppOld(double sessionBeat, uint8_t out[3]) {
     uint16_t spp_units =
         static_cast<uint16_t>(sessionBeat * MIR_MIDI_SPP_UNITS_PER_BEAT) & MIR_MIDI_SPP_UNITS_MASK;
@@ -213,9 +153,6 @@ inline void encodeSppOld(double sessionBeat, uint8_t out[3]) {
     out[2] = static_cast<uint8_t>((spp_units >> MIR_MIDI_DATA_BYTE_SHIFT) & MIR_MIDI_DATA_BYTE_MASK);
 }
 
-// Mirrors the phase-continuous, linear-tempo SessionState that Link's
-// setTempo(bpm, t) produces: beat at t is preserved, the slope thereafter is
-// bpm/60e6. Used only to model the LTMP stale-deadline scenario.
 struct Timeline {
     double beatAnchor = 0.0;
     double tAnchor    = 0.0;
@@ -229,9 +166,6 @@ struct Timeline {
     }
 };
 
-// Mirrors schedule_next_event() main/link_sync.cpp:440-462 (re-anchor branches
-// 444-455 and the skip-don't-catch-up loop 457-460). Returns the armed
-// deadline; records the resync-log count and how many pulses the loop stepped.
 struct Scheduler {
     int64_t nextPulse      = 0;
     bool    valid          = false;
@@ -247,11 +181,11 @@ struct Scheduler {
         } else if (nextPulse < dueNow) {
             if (dueNow - nextPulse > MIR_MIDI_CLOCK_RESYNC_THRESHOLD) ++resyncLogCount;
             nextPulse = dueNow;
-        } else if (nextPulse - dueNow > 1) {   // FIX (b): link_sync.cpp:452, was > MIDI_CLOCK_RESYNC_THRESHOLD
+        } else if (nextPulse - dueNow > 1) {
             nextPulse = dueNow;
         }
         double due = tl.timeAtBeat(static_cast<double>(nextPulse) / MIR_MIDI_PULSES_PER_QUARTER_NOTE);
-        for (int guard = 0;   // FIX (c): link_sync.cpp:458, was `due < nowLink`
+        for (int guard = 0;
              due <= nowLink && guard < MIR_MAX_CATCHUP_PULSES_PER_SCHEDULE; ++guard) {
             ++nextPulse;
             ++skipLoopSteps;
@@ -261,9 +195,6 @@ struct Scheduler {
     }
 };
 
-// Mirrors the skip-don't-catch-up loop in isolation (main/link_sync.cpp:458,
-// FIX (c): `due <= nowLink`, so the armed deadline is STRICTLY in the future).
-// For a linear timeline through (0,0): deadline of pulse p is p*pulsePeriodUs.
 inline int64_t skipLoop(int64_t nextPulse, double nowLink, double pulsePeriodUs, int& steps) {
     double due = static_cast<double>(nextPulse) * pulsePeriodUs;
     int guard = 0;
@@ -275,11 +206,6 @@ inline int64_t skipLoop(int64_t nextPulse, double nowLink, double pulsePeriodUs,
     return nextPulse;
 }
 
-// Mirrors detectQuantumBoundary() main/link_sync.cpp:311-347 (phrase part):
-// sessionBeat = beatAtTime(time,16); phaseWithinPhrase = phaseAtTime(time,64);
-// currentPhraseNumber = floor(sessionBeat/64); crossedPhraseBoundary fires when
-// that number changes. Real Link guarantees fmod(beatAtTime(t,q),q) ==
-// phaseAtTime(t,q) for non-negative beats (vendored Link.hpp:267).
 struct QuantumBoundaryMirror {
     bool baselineCaptured = false;
     int  lastPhraseNumber = 0;
@@ -310,10 +236,6 @@ struct QuantumBoundaryMirror {
     }
 };
 
-// Mirrors the crossedPhraseBoundary block of handle_link_sync
-// main/link_sync.cpp:757-766: SPP first, then (only at a boundary and only when
-// realign is pending and playing/force_start) Start/Continue. Events are the
-// raw status bytes in emission order.
 struct PhraseEvents {
     std::vector<uint8_t> events;
     bool pendingRealign   = false;
@@ -334,27 +256,15 @@ struct PhraseEvents {
     }
 };
 
-// Mirrors handle_link_sync main/link_sync.cpp:500-775.
-// ADVERSARIAL CORRECTION: start_wait_time is set ONCE (main.cpp:59) and
-// isPlaying() is PERMANENTLY false (enableStartStopSync(false); zero
-// setIsPlaying in main/). Therefore (!is_connected || !isPlaying()) is ALWAYS
-// true and force_start latches UNCONDITIONALLY once elapsed >= 8 s -- even
-// while peers are CONNECTED. A mesh older than 8 s has forceStart already
-// latched and its realign already consumed at a phrase boundary; a later 1->0
-// loss produces NO clock-enable edge (:730) and NO peer-connect edge (:705).
-// peerLossQueuesRealign=false reproduces the PRE-FIX HIGH defect.
 struct TransportMirror {
-    bool wasConnected     = false;   // main.cpp: was_connected = false
+    bool wasConnected     = false;
     bool evtEnabled       = false;
     bool pendingRealign   = false;
     bool transportRunning = false;
-    bool forceStart       = false;   // caller may init true for a mesh older than 8 s
-    bool peerLossQueuesRealign = true;   // FIX (link_sync.cpp:713)
-    int64_t startWaitTimeUs = 0;         // set ONCE at boot (main.cpp:59)
+    bool forceStart       = false;
+    bool peerLossQueuesRealign = true;
+    int64_t startWaitTimeUs = 0;
     std::vector<uint8_t> events;
-    // Raw bytes of the 1->0 peer-loss emission ONLY (Stop + 16 CC123), kept
-    // separate from `events` so the sweep can be asserted without SPP/Start
-    // bytes mixed in. GUARDED HOST MIRROR, not captured DIN.
     std::vector<uint8_t> lossCapture;
     int f8Streaming = 0;
     int startCount  = 0;
@@ -362,9 +272,7 @@ struct TransportMirror {
 
     void tick(bool isConnected, bool crossedPhraseBoundary, double sessionBeat,
               int64_t nowUs) {
-        const bool isPlaying = false;   // enableStartStopSync(false); no setIsPlaying
-        // link_sync.cpp:536-538: the (!isConnected || !isPlaying) guard is
-        // ALWAYS satisfied here, so the latch fires unconditionally at 8 s.
+        const bool isPlaying = false;
         if (!forceStart &&
             (nowUs - startWaitTimeUs >= MIR_FORCE_START_AFTER_NO_PEERS_US) &&
             (!isConnected || !isPlaying)) {
@@ -372,28 +280,26 @@ struct TransportMirror {
         }
         if (isConnected != wasConnected) {
             if (isConnected) {
-                pendingRealign = true;                    // :705
+                pendingRealign = true;
             } else {
-                // link_sync.cpp:707-709: exactly ONE Stop + the 16-channel
-                // CC123 sweep (the old mirror emitted a single lone CC123).
                 emitStopAndAllNotesOffSweep(events);
                 emitStopAndAllNotesOffSweep(lossCapture);
-                transportRunning = false;                 // :710
-                if (peerLossQueuesRealign) pendingRealign = true;   // FIX :713
+                transportRunning = false;
+                if (peerLossQueuesRealign) pendingRealign = true;
             }
             wasConnected = isConnected;
         }
-        const bool clockEnabled = isConnected || forceStart;   // :724
+        const bool clockEnabled = isConnected || forceStart;
         if (clockEnabled != evtEnabled) {
             evtEnabled = clockEnabled;
-            if (clockEnabled) pendingRealign = true;      // :730
+            if (clockEnabled) pendingRealign = true;
         }
-        if (evtEnabled) ++f8Streaming;                     // one F8 per fire
-        if (clockEnabled && crossedPhraseBoundary) {       // :766
-            uint8_t spp[3]; encodeSpp(sessionBeat, spp);  // :767
+        if (evtEnabled) ++f8Streaming;
+        if (clockEnabled && crossedPhraseBoundary) {
+            uint8_t spp[3]; encodeSpp(sessionBeat, spp);
             events.push_back(spp[0]); events.push_back(spp[1]); events.push_back(spp[2]);
             ++sppCount;
-            if (pendingRealign && (isPlaying || forceStart)) {   // :767
+            if (pendingRealign && (isPlaying || forceStart)) {
                 uint8_t start = transportRunning ? static_cast<uint8_t>(MIR_MIDI_CONTINUE)
                                                  : static_cast<uint8_t>(MIR_MIDI_START);
                 events.push_back(start);
@@ -405,9 +311,6 @@ struct TransportMirror {
     }
 };
 
-// Mirrors link_event_cb() main/link_sync.cpp:465-495, FIX (d): the F8 byte is
-// emitted INSIDE `if (s_evt_enabled)`; when disabled no F8 is sent and
-// s_next_pulse_valid is cleared instead.
 struct LinkEventCbMirror {
     bool    evtEnabled     = true;
     bool    nextPulseValid = true;
@@ -416,69 +319,54 @@ struct LinkEventCbMirror {
     int     scheduleCalls  = 0;
 
     void fire() {
-        ++nextPulse;                       // link_sync.cpp:485
+        ++nextPulse;
         if (evtEnabled) {
-            ++f8Count;                     // send_midi_bytes(&timing_msg, 1);  :487
-            ++scheduleCalls;               // schedule_next_event(...)          :489
+            ++f8Count;
+            ++scheduleCalls;
         } else {
-            nextPulseValid = false;        // :491
+            nextPulseValid = false;
         }
     }
 };
 
-// ---- Integer-microbeat port of vendored Link Phase.hpp:34-80 ---------------
-// Beats.hpp: Beats wraps int64 microBeats (1e6/beat); Beats(double) truncates
-//   beats*1e6; Beats % Beats is C++ truncated remainder on microBeats.
-// Timeline.hpp: toBeats(t) = beatOrigin + microsToBeats(t - timeOrigin), with
-//   microsToBeats(us) = Beats(double(us)/microsPerBeat).
-// Phase.hpp:34 phase(); :54 nextPhaseMatch(); :65 closestPhaseMatch();
-//   :76-80 toPhaseEncodedBeats(tl,t,q) = closestPhaseMatch(beat, beat -
-//   tl.beatOrigin, q). Link.ipp:191-202 beatAtTime/phaseAtTime call these.
-// This is the CORRECT model: beatAtTime is PHASE-ENCODED, not linear.
 struct PhaseMirror {
     static int64_t iabs64(int64_t v) { return v < 0 ? -v : v; }
 
-    // Phase.hpp:34-48. Returns beats mod quantum in [0,quantum) microbeats,
-    // handling negative beats by shifting to the nearest lower quantum origin.
     static int64_t phaseUb(int64_t beatsUb, int64_t qUb) {
         if (qUb == 0) return 0;
-        const int64_t bins = (iabs64(beatsUb) + qUb) / qUb;   // Phase.hpp:45
+        const int64_t bins = (iabs64(beatsUb) + qUb) / qUb;
         const int64_t quantumBeats = bins * qUb;
-        return (beatsUb + quantumBeats) % qUb;                  // operands >= 0
+        return (beatsUb + quantumBeats) % qUb;
     }
-    // Phase.hpp:54-60.
     static int64_t nextPhaseMatchUb(int64_t xUb, int64_t targetUb, int64_t qUb) {
         const int64_t desired = phaseUb(targetUb, qUb);
         const int64_t xPhase = phaseUb(xUb, qUb);
-        const int64_t diff = (desired - xPhase + qUb) % qUb;   // Phase.hpp:58
+        const int64_t diff = (desired - xPhase + qUb) % qUb;
         return xUb + diff;
     }
-    // Phase.hpp:65-68: x - Beats(0.5*q.floating()) -> qUb/2 microbeats.
     static int64_t closestPhaseMatchUb(int64_t xUb, int64_t targetUb, int64_t qUb) {
         return nextPhaseMatchUb(xUb - qUb / 2, targetUb, qUb);
     }
-    // Phase.hpp:76-80 + Timeline.hpp toBeats (timeOrigin = 0).
     static int64_t beatAtTimeUb(double beatOriginBeats, int64_t timeUs,
                                 int64_t microsPerBeat, int64_t quantumBeats) {
         const int64_t beatOriginUb = static_cast<int64_t>(beatOriginBeats * 1e6);
         const int64_t qUb = quantumBeats * 1000000;
         const int64_t deltaUb = static_cast<int64_t>(
             (static_cast<double>(timeUs) / static_cast<double>(microsPerBeat)) * 1e6);
-        const int64_t beatUb = beatOriginUb + deltaUb;         // tl.toBeats(time)
-        const int64_t targetUb = beatUb - beatOriginUb;        // = deltaUb
+        const int64_t beatUb = beatOriginUb + deltaUb;
+        const int64_t targetUb = beatUb - beatOriginUb;
         return closestPhaseMatchUb(beatUb, targetUb, qUb);
     }
     static double beatAtTime(double origin, int64_t timeUs, int64_t mpb, int64_t q) {
         return static_cast<double>(beatAtTimeUb(origin, timeUs, mpb, q)) / 1e6;
     }
-    // Link.ipp:198-202: phaseAtTime(t,q) = phase(beatAtTime(t,q), q).
     static double phaseAtTime(double origin, int64_t timeUs, int64_t mpb, int64_t q) {
         const int64_t qUb = q * 1000000;
         return static_cast<double>(phaseUb(beatAtTimeUb(origin, timeUs, mpb, q), qUb)) / 1e6;
     }
 };
 
-}  // namespace mirror
+}
 
 using mirror::Timeline;
 using mirror::Scheduler;
@@ -488,15 +376,11 @@ using mirror::TransportMirror;
 using mirror::LinkEventCbMirror;
 using mirror::PhaseMirror;
 
-// =====================================================================
-// Check 1 -- Phrase arithmetic (MIRROR constants + arithmetic).
-// PHRASE_BEATS=64, LINK_QUANTUM=16, MIDI_SPP_UNITS_PER_BEAT=4, mask 0x3FFF.
-// =====================================================================
 static void checkPhraseArithmetic() {
-    const int unitsPerPhrase = MIR_PHRASE_BEATS * MIR_MIDI_SPP_UNITS_PER_BEAT;   // 256
-    const int modulusUnits   = MIR_MIDI_SPP_UNITS_MASK + 1;                      // 16384 = 0x4000
-    const int wrapBeats      = modulusUnits / MIR_MIDI_SPP_UNITS_PER_BEAT;       // 4096
-    const int wrapPhrases    = wrapBeats / MIR_PHRASE_BEATS;                     // 64
+    const int unitsPerPhrase = MIR_PHRASE_BEATS * MIR_MIDI_SPP_UNITS_PER_BEAT;
+    const int modulusUnits   = MIR_MIDI_SPP_UNITS_MASK + 1;
+    const int wrapBeats      = modulusUnits / MIR_MIDI_SPP_UNITS_PER_BEAT;
+    const int wrapPhrases    = wrapBeats / MIR_PHRASE_BEATS;
 
     CHECK_EQ("MIRROR phrase beats = 64", MIR_PHRASE_BEATS, 64);
     CHECK_EQ("MIRROR link quantum = 16", MIR_LINK_QUANTUM, 16);
@@ -512,19 +396,12 @@ static void checkPhraseArithmetic() {
     CHECK_EQ("MIRROR quantum == metronome accent cycle", MIR_LINK_QUANTUM,
              MIR_METRONOME_ACCENT_CYCLE_BEATS);
 
-    // Exact wrap point: send_song_position (link_sync.cpp:408-416) computes
-    // units = fmod(sessionBeat*4, 16384) [+16384 if negative]. It wraps to 0
-    // when sessionBeat*4 reaches a multiple of 16384, i.e. at sessionBeat =
-    // 4096 beats = phrase 64. Beat 4096 is a phrase boundary (4096 % 64 == 0),
-    // so the wrap coincides with a boundary. State it explicitly:
     const int exactWrapUnits = 0x4000;
     const int exactWrapBeat  = exactWrapUnits / MIR_MIDI_SPP_UNITS_PER_BEAT;
     CHECK_EQ("MIRROR exact wrap point = 0x4000 units", exactWrapUnits, 16384);
     CHECK_EQ("MIRROR exact wrap beat = 4096", exactWrapBeat, 4096);
     CHECK("MIRROR wrap beat 4096 is phrase 64", exactWrapBeat / MIR_PHRASE_BEATS == 64);
 
-    // TTMP beatOriginUb = beats * MICROBEATS_PER_BEAT (link_sync.cpp:119):
-    // at the wrap beat the timeline broadcast carries 4096e6 microbeats.
     CHECK_EQ("MIRROR MICROBEATS_PER_BEAT = 1e6", MIR_MICROBEATS_PER_BEAT, 1000000);
     const int64_t beatOriginUb = static_cast<int64_t>(
         static_cast<double>(exactWrapBeat) * MIR_MICROBEATS_PER_BEAT);
@@ -532,10 +409,6 @@ static void checkPhraseArithmetic() {
              beatOriginUb, 4096000000LL);
 }
 
-// =====================================================================
-// Check 2 -- SPP encoding at successive phrase boundaries and the wrap
-// (MIRROR of send_song_position).
-// =====================================================================
 static void checkSppEncoding() {
     uint8_t b[3];
     mirror::encodeSpp(0.0, b);
@@ -569,21 +442,14 @@ static void checkSppEncoding() {
     CHECK_EQ("MIRROR SPP beat5000 MSB = 0x1C", b[2], 0x1C);
 }
 
-// =====================================================================
-// Coordinator audit check 1 -- NEW std::fmod formula: byte pairs at
-// 0, 64, 4096, 16384, -0.5 and a beat beyond 16383.75; new == old for
-// every in-range value; defined for out-of-range; name the old cast as UB.
-// =====================================================================
 static void checkSppNewFormula() {
-    // New == old for every value where the old double->uint16_t cast was
-    // DEFINED (0 <= beat*4 <= 65535, i.e. beat in [0, 16383.75]).
     const double inRange[] = {0.0, 0.25, 0.5, 1.0, 15.75, 64.0, 128.0, 1024.0,
                               4032.0, 4095.75, 4096.0, 8192.0, 16383.0, 16383.75};
     bool allEqual = true;
     for (double beat : inRange) {
         uint8_t nw[3], od[3];
         mirror::encodeSpp(beat, nw);
-        mirror::encodeSppOld(beat, od);   // defined only in [0, 16383.75]
+        mirror::encodeSppOld(beat, od);
         if (nw[0] != od[0] || nw[1] != od[1] || nw[2] != od[2]) allEqual = false;
     }
     CHECK("MIRROR new fmod formula == old (uint16_t)&mask formula for EVERY in-range beat",
@@ -615,8 +481,6 @@ static void checkSppNewFormula() {
         CHECK(nm, units >= 0.0 && units < mirror::kSppWrap);
     }
 
-    // Name the old expression as UB and prove the out-of-range cases fall
-    // outside the domain where that cast was defined.
     CHECK_EQD("MIRROR old double->uint16_t cast becomes UB above beat 16383.75 (x=65535)",
               65535.0 / MIR_MIDI_SPP_UNITS_PER_BEAT, 16383.75);
     CHECK("MIRROR negative / large beats are OUTSIDE the old cast's defined domain (OLD = UB)",
@@ -630,10 +494,6 @@ static void checkSppNewFormula() {
         "to the old result wherever the old one was defined.\n");
 }
 
-// =====================================================================
-// Check 3 -- SPP-before-Start ordering; Start/Continue only at a phrase
-// boundary (MIRROR of handle_link_sync:757-766, explicit event model).
-// =====================================================================
 static void checkSppBeforeStart() {
     PhraseEvents ev;
     ev.pendingRealign = true;
@@ -680,12 +540,7 @@ static void checkSppBeforeStart() {
     CHECK_EQ("MIRROR exactly two Start/Continue events in the run", startCount, 2);
 }
 
-// =====================================================================
-// Check 4 -- Clock skip-don't-catch-up (MIRROR of schedule_next_event).
-// =====================================================================
 static void checkClockSkipDontCatchUp() {
-    // FIX (c): `due <= nowLink` advances an already-due pulse too, so 11 pulses
-    // (100..110) are passed and the armed deadline is STRICTLY future.
     int steps = 0;
     int64_t next = mirror::skipLoop(100, 110.0 * 20000.0, 20000.0, steps);
     CHECK_EQ("MIRROR skip loop (<= nowLink) passes 11 due pulses", steps, 11);
@@ -693,8 +548,6 @@ static void checkClockSkipDontCatchUp() {
     CHECK("MIRROR armed deadline strictly future (111*20000 > 110*20000)",
           (double)next * 20000.0 > 110.0 * 20000.0);
 
-    // FIX (c) regression: when due == nowLink exactly, the loop STILL advances
-    // one pulse (old `<` would leave due == nowLink -> delta-0 immediate re-fire).
     steps = 0;
     next = mirror::skipLoop(100, 100.0 * 20000.0, 20000.0, steps);
     CHECK_EQ("MIRROR delta-0 boundary: due == nowLink advances exactly 1 pulse", steps, 1);
@@ -731,11 +584,6 @@ static void checkClockSkipDontCatchUp() {
     CHECK_EQ("MIRROR skip-don't-catch-up emits 1 clock, not 11", clocksEmitted, 1);
 }
 
-// =====================================================================
-// Check 5 -- schedule_next_event re-anchors BOTH directions; LTMP phase
-// request re-arms; s_pending_realign set whenever the clock becomes enabled.
-// (MIRROR of link_sync.cpp:444-455, 523-526, 717-725, 746, 700.)
-// =====================================================================
 static void checkReanchorAndRealign() {
     Timeline tl; tl.bpm = 125.0;
     const double now = 130.0 * 20000.0;
@@ -748,12 +596,9 @@ static void checkReanchorAndRealign() {
     (void)bk.schedule(tl, now);
     CHECK_EQ("MIRROR backward timeline ALSO re-anchors nextPulse to dueNow", bk.nextPulse, 131);
 
-    // FIX (b) regression: the ahead branch is now `> 1` (was > 24), so EVERY
-    // backward-jump of 2..24 pulses re-anchors to dueNow -> the armed deadline
-    // is one pulse in the future instead of k pulses away (no clock stall).
     bool aheadOk = true, aheadFuture = true, aheadNear = true;
     for (int k = 2; k <= 24; ++k) {
-        Scheduler s; s.valid = true; s.nextPulse = 131 + k;   // ahead by k
+        Scheduler s; s.valid = true; s.nextPulse = 131 + k;
         double d = s.schedule(tl, now);
         if (s.nextPulse != 131) aheadOk = false;
         if (!(d > now)) aheadFuture = false;
@@ -762,37 +607,34 @@ static void checkReanchorAndRealign() {
     CHECK("MIRROR FIX (b): ahead jumps of 2..24 pulses all re-anchor to dueNow 131", aheadOk);
     CHECK("MIRROR FIX (b): re-anchored deadlines strictly future (no stall)", aheadFuture);
     CHECK("MIRROR FIX (b): re-anchored deadlines within one pulse (no far-future stall)", aheadNear);
-    Scheduler one; one.valid = true; one.nextPulse = 132;    // ahead by exactly 1
+    Scheduler one; one.valid = true; one.nextPulse = 132;
     double d1 = one.schedule(tl, now);
     CHECK_EQ("MIRROR FIX (b): ahead-by-1 does NOT re-anchor (boundary of `> 1`)", one.nextPulse, 132);
     CHECK("MIRROR FIX (b): ahead-by-1 deadline still strictly future", d1 > now);
 
-    // FIX (a): the LTMP handler re-arms for BOTH shapes whenever s_evt_enabled,
-    // but sets s_pending_realign ONLY for the phase (28-byte) shape.
     auto applyLtmp = [](bool tempoReq, bool phaseReq, bool evtEnabled,
                         bool& nextPulseValid, bool& pendingRealign, int& rearmCalls) {
         bool phaseApplied = false;
-        if (tempoReq) { /* setTempo */ }
-        if (phaseReq) { phaseApplied = true; /* forceBeatAtTime(0.0, ...) */ }
+        if (tempoReq) {  }
+        if (phaseReq) { phaseApplied = true;  }
         if (evtEnabled) {
             nextPulseValid = false;
             if (phaseApplied) pendingRealign = true;
-            ++rearmCalls;   // schedule_next_event(captureAppSessionState())
+            ++rearmCalls;
         }
     };
     bool npv = true, pr = false; int rearm = 0;
-    applyLtmp(true, false, true, npv, pr, rearm);   // 12-byte tempo-only
+    applyLtmp(true, false, true, npv, pr, rearm);
     CHECK_EQ("MIRROR FIX (a): tempo-only LTMP NOW re-arms in handler", rearm, 1);
     CHECK("MIRROR FIX (a): tempo-only LTMP clears nextPulseValid", !npv);
     CHECK("MIRROR FIX (a): tempo-only LTMP does NOT set pendingRealign", !pr);
 
     npv = true; pr = false; rearm = 0;
-    applyLtmp(true, true, true, npv, pr, rearm);    // 28-byte tempo+phase
+    applyLtmp(true, true, true, npv, pr, rearm);
     CHECK_EQ("MIRROR FIX (a): tempo+phase LTMP re-arms once", rearm, 1);
     CHECK("MIRROR FIX (a): phase request clears nextPulseValid", !npv);
     CHECK("MIRROR FIX (a): phase request DOES set pendingRealign", pr);
 
-    // Disabled clock: no re-arm for either shape.
     npv = true; pr = false; rearm = 0;
     applyLtmp(true, false, false, npv, pr, rearm);
     CHECK_EQ("MIRROR FIX (a): no re-arm when s_evt_enabled is false", rearm, 0);
@@ -812,16 +654,10 @@ static void checkReanchorAndRealign() {
     CHECK("MIRROR clock-enable sets pendingRealign WITHOUT a peer 0->1 edge", pr2);
     CHECK_EQ("MIRROR clock-enable arms the timeline once", schedCalls, 1);
 
-    bool pr3 = true;   // is_connected 0->1 edge, link_sync.cpp:700
+    bool pr3 = true;
     CHECK("MIRROR peer 0->1 edge ALSO sets pendingRealign", pr3);
 }
 
-// =====================================================================
-// Coordinator's dedicated LTMP REGRESSION -- FIX (a): BOTH the 12-byte
-// tempo-only and 28-byte tempo+phase shapes re-arm IMMEDIATELY to the correct
-// new deadline; pendingRealign (Start/Continue) is set ONLY for the phase
-// shape. MIRROR of link_sync.cpp:231,238,508-527,440-462,465-495.
-// =====================================================================
 static void checkLtmpRegression() {
     CHECK_EQ("MIRROR [LTMP] MIDI_SPP_UNITS_MASK = 0x3FFF", MIR_MIDI_SPP_UNITS_MASK, 0x3FFF);
     CHECK_EQ("MIRROR [LTMP] MIDI_SPP_UNITS_PER_BEAT = 4", MIR_MIDI_SPP_UNITS_PER_BEAT, 4);
@@ -834,12 +670,11 @@ static void checkLtmpRegression() {
     CHECK_EQ("MIRROR [LTMP] tempo+phase LTMP is a 28-byte datagram",
              MIR_LTMP_TEMPO_PHASE_BYTES, 28);
 
-    // Exact pulse-index arithmetic (bpm 100 -> 800 at T, ratio r = 8).
     const double tFire = 99.0 * 25000.0;
     const double T     = 2480000.0;
     const int64_t P    = 100;
     CHECK_EQD("MIRROR [LTMP] pulse 99 fired at t_fire = 2,475,000us", tFire, 2475000.0);
-    const double oldArmedDeadline = static_cast<double>(P) * 25000.0;   // 2,500,000 (PRE-FIX stale)
+    const double oldArmedDeadline = static_cast<double>(P) * 25000.0;
     CHECK_EQD("MIRROR [LTMP] PRE-FIX armed deadline would be stale 2,500,000us",
               oldArmedDeadline, 2500000.0);
 
@@ -856,19 +691,15 @@ static void checkLtmpRegression() {
     CHECK("MIRROR [LTMP] the pre-fix deadline WAS stale (differs from correct)",
           std::fabs(oldArmedDeadline - correctDeadline) > 0.0);
 
-    // FIX (a): handler clears s_next_pulse_valid and calls schedule_next_event
-    // with the NEW state whenever s_evt_enabled. Model that immediate re-arm;
-    // schedule() sees !valid -> re-anchors to dueNow, arms the correct deadline.
     auto rearm = [&](bool phaseReq, bool& pendingRealign, double& armed, int& skipped,
                      int& rearmCalls) {
-        if (phaseReq) pendingRealign = true;   // ONLY for the 28-byte phase shape
-        ++rearmCalls;                           // schedule_next_event(...)
-        Scheduler sc; sc.valid = false;         // s_next_pulse_valid = false
-        armed = sc.schedule(B, T);              // nowLink = T (request time)
+        if (phaseReq) pendingRealign = true;
+        ++rearmCalls;
+        Scheduler sc; sc.valid = false;
+        armed = sc.schedule(B, T);
         skipped = sc.skipLoopSteps;
     };
 
-    // 12-byte tempo-only: re-arms, zero stale gap, zero skips, no realign.
     bool pr = false; double armed = 0.0; int skipped = -1, calls = 0;
     rearm(false, pr, armed, skipped, calls);
     CHECK_EQ("MIRROR [LTMP] FIX (a): tempo-only re-arms exactly once", calls, 1);
@@ -883,7 +714,6 @@ static void checkLtmpRegression() {
           armed > T);
     CHECK("MIRROR [LTMP] FIX (a): pendingRealign FALSE for tempo-only (no Start/Continue)", !pr);
 
-    // 28-byte tempo+phase: also re-arms to the same correct deadline, realign set.
     pr = false; armed = 0.0; skipped = -1; calls = 0;
     rearm(true, pr, armed, skipped, calls);
     CHECK_EQ("MIRROR [LTMP] FIX (a): tempo+phase re-arms exactly once", calls, 1);
@@ -894,7 +724,6 @@ static void checkLtmpRegression() {
     CHECK_EQ("MIRROR [LTMP] FIX (a): ZERO skipped pulses for tempo+phase", skipped, 0);
     CHECK("MIRROR [LTMP] FIX (a): pendingRealign TRUE for tempo+phase", pr);
 
-    // A disabled clock re-arms neither shape (handler gate is s_evt_enabled).
     LinkEventCbMirror cb; cb.evtEnabled = false; cb.fire();
     CHECK("MIRROR FIX (d): no F8 emitted when clock disabled", cb.f8Count == 0);
     CHECK("MIRROR FIX (d): nextPulseValid cleared when clock disabled", !cb.nextPulseValid);
@@ -910,14 +739,6 @@ static void checkLtmpRegression() {
         "s_evt_enabled. Pre-fix stale-deadline behaviour is gone.\n");
 }
 
-// =====================================================================
-// Coordinator audit check 3 (CORRECTED) -- the audit claim is CONFIRMED.
-// The vendored Link beatAtTime is PHASE-ENCODED (Phase.hpp:34-80), NOT linear:
-// with LINK_QUANTUM=16, floor(beatAtTime(t,16)/64) boundaries can be 48 beats
-// off the true phrase downbeat when beatOrigin is 16/32/48/-9.5. The FIX derives
-// currentPhraseNumber from beatAtTime(t,64)=phraseBeat (link_sync.cpp:311-350)
-// and sends SPP from phraseBeat (:763). Positive regression for nine origins.
-// =====================================================================
 struct BoundaryScan {
     int    crossings  = 0;
     int    misaligned = 0;
@@ -926,12 +747,11 @@ struct BoundaryScan {
     std::vector<double> phases;
 };
 
-// Scan 200 s at 120 bpm for changes of floor(beatAtTime(t,quantum)/64).
 static BoundaryScan scanPhraseBoundaries(double origin, int64_t quantumBeats) {
     BoundaryScan r;
-    const int64_t mpb  = 500000;         // 120 bpm
-    const int64_t dt   = 31250;          // 1/16 beat
-    const int64_t span = 200000000;      // 200 s
+    const int64_t mpb  = 500000;
+    const int64_t dt   = 31250;
+    const int64_t span = 200000000;
     bool havePrev = false;
     int  prev = 0;
     for (int64_t t = 0; t <= span; t += dt) {
@@ -943,8 +763,6 @@ static BoundaryScan scanPhraseBoundaries(double origin, int64_t quantumBeats) {
             const double off = std::min(ph, (double)MIR_PHRASE_BEATS - ph);
             r.phases.push_back(ph);
             if (off > 0.5) { ++r.misaligned; r.maxOff = std::max(r.maxOff, off); }
-            // FIXED source: send_song_position(quantumInfo.phraseBeat),
-            // phraseBeat = beatAtTime(t,64).
             const double phraseBeat = PhaseMirror::beatAtTime(origin, t, mpb, MIR_PHRASE_BEATS);
             uint8_t spp[3]; mirror::encodeSpp(phraseBeat, spp);
             const int units = (int)spp[1] + ((int)spp[2] << 7);
@@ -958,11 +776,10 @@ static BoundaryScan scanPhraseBoundaries(double origin, int64_t quantumBeats) {
 }
 
 static void checkDetectQuantumBoundary() {
-    // OLD behaviour (q=16): misaligned for origins that are not 64-multiples.
     const double misalignedOrigins[4] = {16.0, 32.0, 48.0, -9.5};
     bool oldMisaligned = true;
     for (double o : misalignedOrigins) {
-        BoundaryScan s = scanPhraseBoundaries(o, MIR_LINK_QUANTUM);   // q=16
+        BoundaryScan s = scanPhraseBoundaries(o, MIR_LINK_QUANTUM);
         char nm[160];
         std::snprintf(nm, sizeof nm,
             "CONFIRMED audit: OLD q=16 detection MISALIGNED for beatOrigin %.1f (%d/%d off)",
@@ -973,7 +790,6 @@ static void checkDetectQuantumBoundary() {
     CHECK("CONFIRMED audit: OLD q=16 detection is misaligned for ALL FOUR origins",
           oldMisaligned);
 
-    // Headline finding: origin 16 fires SPP at phase 48 (48 beats off downbeat).
     BoundaryScan s16 = scanPhraseBoundaries(16.0, MIR_LINK_QUANTUM);
     bool hasPhase48 = false;
     for (double ph : s16.phases) if (std::fabs(ph - 48.0) < 0.5) hasPhase48 = true;
@@ -982,11 +798,10 @@ static void checkDetectQuantumBoundary() {
     CHECK("MIRROR [quantum] '48 beats' = 192 SPP units, NOT a multiple of 256",
           (48 * MIR_MIDI_SPP_UNITS_PER_BEAT) % (MIR_PHRASE_BEATS * MIR_MIDI_SPP_UNITS_PER_BEAT) != 0);
 
-    // NEW behaviour (q=64 phraseBeat): aligned for ALL nine origins.
     const double allOrigins[9] = {0.0, 16.0, 32.0, 48.0, 7.0, -9.5, 1.0, 64.0, 128.0};
     bool allAligned = true, allSppGrid = true;
     for (double o : allOrigins) {
-        BoundaryScan s = scanPhraseBoundaries(o, MIR_PHRASE_BEATS);   // q=64
+        BoundaryScan s = scanPhraseBoundaries(o, MIR_PHRASE_BEATS);
         if (s.misaligned != 0) allAligned = false;
         if (!s.allSppGrid) allSppGrid = false;
         std::printf("  [quantum FIX] origin %6.1f: %d crossings, %d misaligned, SPPgrid=%d\n",
@@ -1008,12 +823,6 @@ static void checkDetectQuantumBoundary() {
         "==0 with SPP units a multiple of 256. Regression checks pass.\n");
 }
 
-// =====================================================================
-// Coordinator audit check 4 (CORRECTED by the 46-agent adversarial verifier).
-// CONFIRMED HIGH DEFECT, now FIXED by s_pending_realign = true in the
-// peer-loss branch (link_sync.cpp:713). Drive a mesh up > 8 s (force_start
-// latch already consumed), then a 1->0 loss with NO peer return.
-// =====================================================================
 static int countByteIn(const TransportMirror& tr, uint8_t v) {
     int n = 0; for (uint8_t b : tr.events) if (b == v) ++n; return n;
 }
@@ -1039,9 +848,6 @@ struct MeshResult {
     int  sppAtLoss = 0, sppAt100 = 0;
 };
 
-// Boot at t=0 (start_wait_time set once). 120 bpm -> phrase boundaries at
-// t=32s/64s/96s (64/128/192 beats). Peer connected t=1..60s, drops at 61s,
-// NEVER returns. forceStart is NEVER set manually -- it latches itself at 8s.
 static MeshResult runPeerlessMesh(bool fixed) {
     MeshResult r;
     r.tr.peerLossQueuesRealign = fixed;
@@ -1071,21 +877,19 @@ static MeshResult runPeerlessMesh(bool fixed) {
     return r;
 }
 
-// A mesh ALREADY older than 8 s: forceStart initialized true, realign already
-// consumed, so NO clock-enable edge can ever come again. loss at t=1, no return.
 static int runLongRunningMesh(bool fixed) {
     TransportMirror tr;
-    tr.forceStart = true;             // mesh older than 8 s (allowed init)
+    tr.forceStart = true;
     tr.wasConnected = true;
     tr.evtEnabled = true;
     tr.transportRunning = true;
-    tr.pendingRealign = false;        // consumed at an earlier boundary
+    tr.pendingRealign = false;
     tr.peerLossQueuesRealign = fixed;
-    tr.startWaitTimeUs = -60000000;   // boot 60 s ago
+    tr.startWaitTimeUs = -60000000;
     const int64_t sec = 1000000;
     for (int t = 0; t <= 40; ++t) {
-        const bool conn = (t < 1);            // 1->0 loss at t=1, no return
-        const bool boundary = (t == 32);      // one 64-beat phrase later
+        const bool conn = (t < 1);
+        const bool boundary = (t == 32);
         const double beat = boundary ? 64.0 : static_cast<double>(t) * 2.0;
         tr.tick(conn, boundary, beat, static_cast<int64_t>(t) * sec);
     }
@@ -1096,10 +900,9 @@ static void checkPeerLossForceStart() {
     CHECK_EQ("MIRROR [peerloss] FORCE_START_AFTER_NO_PEERS_US = 8s",
              MIR_FORCE_START_AFTER_NO_PEERS_US, 8000000);
 
-    const MeshResult pre  = runPeerlessMesh(false);   // PRE-FIX: the HIGH defect
-    const MeshResult post = runPeerlessMesh(true);    // FIXED regression
+    const MeshResult pre  = runPeerlessMesh(false);
+    const MeshResult post = runPeerlessMesh(true);
 
-    // Verifier's key facts about the REAL latch.
     CHECK("MIRROR [peerloss] force_start latches UNCONDITIONALLY at 8s even while CONNECTED (isPlaying()==false)",
           pre.forceStartAt8s);
     CHECK("MIRROR [peerloss] a Start/Continue fires at the PRE-loss phrase boundary (realign consumed)",
@@ -1113,8 +916,6 @@ static void checkPeerLossForceStart() {
           countByteIn(pre.tr, MIR_MIDI_STOP) == 1 &&
           countCc123Messages(pre.tr.lossCapture) == 16 && pre.tr.lossCapture.size() == 49u);
 
-    // CONFIRMED HIGH DEFECT (pre-fix): NO Start/Continue within one phrase,
-    // nor two, after the loss -> gear stays silent while F8/SPP keep streaming.
     CHECK("CONFIRMED HIGH DEFECT (pre-fix): ZERO Start/Continue within one 64-beat phrase after the loss",
           pre.startsOnePhraseLater == pre.startsAtLoss);
     CHECK("CONFIRMED HIGH DEFECT (pre-fix): still ZERO two phrases later (gear permanently silent)",
@@ -1124,8 +925,6 @@ static void checkPeerLossForceStart() {
     CHECK("CONFIRMED HIGH DEFECT: a mesh older than 8 s (forceStart pre-latched) emits NO Start after a loss WITHOUT the fix",
           runLongRunningMesh(false) == 0);
 
-    // FIXED regression (link_sync.cpp:713): peer-loss branch queues realign ->
-    // a 0xFA/0xFB appears within ONE 64-beat phrase.
     CHECK("FIX regression: peer-loss branch queues realign", post.realignAtLoss);
     CHECK("FIX regression: a 0xFA/0xFB appears within ONE 64-beat phrase after the loss",
           post.startsOnePhraseLater > post.startsAtLoss);
@@ -1160,14 +959,6 @@ static void checkPeerLossForceStart() {
         "needs on-device confirmation.\n");
 }
 
-// =====================================================================
-// Audit gaps 53/54 -- boot panic + the 16-channel CC123 (All Notes Off)
-// sweep. GUARDED HOST MIRROR, NOT captured DIN bytes. The shipped
-// link_sync_send_boot_panic() runs at main/main.cpp:30 BEFORE Link exists;
-// send_all_notes_off_all_channels() is shared by the boot panic, the peer-loss
-// branch and the transport-stop branch. The old TransportMirror emitted only a
-// single lone CC123, which modelled none of those 16 messages.
-// =====================================================================
 static void checkStopAndAllNotesOffSweep(const std::string& label,
                                          const std::vector<uint8_t>& bytes) {
     const size_t expected = 1u + static_cast<size_t>(
@@ -1216,7 +1007,6 @@ static void checkStopAndAllNotesOffSweep(const std::string& label,
 }
 
 static void checkBootPanicAndAllNotesOffSweep() {
-    // Boot: link_sync_send_boot_panic() needs NO Link, peer or session state.
     const std::vector<uint8_t> boot = mirror::bootPanicBytes();
     checkStopAndAllNotesOffSweep("MIRROR [boot panic, gaps 53/54]", boot);
 
@@ -1230,7 +1020,6 @@ static void checkBootPanicAndAllNotesOffSweep() {
     CHECK("MIRROR [boot panic] NO Clock/SPP/Start/Continue (it fires BEFORE Link exists)",
           bootStrays == 0);
 
-    // Peer loss: a single 1->0 transition in an already-running mesh.
     TransportMirror tr;
     tr.forceStart = true;
     tr.wasConnected = true;
@@ -1262,22 +1051,14 @@ static void checkBootPanicAndAllNotesOffSweep() {
         "confirm the wire output.\n");
 }
 
-// =====================================================================
-// Coordinator audit check 5 -- int64 microsPerBeat truncation round-trip at
-// 119.049 bpm (~1e-5 bpm error). MIRROR of vendored Tempo.hpp:41,52 and
-// main/link_sync.cpp:117 (mpb), :234 (LTMP bpm recovery).
-// =====================================================================
 static void checkTempoTruncation() {
     const double bpm = 119.049;
-    // Tempo.hpp:52 -- microsPerBeat() truncates 60e6/bpm to int64.
     const int64_t mpb = static_cast<int64_t>(60.0 * 1e6 / bpm);
-    // Tempo.hpp:41 -- Tempo(microsPerBeat) reconstructs bpm = 60e6 / mpb.
     const double recovered = 60.0 * 1e6 / static_cast<double>(mpb);
     const double err = std::fabs(recovered - bpm);
     CHECK("MIRROR [tempo] truncation is lossy (recovered != original)", err > 0.0);
     CHECK("MIRROR [tempo] round-trip error is tiny (~1e-5 bpm)", err < 1e-3);
     CHECK("MIRROR [tempo] round-trip error is well under 0.05 bpm spread", err < 0.05);
-    // The ESP broadcasts mpb rounded (link_sync.cpp:117), LTMP recovers bpm (:234).
     const int64_t mpbBroadcast = static_cast<int64_t>(60e6 / bpm + 0.5);
     const double bpmFromWire = 60e6 / static_cast<double>(mpbBroadcast);
     CHECK("MIRROR [tempo] rounded TTMP mpb also round-trips within 0.05 bpm",
@@ -1286,18 +1067,11 @@ static void checkTempoTruncation() {
                 (long long)mpb, recovered, err);
 }
 
-// =====================================================================
-// Coordinator audit check 6 -- explicitly exercise the two functions that
-// no shipped-code test can reach: send_song_position and handle_link_sync.
-// State host-mirror vs shipped coverage for the whole suite.
-// =====================================================================
 static void checkCoverage() {
-    // send_song_position() mirror -- one concrete call.
     uint8_t spp[3];
     mirror::encodeSpp(64.0, spp);
     CHECK("MIRROR [coverage] send_song_position() exercised (F2 00 02 at beat 64)",
           spp[0] == 0xF2 && spp[1] == 0x00 && spp[2] == 0x02);
-    // handle_link_sync() crossedPhraseBoundary block mirror -- one concrete call.
     PhraseEvents ev; ev.pendingRealign = true;
     ev.onTick(true, 64.0, false, true);
     CHECK("MIRROR [coverage] handle_link_sync() exercised (SPP then START)",
@@ -1327,10 +1101,9 @@ static void checkCoverage() {
         "DIN capture path exists in this run.\n");
 }
 
-// ---- shipped-code driver ---------------------------------------------------
 static ableton::Link::SessionState g_state;
-static constexpr int64_t kUsPerTick = 10000;   // bpm 125 -> beat = t/480000 -> 1 tick / call
-static constexpr int64_t kTicksPerStep = ctl::kTicksPerStep;  // 12
+static constexpr int64_t kUsPerTick = 10000;
+static constexpr int64_t kTicksPerStep = ctl::kTicksPerStep;
 
 static void drive(BassEngine& e, int64_t fromTick, int64_t toTick) {
     for (int64_t t = fromTick; t <= toTick; ++t) {
@@ -1340,16 +1113,9 @@ static void drive(BassEngine& e, int64_t fromTick, int64_t toTick) {
     }
 }
 
-// =====================================================================
-// Regression checks for the shipped-code fix wave (control_model.cpp /
-// bass_engine.cpp): (e) negative-beat note release, (f) resync processes
-// the current tick, (g) LFO absolute-tick continuity, (h)+(i)+(j)
-// startRecording clean-line fallback at the current dial value.
-// =====================================================================
 static void checkShippedFixRegressions() {
     g_state.m_bpm = 125.0; g_state.m_beat0 = 0.0; g_state.m_t0 = 0;
 
-    // (j) LoopTrack::startRecording: clean line + fallback at current dial value.
     {
         ctl::LoopTrack u; u.setBaseline(0.1f);
         u.setTouched(true);
@@ -1361,16 +1127,12 @@ static void checkShippedFixRegressions() {
         CHECK("SHIPPED (j) startRecording clears persistence", !u.persistent());
         CHECK("SHIPPED (j) startRecording clears prior recorded steps", !u.hasRecordedStep(3));
         CHECK("SHIPPED (j) startRecording marks the track touched", u.touched());
-        // Release immediately (no visited step recorded): every unvisited step
-        // falls back to the value startRecording was seeded with.
         u.setTouched(false);
         CHECK_EQD("SHIPPED (j) unvisited step falls back to 0.7 (current dial value)",
                   u.valueAt(20, 0.1f), 0.7);
         CHECK_EQD("SHIPPED (j) unvisited step 3 ALSO falls back to 0.7",
                   u.valueAt(3, 0.1f), 0.7);
 
-        // A separate track: a visited step records the CURRENT live value and
-        // moves hold_ to it (the fallback tracks the dial as it moves).
         ctl::LoopTrack v; v.setBaseline(0.1f);
         v.startRecording(0.7f);
         CHECK_EQD("SHIPPED (j) visited step records the live value 0.42",
@@ -1382,11 +1144,9 @@ static void checkShippedFixRegressions() {
                   v.valueAt(20, 0.1f), 0.42);
     }
 
-    // (h)+(i) setDial stores m_live BEFORE touchSetting -> startRecording seeds
-    // the fallback with the NEW dial value.
     {
         BassEngine e; e.selectSingle(0);
-        e.setDoubleHeld(2);                       // dial 0 -> SET_LFO_WIDTH
+        e.setDoubleHeld(2);
         e.setDial(0, 0.73f, 0);
         const int W = static_cast<int>(BassEngine::SET_LFO_WIDTH);
         CHECK_EQ("SHIPPED (h) double pad 2 dial 0 == SET_LFO_WIDTH (12)",
@@ -1394,68 +1154,61 @@ static void checkShippedFixRegressions() {
         CHECK_EQD("SHIPPED (h) setDial stores the new value in m_live BEFORE touchSetting",
                   e.m_live[W], 0.73);
         CHECK("SHIPPED (i) touchSetting marked the setting touched", e.m_touched[W]);
-        e.setTouchHeld(false);                    // release -> untouchSetting
+        e.setTouchHeld(false);
         CHECK_EQD("SHIPPED (i) startRecording fallback = the NEW dial value 0.73",
                   e.m_track[W].valueAt(7, 0.1f), 0.73);
     }
 
-    // (e) process() on beat<0 releases active notes, and ONLY when there are some.
     {
         g_out.clear();
         BassEngine e; e.selectSingle(0);
-        drive(e, 0, 12);                          // note-on at t=12 (offTick 18), active
+        drive(e, 0, 12);
         CHECK("SHIPPED (e) setup: an active note exists before the negative beat",
               !e.m_activeNotes.empty());
         g_out.clear();
         g_nowTick = -1;
-        e.process(g_state, std::chrono::microseconds(-480000), 480000);   // beat = -1.0
+        e.process(g_state, std::chrono::microseconds(-480000), 480000);
         CHECK("SHIPPED (e) negative beat emits note-offs for the active notes",
               countNoteOff(0) > 0);
         CHECK("SHIPPED (e) negative beat sends All-Notes-Off CC123", hasCc(0, 123));
         CHECK("SHIPPED (e) active notes cleared", e.m_activeNotes.empty());
         CHECK_EQ("SHIPPED (e) m_lastTick reset to -1", e.m_lastTick, -1);
 
-        // No active notes -> no needless All-Notes-Off (the !empty() guard).
         g_out.clear();
         BassEngine f; f.selectSingle(0);
         f.process(g_state, std::chrono::microseconds(-480000), 0);
         CHECK("SHIPPED (e) no active notes -> no needless All-Notes-Off", !hasCc(0, 123));
     }
 
-    // (f) resync sets m_lastTick = now-1 and processes the current tick via the
-    // normal loop instead of returning early.
     {
         g_out.clear();
         BassEngine e; e.selectSingle(0);
         g_nowTick = 0;
-        e.process(g_state, std::chrono::microseconds(0), 0);   // first call = resync
+        e.process(g_state, std::chrono::microseconds(0), 0);
         CHECK("SHIPPED (f) first call processes tick 0 (a note-on is emitted)",
               countNoteOn(0) > 0);
         CHECK_EQ("SHIPPED (f) m_lastTick == 0 after the first call", e.m_lastTick, 0);
 
-        // A stall resync (gap > kMaxCatchUpTicks) ALSO processes the current tick.
         g_out.clear();
         g_nowTick = 96;
         e.process(g_state, std::chrono::microseconds(96 * kUsPerTick),
-                  static_cast<uint64_t>(96 * kUsPerTick));       // gap 96 > 48
+                  static_cast<uint64_t>(96 * kUsPerTick));
         CHECK("SHIPPED (f) stall resync STILL emits a note at the current tick 96",
               countNoteOn(0) > 0);
         CHECK("SHIPPED (f) stall resync sends All-Notes-Off CC123", hasCc(0, 123));
         CHECK_EQ("SHIPPED (f) m_lastTick == 96 after stall resync", e.m_lastTick, 96);
     }
 
-    // (g) sendLfoAndFilter uses the ABSOLUTE tick: the mod-wheel CC is continuous
-    // across a turnaround and never resets to the loop-start value.
     {
         BassEngine e; e.selectSingle(0);
         e.m_frame[BassEngine::SET_LFO_WIDTH] = 1.0f;
         e.m_frame[BassEngine::SET_LFO_SPEED]  = 0.25f;
-        e.m_frame[BassEngine::SET_LFO_TYPE]   = 0.0f;   // sine
+        e.m_frame[BassEngine::SET_LFO_TYPE]   = 0.0f;
         auto emittedCc1 = [&](int64_t absTick) -> int {
             g_out.clear();
             g_nowTick = absTick;
-            e.m_lastLfoCc = -1;                          // force an emission
-            e.sendLfoAndFilter(absTick);                 // SHIPPED method, white-box
+            e.m_lastLfoCc = -1;
+            e.sendLfoAndFilter(absTick);
             for (const Msg& m : g_out)
                 if ((m.b[0] & 0xF0) == 0xB0 && m.b[1] == 1) return m.b[2];
             return -999;
@@ -1471,9 +1224,9 @@ static void checkShippedFixRegressions() {
             return cc < 0 ? 0 : (cc > 127 ? 127 : cc);
         };
         const int cc383 = emittedCc1(383);
-        const int cc384 = emittedCc1(384);   // first tick AFTER the 384-tick turnaround
+        const int cc384 = emittedCc1(384);
         const int cc385 = emittedCc1(385);
-        const int cc0   = emittedCc1(0);     // what loop-relative p=0 would have produced
+        const int cc0   = emittedCc1(0);
         CHECK("SHIPPED (g) absolute-tick LFO matches formula at t=383", cc383 == expectedCc(383));
         CHECK("SHIPPED (g) absolute-tick LFO matches formula at t=384", cc384 == expectedCc(384));
         CHECK("SHIPPED (g) absolute-tick LFO matches formula at t=385", cc385 == expectedCc(385));
@@ -1488,13 +1241,9 @@ static void checkShippedFixRegressions() {
     }
 }
 
-// =====================================================================
-// Check 6 -- BassEngine loop (SHIPPED code).
-// =====================================================================
 static void checkBassLoop() {
     g_state.m_bpm = 125.0; g_state.m_beat0 = 0.0; g_state.m_t0 = 0;
 
-    // 1-bar vs 2-bar window turnaround: min(current, pending) length.
     {
         g_out.clear();
         BassEngine e;
@@ -1521,18 +1270,13 @@ static void checkBassLoop() {
         e.setDoubleHeld(-1);
     }
 
-    // Deterministic step positions over 4 consecutive 2-bar loops.
-    // Note-ons are emitted in INTERNAL-tick order regardless of how process()
-    // batches ticks across calls (FP rounding in the host Link stub can put two
-    // ticks in one call), so the i-th note-on is at step (i+1)%32. Deriving the
-    // step from the note-on INDEX -- not the outer loop variable -- is robust.
     {
         g_out.clear();
         BassEngine e;
         e.selectSingle(0);
-        const int64_t loopTicks = 32 * kTicksPerStep;   // 384
-        drive(e, 0, 4 * loopTicks + 2 * kTicksPerStep);  // margin for the FP boundary
-        std::vector<std::pair<int, int>> notes;          // (step, note value)
+        const int64_t loopTicks = 32 * kTicksPerStep;
+        drive(e, 0, 4 * loopTicks + 2 * kTicksPerStep);
+        std::vector<std::pair<int, int>> notes;
         for (const Msg& m : g_out) {
             if ((m.b[0] & 0xF0) == 0x90 && m.b[2] > 0) {
                 int idx = static_cast<int>(notes.size());
@@ -1552,7 +1296,6 @@ static void checkBassLoop() {
         CHECK("SHIPPED each loop has 32 distinct step positions", l1 && l2 && l3);
     }
 
-    // kMaxCatchUpTicks skip/resync (shipped constant = 48).
     {
         g_out.clear();
         BassEngine e;
@@ -1581,7 +1324,6 @@ static void checkBassLoop() {
         CHECK_EQ("SHIPPED kMaxCatchUpTicks = 48", (int)BassEngine::kMaxCatchUpTicks, 48);
     }
 
-    // Every note-on paired with a note-off; gate width 0 silence.
     {
         g_out.clear();
         BassEngine e; e.selectSingle(0);
@@ -1600,9 +1342,6 @@ static void checkBassLoop() {
     }
 }
 
-// =====================================================================
-// Check 7 -- ctl::LoopTrack (SHIPPED code).
-// =====================================================================
 static void checkLoopTrack() {
     ctl::LoopTrack t; t.setBaseline(0.25f);
     t.setTouched(true);
@@ -1634,16 +1373,11 @@ static void checkLoopTrack() {
     CHECK("SHIPPED clear() removes all recorded steps", !t.hasRecordedStep(2));
 }
 
-// =====================================================================
-// Check 8 -- Fill/unfill marks; four-pad resetAll (SHIPPED code).
-// =====================================================================
 static void checkFillReset() {
     g_state.m_bpm = 125.0; g_state.m_beat0 = 0.0; g_state.m_t0 = 0;
     g_out.clear();
     BassEngine e; e.selectSingle(0);
 
-    // FIX (f) processes tick 0 at the first call, so step 0's boundary is now
-    // passed while fill is held: steps 0..5 are the marked ones.
     e.setFill(true);
     drive(e, 0, 60);
     e.setFill(false);
@@ -1685,9 +1419,6 @@ static void checkFillReset() {
     CHECK("SHIPPED resetAll stops the engine", !e.isActive());
 }
 
-// =====================================================================
-// Check 9 -- Seed determinism (SHIPPED code).
-// =====================================================================
 static void checkSeedDeterminism() {
     CHECK_EQ("SHIPPED hash32(1,2,3) is deterministic",
              ctl::hash32(1, 2, 3), ctl::hash32(1, 2, 3));
@@ -1704,10 +1435,6 @@ static void checkSeedDeterminism() {
              ctl::tranceGate(0, 7u), ctl::tranceGate(0, 8u));
 }
 
-// =====================================================================
-// Check 10 -- Window dial is structural (m_live[SET_WINDOW], never the
-// track). White-box read of the shipped BassEngine fields.
-// =====================================================================
 static void checkWindowStructural() {
     g_state.m_bpm = 125.0; g_state.m_beat0 = 0.0; g_state.m_t0 = 0;
     g_out.clear();
@@ -1719,11 +1446,8 @@ static void checkWindowStructural() {
 
     const int W = (int)BassEngine::SET_WINDOW;
 
-    // Force a deliberate disagreement: LIVE says 1 bar (0.0), the FRAME/TRACK
-    // says 2 bars (baseline 1.0). stepBoundary (bass_engine.cpp) must read
-    // m_live. The untouched track's baseline keeps m_frame[W] at 1.0.
-    e.m_live[W]  = 0.0f;   // 1 bar -> 16 steps
-    e.m_frame[W] = 1.0f;   // 2 bars -> 32 steps
+    e.m_live[W]  = 0.0f;
+    e.m_frame[W] = 1.0f;
 
     drive(e, 0, 12);
     CHECK_EQ("SHIPPED pending loop reads m_live[SET_WINDOW] (1 bar = 16), NOT the track",
@@ -1741,31 +1465,19 @@ static void checkWindowStructural() {
     CHECK_EQ("SHIPPED flipping m_live back to 2 bars -> pending 32 steps",
              e.m_pendingLoopSteps, 32);
 
-    // The parity guard additionally asserts the shipped line literally reads
-    // ctl::loopBarsForDial(m_live[SET_WINDOW]) and never m_frame/m_track there.
 }
 
-// =====================================================================
-// Audit gap 33 -- fill/unfill marks are keyed by LOOP STEP, not by window.
-// EXPECTED (documented) behaviour: marks recorded at steps 16..31 PERSIST
-// while the window is one bar (16 steps, so those steps are never visited)
-// and REAPPEAR with their original effect when the window is lengthened back
-// to two bars (32 steps). SHIPPED code only: setFill/setUnfill, setDial,
-// BassEngine::tick/stepBoundary/soundsAt and ctl::loopBarsForDial.
-// =====================================================================
 static void checkFillMarksAcrossWindowChange() {
     g_state.m_bpm = 125.0; g_state.m_beat0 = 0.0; g_state.m_t0 = 0;
     g_out.clear();
     BassEngine e; e.selectSingle(0);
 
-    const int stepTicks  = static_cast<int>(kTicksPerStep);   // 12
-    const int fullSteps  = ctl::kLoopSteps;                   // 32
-    const int shortSteps = ctl::kStepsPerBar;                 // 16
+    const int stepTicks  = static_cast<int>(kTicksPerStep);
+    const int fullSteps  = ctl::kLoopSteps;
+    const int shortSteps = ctl::kStepsPerBar;
     CHECK_EQ("SHIPPED [gap 33] setup: default window is 2 bars = 32 steps",
              e.m_loopSteps, fullSteps);
 
-    // Record MARK_ADD on steps 16..23 and MARK_REMOVE on steps 24..31 while the
-    // loop is two bars long, via the shipped setFill/setUnfill paths.
     e.setFill(true);
     drive(e, 16 * stepTicks, 23 * stepTicks);
     e.setFill(false);
@@ -1784,16 +1496,12 @@ static void checkFillMarksAcrossWindowChange() {
     CHECK("SHIPPED [gap 33] setup: steps 24..31 recorded MARK_REMOVE", removes24to31);
     CHECK("SHIPPED [gap 33] setup: steps 0..15 remain MARK_NONE", lowNone);
 
-    // Shorten the loop via the shipped window setting (double pad 3, dial 0 ->
-    // SET_WINDOW). m_pendingLoopSteps is refreshed at the next stepBoundary and
-    // tick() turns around on min(current, pending).
     e.setDoubleHeld(3);
     e.setDial(0, 0.0f, static_cast<uint64_t>(31 * stepTicks) * kUsPerTick);
     drive(e, 31 * stepTicks + 1, 48 * stepTicks);
     CHECK_EQ("SHIPPED [gap 33] EXPECTED: window dial 0 shortens the loop to one bar (16 steps)",
              e.m_loopSteps, shortSteps);
 
-    // Hold fill for one whole 16-step loop: ONLY steps 0..15 can be visited.
     e.setFill(true);
     drive(e, 48 * stepTicks + 1, 64 * stepTicks);
     e.setFill(false);
@@ -1811,7 +1519,6 @@ static void checkFillMarksAcrossWindowChange() {
     CHECK("SHIPPED [gap 33] EXPECTED: steps 16..23 MARK_ADD PERSIST while shortened",
           addsHighPersist);
 
-    // Lengthen back to two bars via the SAME shipped window setting.
     e.setDial(0, 1.0f, static_cast<uint64_t>(64 * stepTicks) * kUsPerTick);
     drive(e, 64 * stepTicks + 1, 96 * stepTicks);
     CHECK_EQ("SHIPPED [gap 33] EXPECTED: window dial 1 lengthens the loop back to two bars (32 steps)",
@@ -1827,8 +1534,6 @@ static void checkFillMarksAcrossWindowChange() {
     CHECK("SHIPPED [gap 33] EXPECTED: steps 24..31 MARK_REMOVE REAPPEAR and never sound after lengthening",
           reappearRemove);
 
-    // Prove the lengthened loop reaches steps 16..31 again: hold fill for one
-    // full 32-step loop and watch those marks become MARK_ADD.
     e.setFill(true);
     drive(e, 96 * stepTicks + 1, 128 * stepTicks);
     e.setFill(false);
@@ -1841,25 +1546,25 @@ static void checkFillMarksAcrossWindowChange() {
 }
 
 int main() {
-    checkPhraseArithmetic();        // 1 (MIRROR)
-    checkSppEncoding();             // 2 (MIRROR)
-    checkSppNewFormula();           // audit 1 (MIRROR, new fmod formula)
-    checkSppBeforeStart();           // 3 (MIRROR)
-    checkClockSkipDontCatchUp();     // 4 (MIRROR)
-    checkReanchorAndRealign();       // 5 (MIRROR)
-    checkLtmpRegression();           // coordinator LTMP FIX (a) regression (MIRROR)
-    checkDetectQuantumBoundary();    // audit 3 (MIRROR)
-    checkPeerLossForceStart();       // audit 4 (MIRROR)
-    checkBootPanicAndAllNotesOffSweep();  // audit gaps 53/54 (GUARDED HOST MIRROR)
-    checkTempoTruncation();          // audit 5 (MIRROR)
-    checkCoverage();                 // audit 6 (MIRROR)
-    checkShippedFixRegressions();      // (e)-(j) SHIPPED code regressions
-    checkBassLoop();                 // 6 (SHIPPED)
-    checkLoopTrack();                // 7 (SHIPPED)
-    checkFillReset();                // 8 (SHIPPED)
-    checkSeedDeterminism();          // 9 (SHIPPED)
-    checkWindowStructural();         // 10 (SHIPPED)
-    checkFillMarksAcrossWindowChange();  // audit gap 33 (SHIPPED)
+    checkPhraseArithmetic();
+    checkSppEncoding();
+    checkSppNewFormula();
+    checkSppBeforeStart();
+    checkClockSkipDontCatchUp();
+    checkReanchorAndRealign();
+    checkLtmpRegression();
+    checkDetectQuantumBoundary();
+    checkPeerLossForceStart();
+    checkBootPanicAndAllNotesOffSweep();
+    checkTempoTruncation();
+    checkCoverage();
+    checkShippedFixRegressions();
+    checkBassLoop();
+    checkLoopTrack();
+    checkFillReset();
+    checkSeedDeterminism();
+    checkWindowStructural();
+    checkFillMarksAcrossWindowChange();
     std::printf("phrase predictability witness: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
