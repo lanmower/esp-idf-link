@@ -442,6 +442,11 @@ def analyze_boundaries(valid_rows, sample_period, constants, args):
             or (rec_previous is not None and rec_previous > 0)
             or (rec_current is not None and rec_current > 0)
         )
+        loop_length = phrase_beats
+        if rec_current is not None and rec_current > 0:
+            loop_length = rec_current
+        elif rec_previous is not None and rec_previous > 0:
+            loop_length = rec_previous
         if beat_delta > 0:
             wrap_beat = (math.floor(beat_previous / quantum) + 1) * quantum
             while wrap_beat <= beat_current + 1e-9 and len(resets) < 10000:
@@ -469,16 +474,11 @@ def analyze_boundaries(valid_rows, sample_period, constants, args):
                     anomalies.append(reset_anomaly)
                 wrap_beat += quantum
         if master_active and mp_previous is not None and mp_current is not None:
-            loop_length = phrase_beats
-            if rec_current is not None and rec_current > 0:
-                loop_length = rec_current
-            elif rec_previous is not None and rec_previous > 0:
-                loop_length = rec_previous
             mp_delta = mp_current - mp_previous
             expected_wrap = mp_previous > mp_current and mp_current < max(1.0, alignment_tolerance) and loop_length > 0
             if expected_wrap:
-                mp_mod = beat_current % phrase_beats
-                mp_distance = min(mp_mod, phrase_beats - mp_mod)
+                mp_mod = beat_current % loop_length
+                mp_distance = min(mp_mod, loop_length - mp_mod)
                 record = {
                     "type": "master_phase_reset",
                     "from_i": previous["i"],
@@ -521,8 +521,8 @@ def analyze_boundaries(valid_rows, sample_period, constants, args):
                 mp_distance = None
                 if master_active and mp_previous is not None and mp_current is not None:
                     mp_distance = min(
-                        phase_distance_to_phrase(mp_previous, phrase_beats),
-                        phase_distance_to_phrase(mp_current, phrase_beats),
+                        phase_distance_to_phrase(mp_previous, loop_length),
+                        phase_distance_to_phrase(mp_current, loop_length),
                     )
                 aligned = grid_distance <= alignment_tolerance and (mp_distance is None or mp_distance <= alignment_tolerance)
                 record = {
@@ -865,6 +865,91 @@ def generate_synthetic_rows():
     return rows
 
 
+RB_WRAP_CASES = (3, 4, 8, 16, 64)
+PHASE_REBASE_JUMP_FROM = 17.0
+PHASE_REBASE_JUMP_TO = 2.0
+PHASE_REBASE_QUANTUM_BEATS = 3.0
+
+
+def generate_rb_wrap_rows(recorded_beats, sample_count=200):
+    base = dt.datetime.fromisoformat("2026-11-05T20:00:00+00:00")
+    rows = []
+    for index in range(sample_count):
+        beat = 25600.0 + float(index)
+        timestamp = (base + dt.timedelta(seconds=index * 0.5)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        reply = {
+            "core_busy": [0, 30 + index % 5, 0, 0],
+            "xruns": 0,
+            "link": {"synced": True, "bpm": 120.0, "peers": 1, "playing": True, "phase_err_beats": 0.0},
+            "eff_speed": 1.0,
+            "resample_fold": {"sum": 0.0, "samples": 1000000 + index * 38400},
+            "resample_chain": {"sum": 0.0, "samples": 1000000 + index * 38400},
+            "grid_beat_index": int(beat) % 16,
+            "master_phase_beats": beat % recorded_beats,
+            "master_len_samples": 0.0,
+            "recorded_beats": float(recorded_beats),
+            "beat_mark": {
+                "valid": True,
+                "beat": beat,
+                "index": int(beat) % 16,
+                "ms_to_next": 500.0 - (index % 20) * 25.0,
+                "late_ms": (index % 20) * 25.0,
+            },
+            "beat_pad_mark": {"seq": 0, "index": -1, "late_ms": 0.0, "age_ms": -1, "bpm": 0.0},
+        }
+        rows.append({
+            "i": index,
+            "t": timestamp,
+            "ok": True,
+            "reply": json.dumps(reply, separators=(",", ":")),
+        })
+    return rows
+
+
+def generate_phase_rebase_rows():
+    base = dt.datetime.fromisoformat("2026-11-05T21:00:00+00:00")
+    beats = [float(value) for value in range(2, 18)] * 2
+    rows = []
+    for index, beat in enumerate(beats):
+        timestamp = (base + dt.timedelta(seconds=index * 0.5)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        reply = {
+            "core_busy": [0, 30 + index % 5, 0, 0],
+            "xruns": 0,
+            "link": {"synced": True, "bpm": 120.0, "peers": 1, "playing": True, "phase_err_beats": 0.0},
+            "eff_speed": 1.0,
+            "resample_fold": {"sum": 0.0, "samples": 1000000 + index * 38400},
+            "resample_chain": {"sum": 0.0, "samples": 1000000 + index * 38400},
+            "grid_beat_index": int(beat) % 16,
+            "master_phase_beats": beat % PHASE_REBASE_QUANTUM_BEATS,
+            "master_len_samples": 0.0,
+            "recorded_beats": PHASE_REBASE_QUANTUM_BEATS,
+            "beat_mark": {
+                "valid": True,
+                "beat": beat,
+                "index": int(beat) % 16,
+                "ms_to_next": 500.0 - (index % 20) * 25.0,
+                "late_ms": (index % 20) * 25.0,
+            },
+            "beat_pad_mark": {"seq": 0, "index": -1, "late_ms": 0.0, "age_ms": -1, "bpm": 0.0},
+        }
+        rows.append({
+            "i": index,
+            "t": timestamp,
+            "ok": True,
+            "reply": json.dumps(reply, separators=(",", ":")),
+        })
+    return rows
+
+
+def analyze_synthetic_case(rows, args, constants):
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="phrase-self-test-") as scratch:
+        case_path = str(Path(scratch) / "case.jsonl")
+        write_self_test_data(rows, case_path)
+        loaded, parse_errors, _ = load_rows(case_path)
+        return analyze(loaded, args, constants, parse_errors)
+
+
 def write_self_test_data(rows, data_path=SELF_TEST_DATA):
     path = Path(data_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -885,6 +970,12 @@ def write_self_test_report(result, report_path=SELF_TEST_REPORT, data_path=SELF_
         "FLAG_COUNTS: " + json.dumps(result["flag_counts"], sort_keys=True),
         "ASSERTIONS:",
         json.dumps(result["assertions"], indent=2, sort_keys=True),
+        "MASTER PHASE RB WRAP CASES:",
+        json.dumps(result.get("rb_wrap_cases", {}), indent=2, sort_keys=True),
+        "PHASE REBASE CASE:",
+        json.dumps(result.get("phase_rebase_case", {}), indent=2, sort_keys=True),
+        "BEAT MARK LATE MS CASE:",
+        json.dumps(result.get("late_ms_case", {}), indent=2, sort_keys=True),
         "NO_REPLY_VS_PEERS0:",
         json.dumps(result["no_reply_vs_peers0"], indent=2, sort_keys=True),
         "BOUNDARY_ANOMALIES:",
@@ -917,20 +1008,95 @@ def run_self_test(args, constants):
         "reset_not_64_aligned",
         "phase_jump",
     ]
-    assertions = [{"flag": flag, "present": flag in flags} for flag in required_flags]
+    assertions = [{"flag": flag, "present": flag in flags, "pass": flag in flags} for flag in required_flags]
     no_reply_vs_peers0 = {
         "no_reply_count": analysis["metrics"]["no_reply_count"],
         "peers0_count": analysis["metrics"]["peers0_count"],
         "distinct": analysis["metrics"]["no_reply_count"] > 0 and analysis["metrics"]["peers0_count"] > 0,
     }
+    rb_wrap_cases = {}
+    forbidden_rb_flags = (
+        "resample_counter_reset",
+        "phrase_boundary_misalignment",
+        "reset_not_64_aligned",
+        "phrase_boundary_spacing_outlier",
+        "phase_jump",
+        "grid_phase_jump",
+        "backwards_beat",
+    )
+    for recorded_beats in RB_WRAP_CASES:
+        case_rows = generate_rb_wrap_rows(recorded_beats)
+        case_analysis = analyze_synthetic_case(case_rows, args, constants)
+        case_flags = case_analysis["anomaly_counts"]
+        master_resets = [item for item in case_analysis["boundaries"]["resets"] if item["type"] == "master_phase_reset"]
+        counters_monotonic = all(counter["monotonic"] for counter in case_analysis["monotonic"]["counters"].values())
+        no_false_classification = not any(flag in case_flags for flag in forbidden_rb_flags)
+        loop_lengths_correct = bool(master_resets) and all(item["loop_length_beats"] == float(recorded_beats) for item in master_resets)
+        boundaries_aligned = all(boundary["aligned"] for boundary in case_analysis["boundaries"]["boundaries"])
+        case_pass = no_false_classification and loop_lengths_correct and boundaries_aligned and counters_monotonic
+        rb_wrap_cases[str(recorded_beats)] = {
+            "recorded_beats": float(recorded_beats),
+            "generated_rows": len(case_rows),
+            "anomaly_counts": case_flags,
+            "master_phase_reset_count": len(master_resets),
+            "loop_length_beats": master_resets[0]["loop_length_beats"] if master_resets else None,
+            "boundary_count": case_analysis["boundaries"]["boundary_count"],
+            "all_boundaries_aligned": boundaries_aligned,
+            "resample_counters_monotonic": counters_monotonic,
+            "no_false_restart_or_misclassified_boundary": no_false_classification,
+            "pass": bool(case_pass),
+        }
+        assertions.append({
+            "case": "master_phase_rb_wrap_" + str(recorded_beats),
+            "pass": bool(case_pass),
+            "anomaly_counts": case_flags,
+        })
+    rebase_rows = generate_phase_rebase_rows()
+    rebase_analysis = analyze_synthetic_case(rebase_rows, args, constants)
+    rebase_beats = [coerce_reply(row["reply"])["beat_mark"]["beat"] for row in rebase_rows]
+    jump_present = any(
+        previous == PHASE_REBASE_JUMP_FROM and current == PHASE_REBASE_JUMP_TO
+        for previous, current in zip(rebase_beats, rebase_beats[1:])
+    )
+    rebase_flags = rebase_analysis["anomaly_counts"]
+    restart_absent = "resample_counter_reset" not in rebase_flags
+    boundary_misclassification_absent = not any(
+        flag in rebase_flags for flag in ("phrase_boundary_misalignment", "reset_not_64_aligned", "phrase_boundary_spacing_outlier")
+    )
+    rebase_counters_monotonic = all(counter["monotonic"] for counter in rebase_analysis["monotonic"]["counters"].values())
+    genuine_restart_flagged = "resample_counter_reset" in flags
+    rebase_pass = jump_present and restart_absent and boundary_misclassification_absent and rebase_counters_monotonic and genuine_restart_flagged
+    phase_rebase_case = {
+        "quantum_beats_L": PHASE_REBASE_QUANTUM_BEATS,
+        "beat_at_time_quantum": 16.0,
+        "jump_from_beat": PHASE_REBASE_JUMP_FROM,
+        "jump_to_beat": PHASE_REBASE_JUMP_TO,
+        "jump_present": jump_present,
+        "generated_rows": len(rebase_rows),
+        "anomaly_counts": rebase_flags,
+        "resample_counter_reset": "resample_counter_reset" in rebase_flags,
+        "boundary_misclassification_absent": boundary_misclassification_absent,
+        "resample_counters_monotonic": rebase_counters_monotonic,
+        "genuine_restart_flags_resample_counter_reset": genuine_restart_flagged,
+        "pass": bool(rebase_pass),
+    }
+    assertions.append({"case": "phase_rebase_no_resample_counter_reset", "pass": bool(rebase_pass), "anomaly_counts": rebase_flags})
+    assertions.append({"case": "genuine_restart_flags_resample_counter_reset", "pass": bool(genuine_restart_flagged)})
+    late_ms_interpretation = analysis["metrics"]["jitter"]["beat_mark_late_ms_interpretation"]
+    late_ms_pass = "sawtooth" in late_ms_interpretation and "not lateness" in late_ms_interpretation
+    late_ms_case = {"interpretation": late_ms_interpretation, "pass": bool(late_ms_pass)}
+    assertions.append({"case": "beat_mark_late_ms_sawtooth_not_lateness", "pass": bool(late_ms_pass)})
     result = {
-        "passed": all(item["present"] for item in assertions) and no_reply_vs_peers0["distinct"],
+        "passed": all(item["pass"] for item in assertions) and no_reply_vs_peers0["distinct"],
         "generated_rows": len(rows),
         "required_flags": required_flags,
         "assertions": assertions,
         "flag_counts": analysis["anomaly_counts"],
         "no_reply_vs_peers0": no_reply_vs_peers0,
         "boundary_anomalies": [item for item in analysis["anomalies"] if item["type"].startswith("phrase_") or item["type"].startswith("reset_")][:20],
+        "rb_wrap_cases": rb_wrap_cases,
+        "phase_rebase_case": phase_rebase_case,
+        "late_ms_case": late_ms_case,
         "generated_utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         "report": report_path,
     }
@@ -942,7 +1108,7 @@ def run_self_test(args, constants):
         result["report"] = report_path
         write_self_test_report(result, report_path, data_path)
     if not result["passed"]:
-        raise AssertionError("synthetic self-test missing required flags")
+        raise AssertionError("synthetic self-test missing required flags or failed a phase-rebase / rb-wrap case")
     return result
 
 
@@ -2012,7 +2178,11 @@ def main(argv=None):
         except Exception as exc:
             print(json.dumps({"ok": False, "status": "SELF_TEST", "self_test": {"passed": False, "error": repr(exc), "path": str(getattr(exc, "filename", "") or "")}}, separators=(",", ":")))
             return 1
-        print(json.dumps({"ok": True, "status": "SELF_TEST", "self_test": {key: self_test[key] for key in ("passed", "generated_rows", "required_flags", "assertions", "flag_counts", "report")}}, separators=(",", ":")))
+        self_test_keys = (
+            "passed", "generated_rows", "required_flags", "assertions", "flag_counts", "report",
+            "rb_wrap_cases", "phase_rebase_case", "late_ms_case",
+        )
+        print(json.dumps({"ok": True, "status": "SELF_TEST", "self_test": {key: self_test[key] for key in self_test_keys}}, separators=(",", ":")))
         return 0
     if args.status == "FINAL" and not args.completion_signal.strip():
         print(json.dumps({"ok": False, "error": "FINAL requires --completion-signal from 420"}, separators=(",", ":")))
