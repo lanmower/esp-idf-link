@@ -78,27 +78,27 @@ SYMBOL_SOURCES: Dict[str, Tuple[str, str]] = {
 }
 
 SOURCE_RULES: Dict[str, str] = {
-    "arm_event_timer": "main/link_sync.cpp:433-442",
-    "schedule_next_event": "main/link_sync.cpp:444-467",
-    "link_event_cb": "main/link_sync.cpp:469-498",
-    "ltmp_12B_and_28B_shapes": "main/link_sync.cpp:231-247",
-    "ltmp_phase_request_apply": "main/link_sync.cpp:511-531",
-    "ltmp_tempo_only_rearm": "main/link_sync.cpp:526-531",
-    "force_start_after_no_peers": "main/link_sync.cpp:535-540",
-    "detect_quantum_and_phrase_boundary": "main/link_sync.cpp:311-352",
-    "quantum_info_phrase_beat": "main/link_sync.h:12",
-    "phase_encoded_beat": "components/link-esp/link/include/ableton/link/Phase.hpp:76-81",
-    "send_song_position_bytes": "main/link_sync.cpp:412-420",
-    "peer_change": "main/link_sync.cpp:693-715",
-    "clock_enable_and_watchdog": "main/link_sync.cpp:721-743",
-    "phrase_boundary_spp_start_continue": "main/link_sync.cpp:762-768",
-    "constants_link_sync": "main/link_sync.cpp:21-40",
-    "constants_main_h": "main/main.h:60-61,83-87,93",
-    "ltmp_volatile_request_fields": "main/link_sync.cpp:145-146,231-247",
-    "ltmp_quantum_passed_to_forcebeat": "main/link_sync.cpp:238-246,519-524",
-    "ltmp_quantum_ignored_by_boundary": "main/link_sync.cpp:311-352,765-766",
-    "status_responder_lengths": "main/link_sync.cpp:153-195",
-    "catchup_skip_loop_cap": "main/link_sync.cpp:462-465",
+    "arm_event_timer": "main/link_sync.cpp::arm_event_timer",
+    "schedule_next_event": "main/link_sync.cpp::schedule_next_event",
+    "link_event_cb": "main/link_sync.cpp::link_event_cb",
+    "ltmp_12B_and_28B_shapes": "main/link_sync.cpp::tempo_listener_task",
+    "ltmp_phase_request_apply": "main/link_sync.cpp::handle_link_sync",
+    "ltmp_tempo_only_rearm": "main/link_sync.cpp::handle_link_sync",
+    "force_start_after_no_peers": "main/link_sync.cpp::handle_link_sync",
+    "detect_quantum_and_phrase_boundary": "main/link_sync.cpp::detectQuantumBoundary",
+    "quantum_info_phrase_beat": "main/link_sync.h::QuantumInfo::phraseBeat",
+    "phase_encoded_beat": "components/link-esp/link/include/ableton/link/Phase.hpp::toPhaseEncodedBeats",
+    "send_song_position_bytes": "main/link_sync.cpp::send_song_position",
+    "peer_change": "main/link_sync.cpp::handle_link_sync",
+    "clock_enable_and_watchdog": "main/link_sync.cpp::handle_link_sync",
+    "phrase_boundary_spp_start_continue": "main/link_sync.cpp::handle_link_sync",
+    "constants_link_sync": "main/link_sync.cpp::MIDI_* constants",
+    "constants_main_h": "main/main.h::LINK_QUANTUM+PHRASE_BEATS+MIDI_*",
+    "ltmp_volatile_request_fields": "tools/phrase_scheduler_fuzz.py::VolatileHandoff",
+    "ltmp_quantum_passed_to_forcebeat": "main/link_sync.cpp::handle_link_sync",
+    "ltmp_quantum_ignored_by_boundary": "main/link_sync.cpp::detectQuantumBoundary",
+    "status_responder_lengths": "main/link_sync.cpp::status_responder_task",
+    "catchup_skip_loop_cap": "main/link_sync.cpp::schedule_next_event",
 }
 
 PROPERTY_NAMES = {
@@ -1967,8 +1967,8 @@ def batch_c_report_lines(batch_c: Sequence[BatchScenario]) -> List[str]:
     lines.append("Batch C - off-device PRD audit gaps 12/35/41/60 (model-only; shipped firmware unchanged):")
     lines.append(f"  batch scenarios={len(batch_c)}; new properties=P9,P10,P11; the 1000 fixed-seed scenarios are unchanged.")
     lines.append("  P9 gap-ltmp-quantum-not-16 (gap 35): 28B LTMP quantumUb = 3e6,16e6,32e6,64e6 (quantum 3/16/32/64 beats).")
-    lines.append("    VERDICT: a non-16 quantumUb is ACCEPTED (parse returns the quantum; link_sync.cpp:238-246 divides by MICROBEATS_PER_BEAT).")
-    lines.append("    Phrase-boundary/SPP emission is keyed to FIXED LINK_QUANTUM=16 / PHRASE_BEATS=64 (link_sync.cpp:311-352,765-766): the SPP/")
+    lines.append("    VERDICT: a non-16 quantumUb is ACCEPTED (parse returns the quantum; the listener divides by MICROBEATS_PER_BEAT).")
+    lines.append("    Phrase-boundary/SPP emission is keyed to FIXED LINK_QUANTUM=16 / PHRASE_BEATS=64 (detectQuantumBoundary): the SPP/")
     lines.append("    boundary sequence is IDENTICAL for all four quantumUb values. A non-16 quantum need NOT be rejected for SPP correctness,")
     lines.append("    but it must NOT be assumed to reshape the 64-beat phrase grid (it is ignored by boundary detection).")
     lines.append("  P10 gap-ltmp-handoff-and-status-lengths (gap 41): two rapid LTMPs; 0B and >64B status requests vs the 1..64B contract.")
@@ -2019,7 +2019,7 @@ def build_report(
     lines.append(f"Wrap scenarios: {sorted(int(s) for s in WRAP_SEEDS)}")
     lines.append(f"Origin family: {ORIGIN_FAMILY_COUNT} scenarios; beatOrigins={[str(o) for o in ORIGIN_BEATS]}; non-64-aligned origins 16,32,48,7,-9.5,1.")
     lines.append("")
-    lines.append("Source rules mirrored (exact file:line):")
+    lines.append("Source regions mirrored (file::symbol):")
     for key, value in SOURCE_RULES.items():
         lines.append(f"  {key}: {value}")
     lines.append("")
@@ -2060,7 +2060,7 @@ def build_report(
     else:
         lines.append("  P6: still FAIL in the model; these are model-only findings and need on-device validation.")
     lines.append("  P8 is new in the after run; P3/P8/P6 results are model-only, not firmware certification.")
-    lines.append("P5 uses q=64 phase-encoded beatAtTime/phraseBeat, SPP units %256==0, and phase64 wrap; gated on clockEnabled (main/link_sync.cpp:762). P6 definition unchanged.")
+    lines.append("P5 uses q=64 phase-encoded beatAtTime/phraseBeat, SPP units %256==0, and phase64 wrap; gated on clockEnabled (handle_link_sync). P6 definition unchanged.")
     lines.append("SPP wrap arithmetic:")
     lines.append(f"  mask+1 units={wrap_units}; units_per_beat={MODEL_CONSTANTS['MIDI_SPP_UNITS_PER_BEAT']}; wrap_beats={wrap_beats}")
     lines.append(f"  phrase_beats={MODEL_CONSTANTS['PHRASE_BEATS']}; wrap_phrases={wrap_phrases}; 4096 % 64 == {int(wrap_beats) % int(MODEL_CONSTANTS['PHRASE_BEATS'])}")
