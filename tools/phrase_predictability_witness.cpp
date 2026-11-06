@@ -3,8 +3,9 @@
 //
 // IMPORTANT -- what this file does and does NOT do:
 //  * It links and EXECUTES the real shipped host-compilable sources
-//    main/control_model.cpp and main/bass_engine.cpp (checks 6-10 + fill/seed).
-//    Those checks exercise shipped code.
+//    main/control_model.cpp and main/bass_engine.cpp (checks 6-10 + fill/seed +
+//    the gap-33 fill-marks-across-window-change check). Those checks exercise
+//    shipped code.
 //  * It CANNOT compile main/link_sync.cpp (ESP-IDF: esp_timer, gptimer, lwip,
 //    g_link, wifi_config ...). For its MIDI-clock/SPP/phrase/LTMP/quantum/
 //    transport formulas this file contains a clearly-labelled MIRROR
@@ -14,8 +15,12 @@
 //    detectQuantumBoundary, schedule_next_event, link_event_cb,
 //    tempo_listener_task, broadcast_ticker_timeline) are exercised ONLY by
 //    guarded host-mirrors here -- see checkCoverage() and the report.
+//    The boot-panic / 16-channel CC123 sweep (audit gaps 53/54) is ALSO a
+//    GUARDED HOST MIRROR of main/link_sync.cpp:398-410, NOT captured DIN bytes:
+//    no on-device DIN/UART byte-capture path exists in this run.
 //    tools/phrase-predictability-witness.sh runs a parity guard that re-reads
-//    main/link_sync.cpp, main/main.h, main/bass_engine.cpp and the two vendored
+//    main/link_sync.cpp, main/main.h, main/main.cpp, main/io_helpers.cpp,
+//    main/bass_engine.{h,cpp}, main/control_model.{h,cpp} and the three vendored
 //    Link headers and refuses to build if any mirrored constant or formula has
 //    drifted from the shipped source.
 //
@@ -140,10 +145,46 @@ static bool hasCc(size_t from, uint8_t cc) {
 #define MIR_MIDI_NOTE_OFF_CMD                0x80      // main/main.h:89
 #define MIR_MIDI_CC_CMD                      0xB0      // main/main.h:90
 #define MIR_MIDI_CC_ALL_NOTES_OFF            123       // main/main.h:91
+#define MIR_MIDI_USER_CHANNEL_MIN            1         // main/io_helpers.cpp:21
+#define MIR_MIDI_USER_CHANNEL_MAX            16        // main/io_helpers.cpp:22
+#define MIR_MIDI_WIRE_CHANNEL_MIN            0         // main/io_helpers.cpp:23
+#define MIR_MIDI_CC_SWEEP_VALUE              0         // main/link_sync.cpp:401
 
 namespace mirror {
 
 constexpr double kSppWrap = static_cast<double>(MIR_MIDI_SPP_UNITS_MASK) + 1.0;  // 16384.0
+
+// Mirrors send_all_notes_off_all_channels() main/link_sync.cpp:398-404: one
+// 3-byte CC123 for each USER channel 1..16, mapped onto WIRE channels 0..15,
+// with the third (value) byte 0. GUARDED HOST MIRROR, NOT captured DIN bytes:
+// UART writes cannot be linked host-side, so the emitted bytes are modelled as
+// raw 3-byte messages in a host vector. The .sh parity guard re-reads the
+// shipped loop, the boot-panic function and the main/main.cpp boot call.
+inline void emitAllNotesOffSweep(std::vector<uint8_t>& out) {
+    for (int userChannel = MIR_MIDI_USER_CHANNEL_MIN;
+         userChannel <= MIR_MIDI_USER_CHANNEL_MAX; ++userChannel) {
+        const int wireChannel = MIR_MIDI_WIRE_CHANNEL_MIN +
+                                (userChannel - MIR_MIDI_USER_CHANNEL_MIN);
+        out.push_back(static_cast<uint8_t>(MIR_MIDI_CC_CMD | wireChannel));
+        out.push_back(static_cast<uint8_t>(MIR_MIDI_CC_ALL_NOTES_OFF));
+        out.push_back(static_cast<uint8_t>(MIR_MIDI_CC_SWEEP_VALUE));
+    }
+}
+
+// Mirrors the shared Stop + sweep shape used by link_sync_send_boot_panic()
+// (main/link_sync.cpp:406-410, called at main/main.cpp:30 BEFORE Link exists)
+// AND by the peer-loss branch (main/link_sync.cpp:707-709) AND by the
+// transport-stop branch (main/link_sync.cpp:756-758).
+inline void emitStopAndAllNotesOffSweep(std::vector<uint8_t>& out) {
+    out.push_back(static_cast<uint8_t>(MIR_MIDI_STOP));
+    emitAllNotesOffSweep(out);
+}
+
+inline std::vector<uint8_t> bootPanicBytes() {
+    std::vector<uint8_t> out;
+    emitStopAndAllNotesOffSweep(out);
+    return out;
+}
 
 // Mirrors send_song_position() main/link_sync.cpp:408-416 (EDITED: std::fmod
 // with a negative wrap instead of the undefined double->uint16_t cast).
@@ -311,6 +352,10 @@ struct TransportMirror {
     bool peerLossQueuesRealign = true;   // FIX (link_sync.cpp:713)
     int64_t startWaitTimeUs = 0;         // set ONCE at boot (main.cpp:59)
     std::vector<uint8_t> events;
+    // Raw bytes of the 1->0 peer-loss emission ONLY (Stop + 16 CC123), kept
+    // separate from `events` so the sweep can be asserted without SPP/Start
+    // bytes mixed in. GUARDED HOST MIRROR, not captured DIN.
+    std::vector<uint8_t> lossCapture;
     int f8Streaming = 0;
     int startCount  = 0;
     int sppCount    = 0;
@@ -329,9 +374,10 @@ struct TransportMirror {
             if (isConnected) {
                 pendingRealign = true;                    // :705
             } else {
-                events.push_back(static_cast<uint8_t>(MIR_MIDI_STOP));
-                events.push_back(static_cast<uint8_t>(MIR_MIDI_CC_CMD));
-                events.push_back(static_cast<uint8_t>(MIR_MIDI_CC_ALL_NOTES_OFF));
+                // link_sync.cpp:707-709: exactly ONE Stop + the 16-channel
+                // CC123 sweep (the old mirror emitted a single lone CC123).
+                emitStopAndAllNotesOffSweep(events);
+                emitStopAndAllNotesOffSweep(lossCapture);
                 transportRunning = false;                 // :710
                 if (peerLossQueuesRealign) pendingRealign = true;   // FIX :713
             }
@@ -971,6 +1017,14 @@ static void checkDetectQuantumBoundary() {
 static int countByteIn(const TransportMirror& tr, uint8_t v) {
     int n = 0; for (uint8_t b : tr.events) if (b == v) ++n; return n;
 }
+static int countCc123Messages(const std::vector<uint8_t>& bytes) {
+    int n = 0;
+    if (bytes.size() < 4) return 0;
+    for (size_t i = 1; i + 2 < bytes.size(); i += 3)
+        if ((bytes[i] & 0xF0) == MIR_MIDI_CC_CMD &&
+            bytes[i + 1] == MIR_MIDI_CC_ALL_NOTES_OFF) ++n;
+    return n;
+}
 
 struct MeshResult {
     TransportMirror tr;
@@ -1055,9 +1109,9 @@ static void checkPeerLossForceStart() {
     CHECK("MIRROR [peerloss] F8 keeps streaming after the loss", pre.f8At100 > pre.f8AtLoss);
     CHECK("MIRROR [peerloss] SPP keeps firing at boundaries after the loss",
           pre.sppAt100 > pre.sppAtLoss);
-    CHECK("MIRROR [peerloss] Stop+CC123 WAS emitted on the loss",
+    CHECK("MIRROR [peerloss] Stop + 16-channel CC123 sweep WAS emitted on the loss",
           countByteIn(pre.tr, MIR_MIDI_STOP) == 1 &&
-          countByteIn(pre.tr, MIR_MIDI_CC_ALL_NOTES_OFF) == 1);
+          countCc123Messages(pre.tr.lossCapture) == 16 && pre.tr.lossCapture.size() == 49u);
 
     // CONFIRMED HIGH DEFECT (pre-fix): NO Start/Continue within one phrase,
     // nor two, after the loss -> gear stays silent while F8/SPP keep streaming.
@@ -1095,14 +1149,117 @@ static void checkPeerLossForceStart() {
         "latches UNCONDITIONALLY at 8 s even while peers are connected. A mesh up "
         ">8 s has force_start already latched and s_pending_realign already consumed "
         "at a phrase boundary; a later 1->0 loss gives NO clock-enable edge (:730) "
-        "and NO peer-connect edge (:705). The peer-loss branch sent Stop+CC123 and "
-        "reset s_transport_running but did NOT set s_pending_realign, so F8/SPP kept "
+        "and NO peer-connect edge (:705). The peer-loss branch sent one Stop plus the "
+        "16-channel CC123 sweep and reset s_transport_running but did NOT set "
+        "s_pending_realign, so F8/SPP kept "
         "streaming while slaved gear stayed SILENT indefinitely. Pre-fix regression: "
         "ZERO Start/Continue within one 64-beat phrase, nor two. FIX (:713, "
         "s_pending_realign = true in the peer-loss branch): a MIDI_START now appears "
         "within ONE phrase after the loss. LIMITATION: all four CI witnesses are "
         "host mirrors -- there is NO on-device DIN/UART byte capture, so this verdict "
         "needs on-device confirmation.\n");
+}
+
+// =====================================================================
+// Audit gaps 53/54 -- boot panic + the 16-channel CC123 (All Notes Off)
+// sweep. GUARDED HOST MIRROR, NOT captured DIN bytes. The shipped
+// link_sync_send_boot_panic() runs at main/main.cpp:30 BEFORE Link exists;
+// send_all_notes_off_all_channels() is shared by the boot panic, the peer-loss
+// branch and the transport-stop branch. The old TransportMirror emitted only a
+// single lone CC123, which modelled none of those 16 messages.
+// =====================================================================
+static void checkStopAndAllNotesOffSweep(const std::string& label,
+                                         const std::vector<uint8_t>& bytes) {
+    const size_t expected = 1u + static_cast<size_t>(
+        MIR_MIDI_USER_CHANNEL_MAX - MIR_MIDI_USER_CHANNEL_MIN + 1) * 3u;
+    CHECK((label + " byte shape = 1 Stop + 16 x 3-byte CC123 (49 bytes)").c_str(),
+          bytes.size() == expected);
+
+    int stops = 0;
+    for (uint8_t b : bytes) if (b == MIR_MIDI_STOP) ++stops;
+    CHECK((label + " exactly ONE MIDI Stop (0xFC)").c_str(), stops == 1);
+    CHECK((label + " the MIDI Stop is the FIRST emitted byte").c_str(),
+          !bytes.empty() && bytes[0] == MIR_MIDI_STOP);
+
+    bool seen[16] = {};
+    bool duplicateChannel = false;
+    bool badStatus = false;
+    bool badCc = false;
+    bool badValue = false;
+    int messages = 0;
+    int zeroValues = 0;
+    if (bytes.size() == expected) {
+        for (size_t i = 1; i < expected; i += 3) {
+            const uint8_t status = bytes[i];
+            const uint8_t cc     = bytes[i + 1];
+            const uint8_t value  = bytes[i + 2];
+            ++messages;
+            if ((status & 0xF0) != MIR_MIDI_CC_CMD) badStatus = true;
+            if (cc != MIR_MIDI_CC_ALL_NOTES_OFF) badCc = true;
+            if (value == MIR_MIDI_CC_SWEEP_VALUE) ++zeroValues;
+            else badValue = true;
+            const int ch = status & 0x0F;
+            if (seen[ch]) duplicateChannel = true;
+            seen[ch] = true;
+        }
+    }
+    bool allChannels = true;
+    for (int ch = 0; ch < 16; ++ch) if (!seen[ch]) allChannels = false;
+
+    CHECK((label + " exactly 16 CC123 (All Notes Off) messages").c_str(), messages == 16);
+    CHECK((label + " all 16 statuses are Control Change (0xB0 nibble)").c_str(), !badStatus);
+    CHECK((label + " all 16 controller numbers are CC123").c_str(), !badCc);
+    CHECK((label + " all 16 data bytes are 0 (note-off velocity 0)").c_str(),
+          !badValue && zeroValues == 16);
+    CHECK((label + " 16 channel-DISTINCT CC123 messages").c_str(), !duplicateChannel);
+    CHECK((label + " the 16 channels cover wire channels 0..15").c_str(), allChannels);
+}
+
+static void checkBootPanicAndAllNotesOffSweep() {
+    // Boot: link_sync_send_boot_panic() needs NO Link, peer or session state.
+    const std::vector<uint8_t> boot = mirror::bootPanicBytes();
+    checkStopAndAllNotesOffSweep("MIRROR [boot panic, gaps 53/54]", boot);
+
+    const int bootStrays = [&boot]() {
+        int n = 0;
+        for (uint8_t b : boot)
+            if (b == MIR_MIDI_TIMING_CLOCK || b == MIR_MIDI_START ||
+                b == MIR_MIDI_CONTINUE || b == MIR_MIDI_SONG_POSITION_POINTER) ++n;
+        return n;
+    }();
+    CHECK("MIRROR [boot panic] NO Clock/SPP/Start/Continue (it fires BEFORE Link exists)",
+          bootStrays == 0);
+
+    // Peer loss: a single 1->0 transition in an already-running mesh.
+    TransportMirror tr;
+    tr.forceStart = true;
+    tr.wasConnected = true;
+    tr.evtEnabled = true;
+    tr.transportRunning = true;
+    tr.pendingRealign = false;
+    tr.startWaitTimeUs = -60000000;
+    tr.tick(false, false, 2.0, 0);
+    checkStopAndAllNotesOffSweep("MIRROR [peer loss, gaps 53/54]", tr.lossCapture);
+
+    CHECK("MIRROR [gaps 53/54] boot panic and peer loss emit the IDENTICAL Stop + CC123 sweep",
+          boot == tr.lossCapture);
+    CHECK("MIRROR [gaps 53/54] the peer-loss event stream carries the same 16 CC123 messages",
+          countCc123Messages(tr.events) == 16);
+    CHECK("MIRROR [gaps 53/54] boot panic runs with NO TransportMirror tick at all",
+          mirror::bootPanicBytes() == boot);
+
+    std::printf(
+        "BOOT PANIC verdict (audit gaps 53/54): GUARDED HOST MIRROR, NOT captured DIN bytes. "
+        "main/link_sync.cpp:406-410 link_sync_send_boot_panic() and :398-404 "
+        "send_all_notes_off_all_channels() emit exactly ONE MIDI Stop (0xFC) plus 16 "
+        "channel-distinct CC123 messages (wire channels 0..15, value/data byte 0 = "
+        "note-off velocity 0); the peer-loss branch (:707-709) emits the same sweep. "
+        "The boot call is main/main.cpp:30, BEFORE g_link is constructed at :42, so it "
+        "runs with no peers and no Link at all. The .sh parity guard re-reads every one "
+        "of those shipped lines. LIMITATION: there is NO on-device DIN/UART byte-capture "
+        "path in this run; these are mirrored emissions in a host vector, NOT bytes "
+        "observed on real hardware, so an on-device DIN capture is still required to "
+        "confirm the wire output.\n");
 }
 
 // =====================================================================
@@ -1164,7 +1321,10 @@ static void checkCoverage() {
         "behaviour needs ON-DEVICE validation -- the mirrors prove "
         "arithmetic/ordering only. LIMITATION (completeness critic): all four CI "
         "witnesses are host mirrors; there is NO on-device DIN/UART byte capture, "
-        "so no emitted MIDI byte is observed on real hardware.\n");
+        "so no emitted MIDI byte is observed on real hardware. The boot-panic and "
+        "16-channel CC123 sweep check (audit gaps 53/54) is likewise a GUARDED HOST "
+        "MIRROR of main/link_sync.cpp:398-410, NOT captured DIN bytes -- no on-device "
+        "DIN capture path exists in this run.\n");
 }
 
 // ---- shipped-code driver ---------------------------------------------------
@@ -1585,6 +1745,101 @@ static void checkWindowStructural() {
     // ctl::loopBarsForDial(m_live[SET_WINDOW]) and never m_frame/m_track there.
 }
 
+// =====================================================================
+// Audit gap 33 -- fill/unfill marks are keyed by LOOP STEP, not by window.
+// EXPECTED (documented) behaviour: marks recorded at steps 16..31 PERSIST
+// while the window is one bar (16 steps, so those steps are never visited)
+// and REAPPEAR with their original effect when the window is lengthened back
+// to two bars (32 steps). SHIPPED code only: setFill/setUnfill, setDial,
+// BassEngine::tick/stepBoundary/soundsAt and ctl::loopBarsForDial.
+// =====================================================================
+static void checkFillMarksAcrossWindowChange() {
+    g_state.m_bpm = 125.0; g_state.m_beat0 = 0.0; g_state.m_t0 = 0;
+    g_out.clear();
+    BassEngine e; e.selectSingle(0);
+
+    const int stepTicks  = static_cast<int>(kTicksPerStep);   // 12
+    const int fullSteps  = ctl::kLoopSteps;                   // 32
+    const int shortSteps = ctl::kStepsPerBar;                 // 16
+    CHECK_EQ("SHIPPED [gap 33] setup: default window is 2 bars = 32 steps",
+             e.m_loopSteps, fullSteps);
+
+    // Record MARK_ADD on steps 16..23 and MARK_REMOVE on steps 24..31 while the
+    // loop is two bars long, via the shipped setFill/setUnfill paths.
+    e.setFill(true);
+    drive(e, 16 * stepTicks, 23 * stepTicks);
+    e.setFill(false);
+    e.setUnfill(true);
+    drive(e, 24 * stepTicks, 31 * stepTicks);
+    e.setUnfill(false);
+
+    bool adds16to23 = true, removes24to31 = true, lowNone = true;
+    for (int s = 16; s <= 23; ++s)
+        if (e.m_fillMark[s] != BassEngine::MARK_ADD) adds16to23 = false;
+    for (int s = 24; s <= 31; ++s)
+        if (e.m_fillMark[s] != BassEngine::MARK_REMOVE) removes24to31 = false;
+    for (int s = 0; s < shortSteps; ++s)
+        if (e.m_fillMark[s] != BassEngine::MARK_NONE) lowNone = false;
+    CHECK("SHIPPED [gap 33] setup: steps 16..23 recorded MARK_ADD", adds16to23);
+    CHECK("SHIPPED [gap 33] setup: steps 24..31 recorded MARK_REMOVE", removes24to31);
+    CHECK("SHIPPED [gap 33] setup: steps 0..15 remain MARK_NONE", lowNone);
+
+    // Shorten the loop via the shipped window setting (double pad 3, dial 0 ->
+    // SET_WINDOW). m_pendingLoopSteps is refreshed at the next stepBoundary and
+    // tick() turns around on min(current, pending).
+    e.setDoubleHeld(3);
+    e.setDial(0, 0.0f, static_cast<uint64_t>(31 * stepTicks) * kUsPerTick);
+    drive(e, 31 * stepTicks + 1, 48 * stepTicks);
+    CHECK_EQ("SHIPPED [gap 33] EXPECTED: window dial 0 shortens the loop to one bar (16 steps)",
+             e.m_loopSteps, shortSteps);
+
+    // Hold fill for one whole 16-step loop: ONLY steps 0..15 can be visited.
+    e.setFill(true);
+    drive(e, 48 * stepTicks + 1, 64 * stepTicks);
+    e.setFill(false);
+    bool shortVisited = true, hiddenPersist = true, addsHighPersist = true;
+    for (int s = 0; s < shortSteps; ++s)
+        if (e.m_fillMark[s] != BassEngine::MARK_ADD) shortVisited = false;
+    for (int s = 24; s <= 31; ++s)
+        if (e.m_fillMark[s] != BassEngine::MARK_REMOVE) hiddenPersist = false;
+    for (int s = 16; s <= 23; ++s)
+        if (e.m_fillMark[s] != BassEngine::MARK_ADD) addsHighPersist = false;
+    CHECK("SHIPPED [gap 33] EXPECTED: a one-bar loop visits ONLY steps 0..15 (fill marks them)",
+          shortVisited);
+    CHECK("SHIPPED [gap 33] EXPECTED: steps 24..31 MARK_REMOVE PERSIST while shortened (not visited)",
+          hiddenPersist);
+    CHECK("SHIPPED [gap 33] EXPECTED: steps 16..23 MARK_ADD PERSIST while shortened",
+          addsHighPersist);
+
+    // Lengthen back to two bars via the SAME shipped window setting.
+    e.setDial(0, 1.0f, static_cast<uint64_t>(64 * stepTicks) * kUsPerTick);
+    drive(e, 64 * stepTicks + 1, 96 * stepTicks);
+    CHECK_EQ("SHIPPED [gap 33] EXPECTED: window dial 1 lengthens the loop back to two bars (32 steps)",
+             e.m_loopSteps, fullSteps);
+
+    bool reappearAdd = true, reappearRemove = true;
+    for (int s = 16; s <= 23; ++s)
+        if (e.m_fillMark[s] != BassEngine::MARK_ADD || !e.soundsAt(s)) reappearAdd = false;
+    for (int s = 24; s <= 31; ++s)
+        if (e.m_fillMark[s] != BassEngine::MARK_REMOVE || e.soundsAt(s)) reappearRemove = false;
+    CHECK("SHIPPED [gap 33] EXPECTED: steps 16..23 MARK_ADD REAPPEAR and always sound after lengthening",
+          reappearAdd);
+    CHECK("SHIPPED [gap 33] EXPECTED: steps 24..31 MARK_REMOVE REAPPEAR and never sound after lengthening",
+          reappearRemove);
+
+    // Prove the lengthened loop reaches steps 16..31 again: hold fill for one
+    // full 32-step loop and watch those marks become MARK_ADD.
+    e.setFill(true);
+    drive(e, 96 * stepTicks + 1, 128 * stepTicks);
+    e.setFill(false);
+    bool restoredVisited = true;
+    for (int s = shortSteps; s < fullSteps; ++s)
+        if (e.m_fillMark[s] != BassEngine::MARK_ADD) restoredVisited = false;
+    CHECK("SHIPPED [gap 33] EXPECTED: after lengthening, steps 16..31 are visited again and re-marked",
+          restoredVisited);
+    e.setDoubleHeld(-1);
+}
+
 int main() {
     checkPhraseArithmetic();        // 1 (MIRROR)
     checkSppEncoding();             // 2 (MIRROR)
@@ -1595,6 +1850,7 @@ int main() {
     checkLtmpRegression();           // coordinator LTMP FIX (a) regression (MIRROR)
     checkDetectQuantumBoundary();    // audit 3 (MIRROR)
     checkPeerLossForceStart();       // audit 4 (MIRROR)
+    checkBootPanicAndAllNotesOffSweep();  // audit gaps 53/54 (GUARDED HOST MIRROR)
     checkTempoTruncation();          // audit 5 (MIRROR)
     checkCoverage();                 // audit 6 (MIRROR)
     checkShippedFixRegressions();      // (e)-(j) SHIPPED code regressions
@@ -1603,6 +1859,7 @@ int main() {
     checkFillReset();                // 8 (SHIPPED)
     checkSeedDeterminism();          // 9 (SHIPPED)
     checkWindowStructural();         // 10 (SHIPPED)
+    checkFillMarksAcrossWindowChange();  // audit gap 33 (SHIPPED)
     std::printf("phrase predictability witness: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
