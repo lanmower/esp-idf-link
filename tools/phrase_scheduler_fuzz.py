@@ -1,10 +1,3 @@
-"""Discrete-event property fuzz for the phrase clock scheduler.
-
-This is a Python mirror, not the shipped ESP-IDF binary. Source rules are named in
-SOURCE_RULES; constants are checked against a gm.codesearch snapshot or the stdlib --source-root fallback by
-gm_parity_guard(). No wall-clock sleeps or time-derived seeds are used.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -168,10 +161,6 @@ ORIGIN_FAMILY_COUNT = 90
 ORIGIN_FAMILY_SEEDS = frozenset(SEEDS[2:2 + ORIGIN_FAMILY_COUNT])
 PHASE64_WRAP_TOLERANCE_UB = 4000000
 
-# Batch C off-device PRD audit gaps 12/35/41/60. These are literals for the
-# self-contained model probes below; they deliberately stay OUT of
-# MODEL_CONSTANTS/CONSTANT_SOURCES so the stdlib --source-root parity guard is
-# untouched. Shipped firmware is never edited.
 PRD_QUANTUM_UB_CASES: Tuple[int, ...] = (3_000_000, 16_000_000, 32_000_000, 64_000_000)
 QUANTUM_CASE_SEED = SEEDS[500]
 STATUS_REQUEST_BUFFER_BYTES = 64
@@ -1645,12 +1634,6 @@ def compact_details(details: Dict[str, Any]) -> str:
     return json.dumps(details, sort_keys=True, separators=(",", ":"), default=str)
 
 
-# Batch C: off-device PRD audit-gap scenarios (gaps 12/35/41/60). Each returns a
-# BatchScenario with its own findings and its own P9/P10/P11 violations. These
-# self-contained probes never feed SimResult.violations back into the 1000
-# fixed-seed scenarios, so P1-P8 stay exactly at their baseline counts.
-
-
 @dataclass(frozen=True)
 class LtmpRequest:
     bpm: Optional[Fraction]
@@ -1673,12 +1656,6 @@ class BatchScenario:
 
 
 class VolatileHandoff:
-    """Mirror of the listener's separate volatile LTMP request fields
-    (main/link_sync.cpp:145-146,231-247) and the Link-task consumption
-    (main/link_sync.cpp:511-533). Data fields are staged sequentially, the
-    *_pending commit markers are written LAST, and the Link task consumes ONE
-    atomic snapshot gated on those markers."""
-
     SLOT_NAMES: Tuple[str, ...] = (
         "tempo_bpm", "tempo_pending", "phase_beat0_us",
         "phase_quantum", "phase_pending",
@@ -1724,9 +1701,6 @@ def ltmp_request(payload: bytes, tag: str) -> LtmpRequest:
 
 
 def status_reply_for_length(length: int) -> Tuple[int, Optional[str], str]:
-    """Mirror of status_responder_task (main/link_sync.cpp:153-195): recvfrom into
-    req[64] truncates a >64B datagram; n<0 is the only drop. The reply is built
-    from captured session state, independent of the request bytes."""
     n = min(length, STATUS_REQUEST_BUFFER_BYTES)
     if n < 0:
         return (n, None, "recv_error")
