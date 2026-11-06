@@ -1,8 +1,15 @@
-#include "bass_engine.h"
-
+#include <cstdint>
+#include <chrono>
+#include <vector>
 #include <cstdio>
 #include <cstdlib>
-#include <vector>
+#include <ableton/Link.hpp>
+
+#include "control_model.h"
+
+#define private public
+#include "bass_engine.h"
+#undef private
 
 static int g_fail = 0;
 static int g_checks = 0;
@@ -165,6 +172,19 @@ static void checkDoubleRoutesDials() {
     CHECK("pad 2 single-tap settings still produce notes", countNoteOn(0) > 0);
 }
 
+static void checkResetAllSeedState() {
+    BassEngine e;
+    CHECK("boot seed counter is 1", e.m_seedCounter == 1u);
+    e.setDial(0, 0.7f, 0);
+    CHECK("a dial touch advances the seed counter", e.m_seedCounter > 1u);
+    CHECK("a dial touch reseeds the setting", e.m_entrySeed[e.settingFor(0)] != 1u + static_cast<uint32_t>(e.settingFor(0)));
+    e.resetAll();
+    CHECK("resetAll restores the seed counter", e.m_seedCounter == 1u);
+    for (int c = 0; c < ctl::kControlCount; ++c) {
+        CHECK("resetAll restores every entry seed", e.m_entrySeed[c] == 1u + static_cast<uint32_t>(c));
+    }
+}
+
 int main() {
     checkControlIndices();
     checkEngineSounds();
@@ -172,6 +192,7 @@ int main() {
     checkGateZeroIsSilent();
     checkDropOutIsSilent();
     checkDoubleRoutesDials();
+    checkResetAllSeedState();
     std::printf("bass loop witness: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
