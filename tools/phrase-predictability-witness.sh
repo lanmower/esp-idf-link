@@ -1,25 +1,10 @@
 #!/usr/bin/env bash
-# Build and run the phrase-predictability witness off-device (no ESP-IDF, no board).
-#   * The witness links the ACTUAL shipped main/control_model.cpp + main/bass_engine.cpp.
-#   * Everything that cannot compile host-side (main/link_sync.cpp esp_timer/gptimer/
-#     lwip/g_link) is modelled by a clearly-labelled MIRROR in the witness .cpp.
-#     This script runs a PARITY GUARD first: it re-reads the shipped source and
-#     refuses to build if any mirrored constant or formula has drifted.
-#   * The boot-panic / 16-channel CC123 sweep check (audit gaps 53/54) is a
-#     GUARDED HOST MIRROR, NOT captured DIN bytes: there is no on-device
-#     DIN/UART byte-capture path in this run. The parity guard re-reads the
-#     shipped sweep loop, the boot-panic call order and the fill-mark keying.
-# Nothing is copied into the repo; all work happens in a temp dir that is removed.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-# ---- PARITY GUARD -----------------------------------------------------------
-# Reads shipped source with bash/python3 (equivalent to gm codesearch/fs_read),
-# parses it with python3, and compares to the MIRROR constants/line shapes in
-# tools/phrase_predictability_witness.cpp. Loud failure on any drift.
 python3 - "$root" "$here/phrase_predictability_witness.cpp" <<'PY'
 import os, re, sys
 
@@ -72,7 +57,6 @@ def parse_num(s):
         return float(int(s, 16))
     return float(s)
 
-# (mirror macro name, shipped file, regex with ONE capture group = the value)
 CONST = [
     ("MIR_MIDI_PULSES_PER_QUARTER_NOTE", LS, r'MIDI_PULSES_PER_QUARTER_NOTE\s*=\s*([0-9]+)'),
     ("MIR_MIDI_SPP_UNITS_PER_BEAT",      LS, r'MIDI_SPP_UNITS_PER_BEAT\s*=\s*([0-9]+)'),
@@ -122,7 +106,6 @@ for name, rel, rx in CONST:
         complain("MIRROR/SHIPPED VALUE DRIFT %s: mirror=%s shipped=%s (%s)" %
                  (name, mirror_val, shipped_val, rel))
 
-# (label, shipped file, regex, expect_present). present=False => must be ABSENT.
 FORMULA = [
     ("send_song_position kSppWrap=mask+1", LS, r'kSppWrap\s*=\s*static_cast<double>\(MIDI_SPP_UNITS_MASK\)\s*\+\s*1\.0', True),
     ("send_song_position std::fmod", LS, r'std::fmod\(sessionBeat\s*\*\s*MIDI_SPP_UNITS_PER_BEAT,\s*kSppWrap\)', True),
@@ -168,8 +151,8 @@ FORMULA = [
     ("peer-loss Stop + All Notes Off log", LS, r'Link peer lost -- sent Stop \+ All Notes Off\.', True),
     ("peer-loss transport reset", LS, r's_transport_running\s*=\s*false;', True),
     ("peer-loss STOP msg", LS, r'const uint8_t stop_msg\[\]\s*=\s*\{\s*MIDI_STOP\s*\};', True),
-    ("peer-loss realign FIX comment (latched force_start)", LS, r'force_start may already be latched, so no clock-enable edge is coming', True),
-    ("peer-loss realign FIX setter in branch (5th site)", LS, r'// force_start may already be latched[\s\S]{0,240}?s_pending_realign\s*=\s*true;', True),
+    ("peer-loss realign FIX comment (latched force_start)", LS, r's_transport_running\s*=\s*false;\s*s_pending_realign\s*=\s*true;', True),
+    ("peer-loss realign FIX setter in branch (5th site)", LS, r'const uint8_t stop_msg\[\]\s*=\s*\{\s*MIDI_STOP\s*\};[\s\S]{0,400}?s_transport_running\s*=\s*false;\s*s_pending_realign\s*=\s*true;', True),
     ("send_all_notes_off_all_channels call", LS, r'send_all_notes_off_all_channels\(\);', True),
     ("crossedPhraseBoundary block", LS, r'if\s*\(crossedPhraseBoundary\)\s*\{', True),
     ("SPP sent from quantumInfo.phraseBeat (quantum FIX)", LS, r'send_song_position\(quantumInfo\.phraseBeat\);', True),
@@ -185,38 +168,31 @@ FORMULA = [
     ("Tempo.hpp int64 truncation", TEMPO, r'static_cast<std::int64_t>\(60\.\s*\*\s*1e6\s*/\s*bpm\(\)\)', True),
     ("Tempo.hpp bpm reconstruction", TEMPO, r'60\.\s*\*\s*1e6\s*/\s*static_cast<double>\(microsPerBeat\.count\(\)\)', True),
     ("Link.hpp beat/phase invariant", LINKH, r'fmod\(beatAtTime\(t,\s*q\),\s*q\)\s*==\s*phaseAtTime\(t,\s*q\)', True),
-    # ---- FIX (d): F8 emitted INSIDE if(s_evt_enabled) in link_event_cb ----
     ("link_event_cb F8 gated on s_evt_enabled (FIX d)", LS, r'if\s*\(s_evt_enabled\)\s*\{\s*const uint8_t timing_msg\s*=\s*MIDI_TIMING_CLOCK;', True),
     ("single F8 send site", LS, r'send_midi_bytes\(&timing_msg,\s*1\);', True),
-    # ---- FIX (e): process() beat<0 guarded note release ----
     ("process beat<0 guarded allNotesOff (FIX e)", BE, r'if\s*\(beat\s*<\s*0\.0\)\s*\{\s*if\s*\(!m_activeNotes\.empty\(\)\)\s*allNotesOff\(\);', True),
     ("process beat<0 resets m_lastTick (FIX e)", BE, r'm_lastTick\s*=\s*-1;\s*\n\s*return;', True),
-    # ---- FIX (f): resync m_lastTick = now - 1, no early return ----
     ("resync m_lastTick = now - 1 (FIX f)", BE, r'm_lastTick\s*=\s*now\s*-\s*1;', True),
     ("OLD resync early-return ABSENT (FIX f)", BE, r'allNotesOff\(\);\s*\n\s*m_lastTick\s*=\s*now;\s*\n\s*return;', False),
-    # ---- FIX (g): sendLfoAndFilter absolute tick ----
     ("sendLfoAndFilter called with absolute t (FIX g)", BE, r'sendLfoAndFilter\(t\);', True),
     ("sendLfoAndFilter signature absTick (FIX g)", BE, r'void BassEngine::sendLfoAndFilter\(int64_t absTick\)', True),
     ("LFO bars uses absTick (FIX g)", BE, r'static_cast<float>\(absTick\)\s*/\s*static_cast<float>\(ctl::kTicksPerBar\)', True),
     ("OLD sendLfoAndFilter(p) ABSENT (FIX g)", BE, r'sendLfoAndFilter\(p\);', False),
     ("OLD LFO bars loopTick ABSENT (FIX g)", BE, r'static_cast<float>\(loopTick\)\s*/\s*static_cast<float>\(ctl::kTicksPerBar\)', False),
-    # ---- FIX (h)+(i): setDial / touchSetting ----
     ("setDial clamps into m_live", BE, r'm_live\[c\]\s*=\s*std::clamp\(v01,\s*0\.0f,\s*1\.0f\);', True),
     ("touchSetting calls startRecording (FIX i)", BE, r'm_track\[c\]\.startRecording\(m_live\[c\]\);', True),
     ("OLD touchSetting setTouched(true) ABSENT (FIX i)", BE, r'm_track\[c\]\.setTouched\(true\);', False),
-    # ---- FIX (j): LoopTrack::startRecording declaration + definition ----
     ("LoopTrack::startRecording declared (FIX j)", CMH, r'void\s+startRecording\(float value\);', True),
     ("LoopTrack::startRecording defined (FIX j)", CMC, r'void LoopTrack::startRecording\(float value\)', True),
 ]
 
-for label, rel, rx, present in FORMULA:
+for label, rel, rx, expectPresent in FORMULA:
     found = re.search(rx, src[rel]) is not None
-    if present and not found:
+    if expectPresent and not found:
         complain("FORMULA DRIFT (missing): %s [regex %s] in %s" % (label, rx, rel))
-    if (not present) and found:
+    if (not expectPresent) and found:
         complain("FORMULA DRIFT (unexpected presence): %s [regex %s] in %s" % (label, rx, rel))
 
-# SPP-before-Start ordering inside the crossedPhraseBoundary block.
 i = src[LS].find("if (crossedPhraseBoundary) {")
 if i < 0:
     complain("crossedPhraseBoundary block not found (cannot verify SPP-before-Start)")
@@ -228,34 +204,26 @@ else:
         complain("ORDERING DRIFT: SPP must precede Start in crossedPhraseBoundary (spp_idx=%d start_idx=%d)" %
                  (jspp, jstart))
 
-# Start/Continue must be sent from exactly ONE site (only at a boundary).
-nsend = len(re.findall(r'send_midi_bytes\(&start_msg,\s*1\)', src[LS]))
-if nsend != 1:
-    complain("Start/Continue send-site count drifted: expected 1, found %d" % nsend)
+startSendSiteCount = len(re.findall(r'send_midi_bytes\(&start_msg,\s*1\)', src[LS]))
+if startSendSiteCount != 1:
+    complain("Start/Continue send-site count drifted: expected 1, found %d" % startSendSiteCount)
 
-# s_pending_realign must be set on the phase-req, peer-connect, peer-loss,
-# clock-enable and playing paths (5 setter sites after the peer-loss FIX).
-nrealign = len(re.findall(r's_pending_realign\s*=\s*true;', src[LS]))
-if nrealign < 5:
-    complain("s_pending_realign=true site count drifted: expected >=5 (incl. peer-loss FIX), found %d" % nrealign)
+realignSetterCount = len(re.findall(r's_pending_realign\s*=\s*true;', src[LS]))
+if realignSetterCount < 5:
+    complain("s_pending_realign=true site count drifted: expected >=5 (incl. peer-loss FIX), found %d" % realignSetterCount)
 
-# Peer-loss branch FIX: must queue s_pending_realign (the 5th setter site).
-ipl = src[LS].find('ESP_LOGI(TAG_LINK, "Link peer lost -- sent Stop + All Notes Off.");')
-if ipl < 0:
+peerLossLogIndex = src[LS].find('ESP_LOGI(TAG_LINK, "Link peer lost -- sent Stop + All Notes Off.");')
+if peerLossLogIndex < 0:
     complain("peer-loss branch log line not found")
 else:
-    # Restrict to the 1->0 } else { branch so the connect-branch setter at
-    # :705 cannot mask a missing peer-loss setter.
-    jelse = src[LS].rfind("} else {", 0, ipl)
-    pblk = src[LS][jelse:ipl] if jelse >= 0 else src[LS][max(0, ipl - 700):ipl]
-    if not re.search(r's_transport_running\s*=\s*false;', pblk):
+    elseBranchStart = src[LS].rfind("} else {", 0, peerLossLogIndex)
+    peerLossBranch = src[LS][elseBranchStart:peerLossLogIndex] if elseBranchStart >= 0 else src[LS][max(0, peerLossLogIndex - 700):peerLossLogIndex]
+    if not re.search(r's_transport_running\s*=\s*false;', peerLossBranch):
         complain("peer-loss branch drift: s_transport_running = false missing")
-    if not re.search(r's_pending_realign\s*=\s*true;', pblk):
+    if not re.search(r's_pending_realign\s*=\s*true;', peerLossBranch):
         complain("PEER-LOSS FIX DRIFT: the 1->0 branch must set s_pending_realign = true "
                  "(else gear stays silent while F8/SPP stream)")
 
-# FIX (a): the LTMP handler block must gate on s_evt_enabled, clear
-# s_next_pulse_valid, set pendingRealign ONLY when phaseApplied, and re-arm.
 i = src[LS].find("g_link->commitAppSessionState(ss);")
 if i < 0:
     complain("FIX (a): LTMP handler commitAppSessionState(ss) not found")
@@ -270,14 +238,12 @@ else:
         if not re.search(rx, blk):
             complain("FIX (a) LTMP handler drift: %s missing" % label)
 
-# FIX (d): the single F8 send must sit INSIDE (after) the if(s_evt_enabled) gate.
 jgate = src[LS].find("const uint8_t timing_msg = MIDI_TIMING_CLOCK;")
 jf8 = src[LS].find("send_midi_bytes(&timing_msg, 1);")
 jif = src[LS].rfind("if (s_evt_enabled) {", 0, jgate) if jgate >= 0 else -1
 if not (jif >= 0 and jgate >= 0 and jf8 >= 0 and jif < jgate < jf8):
     complain("FIX (d) ordering drift: F8 must be emitted INSIDE if(s_evt_enabled)")
 
-# FIX (h): setDial must assign m_live[c] BEFORE touchSetting(c).
 msd = re.search(r'void BassEngine::setDial\([^)]*\)\s*\{([\s\S]*?)\n\}', src[BE])
 if not msd:
     complain("FIX (h): BassEngine::setDial definition not found")
@@ -288,7 +254,6 @@ else:
     if not (ilive >= 0 and itouch >= 0 and ilive < itouch):
         complain("FIX (h) ordering drift: m_live[c] must be assigned BEFORE touchSetting(c)")
 
-# FIX (j): LoopTrack::startRecording body must seed hold_ at the current value.
 msr = re.search(r'void LoopTrack::startRecording\(float value\)\s*\{([\s\S]*?)\n\}', src[CMC])
 if not msr:
     complain("FIX (j): LoopTrack::startRecording definition not found")
@@ -304,12 +269,6 @@ else:
         if not re.search(rx, body):
             complain("FIX (j) startRecording body drift: %s missing" % label)
 
-# ---- Audit gaps 53/54: boot panic + 16-channel CC123 sweep parity ----------
-# These are EXPLICIT checks outside CONST/FORMULA, so the parity guard's
-# "23 constants + 77 formulas" shape and the peer-loss drift test are intact.
-# The witness models main/link_sync.cpp:398-410 as a GUARDED HOST MIRROR (no
-# on-device DIN byte capture exists this run); these checks tie the mirror's
-# channel range, status byte, controller number and data byte to shipped code.
 for label, rx, rel in [
     ("user channel MIN = 1", r'extern constexpr uint8_t MIDI_USER_CHANNEL_MIN = 1;', IOH),
     ("user channel MAX = 16", r'extern constexpr uint8_t MIDI_USER_CHANNEL_MAX = 16;', IOH),
@@ -338,20 +297,15 @@ for name, rel, rx in SWEEP_MIRROR:
         complain("BOOT PANIC PARITY: MIRROR/SHIPPED VALUE DRIFT %s: mirror=%s shipped=%s" %
                  (name, mm.group(1), sm.group(1)))
 
-# Boot panic must run BEFORE Link is constructed (no peers, no Link at boot).
-jpanic = src[MAINCPP].find("link_sync_send_boot_panic();")
-jlink = src[MAINCPP].find("std::make_unique<ableton::Link>")
-if not (jpanic >= 0 and jlink >= 0 and jpanic < jlink):
+bootPanicIndex = src[MAINCPP].find("link_sync_send_boot_panic();")
+linkConstructionIndex = src[MAINCPP].find("std::make_unique<ableton::Link>")
+if not (bootPanicIndex >= 0 and linkConstructionIndex >= 0 and bootPanicIndex < linkConstructionIndex):
     complain("BOOT PANIC PARITY: boot call must precede Link construction in main/main.cpp")
 
-# The shared sweep helper is used at all three emission sites: boot panic,
-# 1->0 peer loss, and transport stop.
-nsweep = len(re.findall(r'send_all_notes_off_all_channels\(\);', src[LS]))
-if nsweep != 3:
-    complain("BOOT PANIC PARITY: expected 3 sweep call sites (boot/peer-loss/stop), found %d" % nsweep)
+sweepCallSiteCount = len(re.findall(r'send_all_notes_off_all_channels\(\);', src[LS]))
+if sweepCallSiteCount != 3:
+    complain("BOOT PANIC PARITY: expected 3 sweep call sites (boot/peer-loss/stop), found %d" % sweepCallSiteCount)
 
-# ---- Audit gap 33: fill marks are keyed by fixed LOOP STEP, not by window ---
-# SHIPPED-code check in the witness; these lines tie the expectation to source.
 for label, rx, rel in [
     ("fill writes m_fillMark[step] = MARK_ADD", r'm_fillMark\[step\] = MARK_ADD;', BE),
     ("unfill writes m_fillMark[step] = MARK_REMOVE", r'm_fillMark\[step\] = MARK_REMOVE;', BE),
@@ -370,7 +324,6 @@ print("PARITY GUARD OK: %d constants + %d formulas + ordering/body checks match 
       (len(CONST), len(FORMULA)))
 PY
 
-# ---- BUILD (link the ACTUAL shipped host-compilable sources) ----------------
 cp "$root/main/bass_engine.cpp" "$root/main/bass_engine.h" \
    "$root/main/control_model.cpp" "$root/main/control_model.h" \
    "$here/phrase_predictability_witness.cpp" "$tmp/"

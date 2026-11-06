@@ -319,9 +319,6 @@ QuantumInfo detectQuantumBoundary(const ableton::Link::SessionState& state,
     info.beatFraction = info.phaseWithinQuantum - std::floor(info.phaseWithinQuantum);
 
     info.phaseWithinPhrase = state.phaseAtTime(time, PHRASE_BEATS);
-    // beatAtTime is phase-encoded: with quantum 16 its value can sit up to 48 beats off the
-    // 64-beat phrase grid when beatOrigin is not 64-aligned. Derive the phrase number from a
-    // 64-beat encoding so a boundary is always a true phrase downbeat.
     info.phraseBeat = state.beatAtTime(time, PHRASE_BEATS);
     info.currentPhraseNumber = static_cast<int>(std::floor(info.phraseBeat / PHRASE_BEATS));
 
@@ -524,8 +521,6 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
         }
         g_link->commitAppSessionState(ss);
         if (s_evt_enabled) {
-            // Any accepted request changes the timeline: a tempo-only setTempo is phase-continuous,
-            // but the armed deadline was computed from the old tempo, so re-arm for both shapes.
             s_next_pulse_valid = false;
             if (phaseApplied) s_pending_realign = true;
             schedule_next_event(g_link->captureAppSessionState());
@@ -708,8 +703,6 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
             send_midi_bytes(stop_msg, 1);
             send_all_notes_off_all_channels();
             s_transport_running = false;
-            // force_start may already be latched, so no clock-enable edge is coming: queue the
-            // realign here or the local clock keeps streaming F8/SPP with silent slaved gear.
             s_pending_realign = true;
             s_peer_lost_at_us = esp_timer_get_time();
             wifi_log_peer_loss_state();
