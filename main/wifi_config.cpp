@@ -962,28 +962,12 @@ static void link_multicast_relay_task(void*) {
 
 static const int RELAY_STOP_MAX_POLLS = 250;
 
-static void relay_wake_recv() {
-    const int rs = g_relay_sock;
-    if (rs < 0) return;
-    const int ws = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (ws < 0) return;
-    struct sockaddr_in dst = {};
-    dst.sin_family      = AF_INET;
-    dst.sin_port        = htons(LINK_DISCOVERY_MULTICAST_PORT);
-    dst.sin_addr.s_addr = inet_addr("127.0.0.1");
-    const char byte = 0;
-    sendto(ws, &byte, 1, 0, (struct sockaddr*)&dst, sizeof(dst));
-    close(ws);
-}
-
 void wifi_stop_link_relay() {
     if (!g_relay_task) return;
     g_relay_stop = true;
-    relay_wake_recv();
     int polls = 0;
     while (g_relay_task && polls < RELAY_STOP_MAX_POLLS) {
         vTaskDelay(pdMS_TO_TICKS(RELAY_STOP_POLL_MS));
-        if (polls % 10 == 9) relay_wake_recv();
         polls++;
     }
     if (g_relay_task) {
