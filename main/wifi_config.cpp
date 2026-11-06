@@ -74,7 +74,6 @@ static volatile uint32_t g_role_epoch = 0;
 static SemaphoreHandle_t g_ap_netif_lock = NULL;
 static TaskHandle_t volatile g_relay_task = NULL;
 static volatile bool g_relay_stop = false;
-static volatile int g_relay_sock = -1;
 
 static int g_fwd_sock = -1;
 static SemaphoreHandle_t g_fwd_lock = NULL;
@@ -832,7 +831,6 @@ static esp_err_t raw_remove_on_tcpip(void* ctx) {
 static void link_relay_release(int rs, struct raw_pcb* rpcb) {
     if (rpcb) esp_netif_tcpip_exec(raw_remove_on_tcpip, rpcb);
     if (rs >= 0) close(rs);
-    g_relay_sock = -1;
     g_relay_task = NULL;
     vTaskDelete(NULL);
 }
@@ -843,7 +841,6 @@ static void link_multicast_relay_task(void*) {
 
     int rs = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (rs < 0) { ESP_LOGE(RELAY_TAG, "recv socket failed"); link_relay_release(rs, NULL); return; }
-    g_relay_sock = rs;
     int one = 1;
     setsockopt(rs, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
     int recv_timeout_ms = (int)RELAY_RECV_TIMEOUT_MS;
