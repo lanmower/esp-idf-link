@@ -10,6 +10,6 @@ cp "$root/main/bass_engine.cpp" "$root/main/bass_engine.h" \
    "$here/bass_loop_witness.cpp" "$tmp/"
 cp -r "$here/hoststub/." "$tmp/"
 
-g++ -std=c++17 -O1 -I"$tmp" -o "$tmp/witness" \
+g++ -std=c++17 -Wall -Wextra -Werror -O1 -I"$tmp" -o "$tmp/witness" \
     "$tmp/bass_loop_witness.cpp" "$tmp/bass_engine.cpp" "$tmp/control_model.cpp"
 "$tmp/witness"
