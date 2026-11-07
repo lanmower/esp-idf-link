@@ -14,5 +14,8 @@ inline PhraseBoundaryStep stepPhraseBoundary(bool baselineCaptured, int lastPhra
     if (currentPhraseNumber > lastPhraseNumber) {
         return {true, currentPhraseNumber};
     }
+    if (currentPhraseNumber < lastPhraseNumber) {
+        return {false, currentPhraseNumber};
+    }
     return {false, lastPhraseNumber};
 }

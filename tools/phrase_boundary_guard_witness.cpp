@@ -38,36 +38,52 @@ bool contains(const std::string& haystack, const char* needle)
     return haystack.find(needle) != std::string::npos;
 }
 
+PhraseBoundaryStep feed(bool& baseline, int& last, int current)
+{
+    const PhraseBoundaryStep step = stepPhraseBoundary(baseline, last, current);
+    baseline = true;
+    last = step.lastPhraseNumber;
+    return step;
+}
+
 void stepChecks()
 {
-    const PhraseBoundaryStep baseline = stepPhraseBoundary(false, 0, 7);
-    check("baseline captures current phrase number", !baseline.crossed && baseline.lastPhraseNumber == 7);
+    bool baseline = false;
+    int last = 0;
 
-    const PhraseBoundaryStep forward = stepPhraseBoundary(true, 7, 8);
-    check("forward step emits a boundary", forward.crossed);
-    check("forward step advances the last number", forward.lastPhraseNumber == 8);
+    const PhraseBoundaryStep first = feed(baseline, last, 7);
+    check("baseline captures current phrase number", !first.crossed && last == 7);
 
-    const PhraseBoundaryStep forwardJump = stepPhraseBoundary(true, 7, 11);
-    check("forward jump emits one boundary", forwardJump.crossed && forwardJump.lastPhraseNumber == 11);
+    const PhraseBoundaryStep forward = feed(baseline, last, 8);
+    check("forward step emits a boundary", forward.crossed && last == 8);
 
-    const PhraseBoundaryStep noChange = stepPhraseBoundary(true, 7, 7);
-    check("no-change control emits no boundary", !noChange.crossed);
-    check("no-change control keeps the last number", noChange.lastPhraseNumber == 7);
+    const PhraseBoundaryStep forwardJump = feed(baseline, last, 11);
+    check("forward jump emits one boundary", forwardJump.crossed && last == 11);
 
-    const PhraseBoundaryStep backwards = stepPhraseBoundary(true, 7, 6);
-    check("backwards step emits no boundary", !backwards.crossed);
-    check("backwards step does not overwrite the last number", backwards.lastPhraseNumber == 7);
+    const PhraseBoundaryStep noChange = feed(baseline, last, 11);
+    check("no-change control emits no boundary", !noChange.crossed && last == 11);
 
-    const PhraseBoundaryStep deepRebase = stepPhraseBoundary(true, 12, -5);
-    check("backwards rebase emits no boundary", !deepRebase.crossed);
-    check("backwards rebase keeps the old last number", deepRebase.lastPhraseNumber == 12);
+    const PhraseBoundaryStep backwards = feed(baseline, last, 6);
+    check("backwards rebase emits no boundary", !backwards.crossed);
+    check("backwards rebase adopts the new lower phrase number", last == 6);
 
-    const PhraseBoundaryStep recovered = stepPhraseBoundary(true, 12, 13);
-    check("forward step after an ignored rebase still emits a boundary",
-          recovered.crossed && recovered.lastPhraseNumber == 13);
+    const PhraseBoundaryStep recovered = feed(baseline, last, 7);
+    check("forward boundary after a rebase is NOT held back", recovered.crossed && last == 7);
 
-    const PhraseBoundaryStep staleThenForward = stepPhraseBoundary(true, 12, 12);
-    check("repeated stale phrase number stays quiet", !staleThenForward.crossed && staleThenForward.lastPhraseNumber == 12);
+    const PhraseBoundaryStep recoveredFurther = feed(baseline, last, 8);
+    check("later forward boundaries keep emitting", recoveredFurther.crossed && last == 8);
+
+    bool deepBaseline = true;
+    int deepLast = 12;
+    const PhraseBoundaryStep deep = feed(deepBaseline, deepLast, -5);
+    check("deep backwards rebase emits no boundary", !deep.crossed && deepLast == -5);
+    const PhraseBoundaryStep deepRecovered = feed(deepBaseline, deepLast, -4);
+    check("deep rebase recovery emits the next forward boundary",
+          deepRecovered.crossed && deepLast == -4);
+    check("a second backwards step still emits no boundary",
+          !feed(deepBaseline, deepLast, -9).crossed);
+    check("repeated stale phrase number stays quiet",
+          !feed(deepBaseline, deepLast, -9).crossed);
 }
 
 void parityChecks()
@@ -83,6 +99,9 @@ void parityChecks()
           contains(sync, "if (crossedPhraseBoundary) {"));
     check("link_sync.cpp keeps send_song_position(quantumInfo.phraseBeat)",
           contains(sync, "send_song_position(quantumInfo.phraseBeat);"));
+    check("shipped guard has a backwards-rebase branch",
+          contains(readSource("main/phrase_boundary_guard.h"),
+                   "if (currentPhraseNumber < lastPhraseNumber)"));
 }
 }
 
