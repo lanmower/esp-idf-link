@@ -28,6 +28,8 @@ required = (
     "0 failures",
     "4-beat reseat misses the take beat 0 in",
     "[first take] origin",
+    "28-byte LTMP reseat: ",
+    "LTMP QUANTUM HONOURED: PASS",
 )
 for line in required:
     if line not in out:
