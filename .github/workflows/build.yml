@@ -160,3 +160,6 @@ jobs:
 
       - name: Phrase boundary guard witness
         run: bash tools/phrase-boundary-guard-witness.sh
+
+      - name: First-take origin witness
+        run: bash tools/first-take-origin-witness.sh
