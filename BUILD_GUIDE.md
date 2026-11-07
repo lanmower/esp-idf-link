@@ -143,8 +143,9 @@ docker run --rm -it --device=/dev/ttyUSB0 -v $(pwd):/project -w /project esp-idf
 
 ## Docker Image Details
 
-The Docker image is built from `espressif/idf:latest`, an unpinned tag, so the framework version
-is whatever that tag resolves to at build time. It includes:
+The Docker image is built from a digest-pinned `espressif/idf@sha256:...` base
+(`ARG IDF_IMAGE` on Dockerfile:1), not a floating tag. CI's `resolve-idf-image`
+job refuses the build unless that digest is 64 lowercase hex characters. It includes:
 - All required toolchains (xtensa-esp-elf, etc.)
 - All ESP-IDF components
 - Pre-built WiFi binaries for all ESP32 variants
@@ -188,10 +189,7 @@ sudo usermod -a -G dialout $USER
 
 ### Build Fails Inside Container
 ```bash
-# Pull latest ESP-IDF image
-docker pull espressif/idf:latest
-
-# Rebuild the image
+# Rebuild the image from the digest-pinned base in Dockerfile:1
 docker build --no-cache -t esp-idf-link .
 ```
 

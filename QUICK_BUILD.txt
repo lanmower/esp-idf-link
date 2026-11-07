@@ -46,8 +46,7 @@ FLASH WITHOUT A LOCAL BUILD (no Docker needed):
   it from ./data and writes it at 0x317000.
 
 CLEAN BUILD:
-  rm -rf build/
-  bash build.sh
+  bash build.sh clean
 
 FULL DOCKER IMAGE REBUILD:
   docker build --no-cache -t esp-idf-link .

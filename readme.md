@@ -34,6 +34,11 @@ docker run --rm --device=/dev/ttyUSB0 -v "$(pwd)":/project -w /project \
   bash -c "source /opt/esp/idf/export.sh && idf.py -p /dev/ttyUSB0 flash"
 ```
 
+`bash flash.sh` is the current WSL2/Linux script route: it auto-detects
+`/dev/ttyUSB*`, derives the app offset from the built partition table, and
+runs the user-installed esptool under a PYTHONPATH override. It needs sudo
+for the serial device.
+
 Do not use `docker-compose run --rm flash`. Compose builds on this project's
 WSL2 + Docker Desktop setup have been observed to hang indefinitely (>30 min)
 when only sources changed; `bash build.sh` and the `docker run` form above go
@@ -49,8 +54,9 @@ clone therefore carries flashable images and needs no Docker at all --
 partition-table binary rather than hardcoding it.
 
 The SPIFFS image that holds the MIDI files is separate: `flash_midi_data.sh`
-builds it from `./data` and writes it at `0x317000`, the `storage` partition
-offset from `partitions_large.csv`.
+builds it from `./data` and writes it at `0x317000`. Offsets come from the built
+partition table (`flash.sh` derives the app offset with `app_offset()`);
+`partitions_large.csv` leaves every offset blank except `nvs`.
 
 See [BUILD_GUIDE.md](BUILD_GUIDE.md) for detailed build instructions and [QUICK_BUILD.txt](QUICK_BUILD.txt) for quick reference.
 
@@ -58,44 +64,45 @@ See [BUILD_GUIDE.md](BUILD_GUIDE.md) for detailed build instructions and [QUICK_
 
 ## User Operation Guide
 
-The onboard bassline interpreter (`main/bass_engine.cpp` +
-`main/bassline_interpreter.{h,cpp}`) generates a continuously-evolving
-64-bar bassline and sends it out as MIDI. It replaced an earlier 8-genre
-tap/double-tap lookup-table scheme; there is no discrete genre selection
-any more, only continuous interpreted generation. The control surface is
-intentionally small -- 4 touch pads + 2 potentiometers, all the hardware
-has -- reshaped as 4 dial "banks" of 2 dials each (see
-`main/bassline_interpreter.h` for exactly what each dial controls; the design
-was validated by audio experiments in the sibling `DawDreamer` repo before it
-was ported here).
+The sequencer is an eight-beat (two-bar) bass loop built from
+`main/bass_engine.cpp`, `main/state_machine.cpp` and
+`main/control_model.{h,cpp}`. Four touch pads and two potentiometers address
+16 settings (`ctl::controlIndex`: eight single-tap settings and eight
+double-tap settings). The loop is the phrase; the earlier long-form bassline
+and the dial "banks" are gone.
 
 General Operation
-- Pads (0-3): tap a pad to select which bank the 2 pots address. Switches
-  *instantly* on press -- no tap/double-tap disambiguation delay. The very
-  first pad tap after boot also starts playback, using default parameters
-  until you dial something in.
-  - Pad 0 -> **Harmony** bank: pot 0 = chord-tone gravity, pot 1 = scale
-    colour (banded across 9 modes) / tension tolerance.
-  - Pad 1 -> **Groove** bank: pot 0 = energy (groove-template select +
-    density, sparse -> busy), pot 1 = swing/syncopation looseness.
-  - Pad 2 -> **Motion** bank: pot 0 = pitch contour shape (level, climb,
-    arch, wave, zigzag, ...), pot 1 = variation (leap size, octave-jump
-    appetite, randomness).
-  - Pad 3 -> **Voice** bank: pot 0 = filter-sweep automation depth, pot 1
-    = articulation energy (accent/ghost-note/slide density).
-- Long-press a pad (>=500ms without releasing): nudges the bassline --
-  rerolls the current bar with fresh randomness while keeping the same
-  dial-driven character (same "reinterpret while keeping this vibe" idea
-  as SUBSTRATE's Nudge button). Takes effect at the next bar boundary, so
-  it never clicks or interrupts a note.
-- Hold all four pads together: panic-stops playback (fires the instant
-  all four are simultaneously held, not a timed hold) and sends MIDI
-  CC123 (All Notes Off). Tap any pad afterward to start again.
-- No buzzer/LED confirms a bank switch or nudge -- the buzzer is already
-  the Link-quantum metronome click (fires every beat via `link_sync.cpp`),
-  so a bank switch is a silent context change (the next pot turn shows
-  which bank you're in by what changes) and a nudge is audible through
-  the bassline itself.
+- Single tap a pad: select that pad's two single-tap settings and start the
+  sequencer (`selectSingle` sets `m_active = true`).
+- Double-tap a pad and hold: route both pots to that pad's two double-tap
+  settings (`setDoubleHeld`); releasing the pad returns the pots to the
+  single-tap settings.
+- Dials act only while a pad is held. `state_machine.cpp` calls `setDial`
+  only when a pot moved and at least one pad is held, and `setTouchHeld`
+  gates recording. With no pad held the pots do nothing.
+- A dial move starts a touch (`LoopTrack::startRecording` opens a clean
+  line). While a pad is held, `valueAt` writes the live dial value at every
+  step the loop passes, including steps where the dial is no longer moving.
+  Releasing the pad ends the touch; the last value stays as the fallback for
+  steps never recorded.
+- Two pads held: fill (`MARK_ADD` on each step passed). Three pads held:
+  unfill (`MARK_REMOVE`). Four pads held at once: `resetAll()` clears every
+  recording and fill mark, restores every setting's baseline/default,
+  releases active notes and stops the sequencer.
+- The loop window setting (pad 3 double-tap, pot 0) chooses one or two bars
+  (4 or 8 beats) and is read LIVE, never from the track; a shortened window
+  takes effect at the next turnaround of the new length. `ctl::kLoopBars = 2`
+  and `ctl::kLoopMaxBeats = 8` cap the loop.
+
+Pads are numbered 0-3 as in `ctl::controlIndex`; the print control card
+labels them 1-4.
+
+| Pad | Single tap: pot 0 / pot 1 | Double-tap, hold: pot 0 / pot 1 |
+|---|---|---|
+| 0 | scale / width | gate width / arp speed |
+| 1 | pitch offset / 32-step rhythm | random octave / random drop-out |
+| 2 | LFO type / LFO speed | LFO width / filter shift (CC 74) |
+| 3 | trance-gate series / octave | loop window / chromatic aberration |
 
 Potentiometer Behaviour Detail
 - Smoothing: Uses Exponential Moving Average (EMA) for smoothness.

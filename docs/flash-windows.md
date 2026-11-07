@@ -32,9 +32,11 @@ that hyphenated name via `importlib.util.spec_from_file_location`.
 
 **WSL2 / CH340 host setup (Windows box)**: CH340 is seen by the kernel but no `/dev/ttyUSB*` node appears
 until `ch341` loads: `/etc/modprobe.d/wsl-ch340.conf` loads `usbserial` + `ch341`; `sudo modprobe ch341`
-before first use. `flash.sh` auto-detects `/dev/ttyUSB*`, needs sudo, runs `python3.12 -m esptool` with a
-PYTHONPATH override (system esptool 4.7.0 lacks `stub_flasher_32.json`; the `esptool` binary ignores
-PYTHONPATH).
+before first use. `flash.sh` auto-detects `/dev/ttyUSB*`, needs sudo, and runs
+`python3.12 /home/user/.local/bin/esptool` with a PYTHONPATH override (system
+esptool 4.7.0 lacks `stub_flasher_32.json`; the `esptool` binary ignores
+PYTHONPATH). It derives the app offset from the built partition table with
+`app_offset()` instead of hardcoding it.
 
 **Build performance**: `build.sh` is incremental by default; `./build.sh clean` for a full rebuild; Docker
 layer caching makes code-only changes 10-100x faster. **WSL2 Docker is broken**: `docker compose` build hangs

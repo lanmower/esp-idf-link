@@ -40,7 +40,9 @@ that pad's double settings. Releasing the pad returns them to the single setting
 
 1. **Approach names** (ROLL, ACID and the rest) are removed. Their pads now carry the new settings.
 2. **The loop replaces the 64-bar phrase.** The loop is the phrase.
-3. **Adjustment period** means "touched at the turnaround". A different reading changes the recorder only.
+3. **Adjustment period** means the whole pad hold: a dial move starts a clean line and
+   releasing the pad ends the touch. Every step passed while held records the live value,
+   still positions included.
 4. **Fill and reset.** Two pads held record fill, marking each step the loop passes while held. Three pads held
    unfill, removing each step passed. Four pads reset: they clear every recording and fill, and return every setting
    to its default. Nothing is copied from the rhythm; steps never held keep following it.
