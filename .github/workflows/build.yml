@@ -154,3 +154,6 @@ jobs:
 
       - name: LTMP request witness
         run: bash tools/ltmp-request-witness.sh
+
+      - name: Real Link header witness
+        run: bash tools/link-header-witness.sh
