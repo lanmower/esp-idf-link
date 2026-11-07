@@ -147,14 +147,12 @@ void LoopTrack::setBaseline(float value) {
 void LoopTrack::setTouched(bool touched) {
     if (touched && !touched_) {
         for (int i = 0; i < kLoopSteps; i++) valid_[i] = false;
-        persistent_ = false;
     }
     touched_ = touched;
 }
 
 void LoopTrack::startRecording(float value) {
     for (int i = 0; i < kLoopSteps; i++) valid_[i] = false;
-    persistent_ = false;
     hold_ = value;
     holdValid_ = true;
     touched_ = true;
@@ -175,12 +173,7 @@ float LoopTrack::valueAt(int step, float liveValue) {
     return baseline_;
 }
 
-void LoopTrack::turnaround() {
-    if (touched_ || holdValid_) persistent_ = true;
-}
-
 void LoopTrack::clear() {
-    persistent_ = false;
     holdValid_ = false;
     for (int i = 0; i < kLoopSteps; i++) valid_[i] = false;
 }

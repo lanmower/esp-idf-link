@@ -87,45 +87,36 @@ static void checkUntouchedReadsBaseline() {
     LoopTrack t;
     t.setBaseline(0.5f);
     CHECK("an untouched setting reads its baseline", t.valueAt(3, 0.9f) == 0.5f);
-    t.turnaround();
-    CHECK("an untouched setting stays off the record", !t.persistent());
 }
 
-static void checkHoldUntilTurnaround() {
+static void checkReleasedValueFallback() {
     LoopTrack t;
     t.setBaseline(0.1f);
     t.setTouched(true);
     t.valueAt(0, 0.9f);
     t.setTouched(false);
-    CHECK("a released change holds its last value until the turnaround", t.valueAt(5, 0.1f) == 0.9f);
-    t.turnaround();
-    CHECK("after the turnaround the released value stays where it was left", t.valueAt(5, 0.1f) == 0.9f);
+    CHECK("a released change holds its last value", t.valueAt(5, 0.1f) == 0.9f);
+    CHECK("an unvisited step falls back to the released value", t.valueAt(20, 0.1f) == 0.9f);
 }
 
-static void checkTouchPersists() {
+static void checkRecordedStepsReplay() {
     LoopTrack t;
     t.setBaseline(0.5f);
     t.setTouched(true);
     for (int s = 0; s < 10; s++) t.valueAt(s, 0.8f);
-    t.turnaround();
-    CHECK("touched at the turnaround becomes persistent", t.persistent());
     t.setTouched(false);
-    CHECK("a persistent recording replays on the next pass", t.valueAt(4, 0.5f) == 0.8f);
+    CHECK("a recorded step replays on the next pass", t.valueAt(4, 0.5f) == 0.8f);
     CHECK("a position never recorded plays the last value left", t.valueAt(20, 0.5f) == 0.8f);
-    t.turnaround();
-    CHECK("a persistent recording survives an untouched turnaround", t.persistent());
-    CHECK("and replays again on the following pass", t.valueAt(9, 0.5f) == 0.8f);
+    CHECK("the recording replays again on the following pass", t.valueAt(9, 0.5f) == 0.8f);
 }
 
-static void checkReleasePersists() {
+static void checkReleaseKeepsRecordedSteps() {
     LoopTrack t;
     t.setBaseline(0.25f);
     t.setTouched(true);
     for (int s = 0; s < 6; s++) t.valueAt(s, 0.9f);
     t.setTouched(false);
-    t.turnaround();
-    CHECK("a change released before the turnaround persists", t.persistent());
-    CHECK("it replays its recording on the next pass", t.valueAt(2, 0.25f) == 0.9f);
+    CHECK("a change released before the next pass persists", t.valueAt(2, 0.25f) == 0.9f);
 }
 
 static void checkOverwrite() {
@@ -133,11 +124,10 @@ static void checkOverwrite() {
     t.setBaseline(0.0f);
     t.setTouched(true);
     for (int s = 0; s < 8; s++) t.valueAt(s, 0.3f);
-    t.turnaround();
     t.setTouched(true);
     for (int s = 4; s < 8; s++) t.valueAt(s, 0.7f);
     t.setTouched(false);
-    CHECK("touching a persistent setting overwrites the recorded position", t.valueAt(5, 0.0f) == 0.7f);
+    CHECK("touching again overwrites the recorded position", t.valueAt(5, 0.0f) == 0.7f);
     CHECK("untouched positions keep their earlier recording", t.valueAt(1, 0.0f) == 0.3f);
     CHECK("the overwritten value replays on later passes", t.valueAt(6, 0.0f) == 0.7f);
 }
@@ -147,10 +137,8 @@ static void checkClear() {
     t.setBaseline(0.1f);
     t.setTouched(true);
     t.valueAt(0, 0.9f);
-    t.turnaround();
     t.setTouched(false);
     t.clear();
-    CHECK("clear removes the persistent recording", !t.persistent());
     CHECK("clear returns the setting to its baseline", t.valueAt(0, 0.9f) == 0.1f);
 }
 
@@ -160,9 +148,9 @@ int main() {
     checkTranceGates();
     checkHashes();
     checkUntouchedReadsBaseline();
-    checkHoldUntilTurnaround();
-    checkTouchPersists();
-    checkReleasePersists();
+    checkReleasedValueFallback();
+    checkRecordedStepsReplay();
+    checkReleaseKeepsRecordedSteps();
     checkOverwrite();
     checkClear();
     std::printf("control model witness: %d checks, %d failed\n", g_checks, g_fail);

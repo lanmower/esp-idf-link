@@ -173,7 +173,6 @@ void BassEngine::tick(int64_t t) {
     const int64_t pendTicks = static_cast<int64_t>(m_pendingLoopSteps) * ctl::kTicksPerStep;
     const int64_t gateTicks = pendTicks < curTicks ? pendTicks : curTicks;
     if (t % gateTicks == 0) {
-        for (int c = 0; c < ctl::kControlCount; ++c) m_track[c].turnaround();
         m_loopSteps = m_pendingLoopSteps;
     }
     const int64_t loopTicks = static_cast<int64_t>(m_loopSteps) * ctl::kTicksPerStep;

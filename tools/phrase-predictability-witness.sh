@@ -261,13 +261,14 @@ else:
     body = msr.group(1)
     for label, rx in [
         ("clears valid_[]", r'valid_\[i\]\s*=\s*false;'),
-        ("clears persistent_", r'persistent_\s*=\s*false;'),
         ("seeds hold_=value", r'hold_\s*=\s*value;'),
         ("sets holdValid_", r'holdValid_\s*=\s*true;'),
         ("sets touched_", r'touched_\s*=\s*true;'),
     ]:
         if not re.search(rx, body):
             complain("FIX (j) startRecording body drift: %s missing" % label)
+    if re.search(r'persistent_', body):
+        complain("FIX (j) startRecording still references the removed persistent_ state")
 
 for label, rx, rel in [
     ("user channel MIN = 1", r'extern constexpr uint8_t MIDI_USER_CHANNEL_MIN = 1;', IOH),
@@ -309,7 +310,7 @@ if sweepCallSiteCount != 3:
 for label, rx, rel in [
     ("fill writes m_fillMark[step] = MARK_ADD", r'm_fillMark\[step\] = MARK_ADD;', BE),
     ("unfill writes m_fillMark[step] = MARK_REMOVE", r'm_fillMark\[step\] = MARK_REMOVE;', BE),
-    ("turnaround gates on min(current,pending)", r'pendTicks < curTicks \? pendTicks : curTicks', BE),
+    ("loop turnaround gates on min(current,pending)", r'pendTicks < curTicks \? pendTicks : curTicks', BE),
     ("clearFill resets the whole fixed-size array", r'for \(FillMark& mark : m_fillMark\) mark = MARK_NONE;', BE),
     ("resetAll calls clearFill", r'void BassEngine::resetAll\(\) \{\s*stop\(\);\s*clearFill\(\);', BE),
     ("m_fillMark is sized by ctl::kLoopSteps", r'FillMark m_fillMark\[ctl::kLoopSteps\] = \{\};', BEH),

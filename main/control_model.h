@@ -60,11 +60,8 @@ public:
 
     float valueAt(int step, float liveValue);
 
-    void turnaround();
-
     void clear();
 
-    bool persistent() const { return persistent_; }
     bool hasRecordedStep(int step) const;
 
 private:
@@ -74,7 +71,6 @@ private:
     float hold_       = 0.0f;
     bool  holdValid_  = false;
     bool  touched_    = false;
-    bool  persistent_ = false;
 };
 
 }

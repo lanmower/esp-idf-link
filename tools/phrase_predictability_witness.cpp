@@ -1121,10 +1121,8 @@ static void checkShippedFixRegressions() {
         u.setTouched(true);
         for (int s = 0; s < 8; ++s) u.valueAt(s, 0.9f);
         u.setTouched(false);
-        u.turnaround();
-        CHECK("SHIPPED (j) a prior recording existed", u.persistent());
+        CHECK("SHIPPED (j) a prior recording existed", u.hasRecordedStep(3));
         u.startRecording(0.7f);
-        CHECK("SHIPPED (j) startRecording clears persistence", !u.persistent());
         CHECK("SHIPPED (j) startRecording clears prior recorded steps", !u.hasRecordedStep(3));
         CHECK("SHIPPED (j) startRecording marks the track touched", u.touched());
         u.setTouched(false);
@@ -1347,8 +1345,7 @@ static void checkLoopTrack() {
     t.setTouched(true);
     for (int s = 0; s < 8; s++) t.valueAt(s, 0.9f);
     t.setTouched(false);
-    t.turnaround();
-    CHECK("SHIPPED LoopTrack first recording is persistent", t.persistent());
+    CHECK("SHIPPED LoopTrack first recording replays its value", t.valueAt(3, 0.25f) == 0.9f);
     CHECK("SHIPPED LoopTrack recorded step 3", t.hasRecordedStep(3));
 
     t.setTouched(true);
@@ -1366,9 +1363,7 @@ static void checkLoopTrack() {
     CHECK_EQD("SHIPPED recorded step 2 replays its value, not the fallback",
               t.valueAt(2, 0.25f), 0.4);
 
-    t.turnaround();
     t.clear();
-    CHECK("SHIPPED clear() removes persistence", !t.persistent());
     CHECK_EQD("SHIPPED clear() returns step 2 to baseline 0.25", t.valueAt(2, 0.9f), 0.25);
     CHECK("SHIPPED clear() removes all recorded steps", !t.hasRecordedStep(2));
 }
@@ -1413,7 +1408,8 @@ static void checkFillReset() {
     bool baselineOk = true;
     for (int c = 0; c < ctl::kControlCount; c++) {
         if (std::fabs(e.m_live[c] - e.m_track[c].baseline()) > 1e-6f) baselineOk = false;
-        if (e.m_track[c].persistent()) baselineOk = false;
+        for (int s = 0; s < ctl::kLoopSteps; s++)
+            if (e.m_track[c].hasRecordedStep(s)) baselineOk = false;
     }
     CHECK("SHIPPED resetAll returns every setting to its baseline (no recording)", baselineOk);
     CHECK("SHIPPED resetAll stops the engine", !e.isActive());
