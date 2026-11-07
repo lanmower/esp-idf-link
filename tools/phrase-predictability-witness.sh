@@ -122,6 +122,8 @@ FORMULA = [
     ("detectQuantumBoundary phrase phase", LS, r'info\.phaseWithinPhrase\s*=\s*state\.phaseAtTime\(time,\s*PHRASE_BEATS\);', True),
     ("detectQuantumBoundary sessionBeat q=16", LS, r'info\.sessionBeat\s*=\s*state\.beatAtTime\(time,\s*LINK_QUANTUM\);', True),
     ("detectQuantumBoundary crossed=true", LS, r'info\.crossedPhraseBoundary\s*=\s*true;', True),
+    ("phrase boundary monotonic guard", LS, r'stepPhraseBoundary\(', True),
+    ("OLD direction-blind phrase comparison ABSENT", LS, r'info\.currentPhraseNumber\s*!=\s*s_last_phrase_number', False),
     ("Phase.hpp phase() :34", PHASE, r'inline Beats phase\(const Beats beats, const Beats quantum\)', True),
     ("Phase.hpp quantumBins :45", PHASE, r'\(llabs\(beats\.microBeats\(\)\) \+ quantumMicros\) / quantumMicros', True),
     ("Phase.hpp nextPhaseMatch() :54", PHASE, r'inline Beats nextPhaseMatch\(const Beats x, const Beats target, const Beats quantum\)', True),

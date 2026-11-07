@@ -157,3 +157,6 @@ jobs:
 
       - name: Real Link header witness
         run: bash tools/link-header-witness.sh
+
+      - name: Phrase boundary guard witness
+        run: bash tools/phrase-boundary-guard-witness.sh

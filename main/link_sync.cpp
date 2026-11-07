@@ -14,6 +14,7 @@
 #include "esp_system.h"
 #include "wifi_config.h"
 #include "ltmp_request.h"
+#include "phrase_boundary_guard.h"
 
 extern const uint8_t MIDI_USER_CHANNEL_MIN;
 extern const uint8_t MIDI_USER_CHANNEL_MAX;
@@ -339,16 +340,14 @@ QuantumInfo detectQuantumBoundary(const ableton::Link::SessionState& state,
         info.crossedQuantumBoundary = false;
     }
 
-    if (!s_phrase_baseline_captured) {
-        s_phrase_baseline_captured = true;
-        s_last_phrase_number = info.currentPhraseNumber;
-        info.crossedPhraseBoundary = false;
-    } else if (info.currentPhraseNumber != s_last_phrase_number) {
-        s_last_phrase_number = info.currentPhraseNumber;
+    const PhraseBoundaryStep phraseStep = stepPhraseBoundary(
+        s_phrase_baseline_captured, s_last_phrase_number, info.currentPhraseNumber);
+    s_phrase_baseline_captured = true;
+    s_last_phrase_number = phraseStep.lastPhraseNumber;
+    info.crossedPhraseBoundary = false;
+    if (phraseStep.crossed) {
         info.crossedPhraseBoundary = true;
         ESP_LOGI(TAG_LINK, "Phrase boundary %d, beat %.2f", info.currentPhraseNumber, info.sessionBeat);
-    } else {
-        info.crossedPhraseBoundary = false;
     }
 
     return info;
