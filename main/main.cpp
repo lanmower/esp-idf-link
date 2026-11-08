@@ -9,6 +9,7 @@
 #include "network_midi.h"
 #include "wifi_config.h"
 #include "esp_log.h"
+#include <stdarg.h>
 #include <stdio.h>
 #include "esp_timer.h"
 #include "freertos/task.h"
@@ -24,6 +25,63 @@ const uint64_t DOUBLE_TAP_TIME_MS = 300;
 const uint64_t HOLD_TIME_MS       = 200;
 
 std::unique_ptr<ableton::Link> g_link;
+
+static constexpr size_t kLogRingBytes = 8192;
+static char s_log_ring[kLogRingBytes];
+static size_t s_log_head = 0;
+static size_t s_log_tail = 0;
+static portMUX_TYPE s_log_mux = portMUX_INITIALIZER_UNLOCKED;
+static TaskHandle_t s_log_drain_task = nullptr;
+
+static int async_log_vprintf(const char* format, va_list args) {
+    char line[320];
+    const int written = vsnprintf(line, sizeof line, format, args);
+    if (written <= 0) {
+        return written;
+    }
+    const size_t length = static_cast<size_t>(written) < sizeof line
+                              ? static_cast<size_t>(written) : sizeof line - 1;
+    portENTER_CRITICAL(&s_log_mux);
+    for (size_t i = 0; i < length; ++i) {
+        const size_t next = (s_log_head + 1) % kLogRingBytes;
+        if (next == s_log_tail) {
+            break;
+        }
+        s_log_ring[s_log_head] = line[i];
+        s_log_head = next;
+    }
+    portEXIT_CRITICAL(&s_log_mux);
+    if (s_log_drain_task != nullptr) {
+        xTaskNotifyGive(s_log_drain_task);
+    }
+    return written;
+}
+
+static void log_drain_task_run(void*) {
+    char chunk[256];
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
+        for (;;) {
+            size_t count = 0;
+            portENTER_CRITICAL(&s_log_mux);
+            while (s_log_tail != s_log_head && count < sizeof chunk) {
+                chunk[count++] = s_log_ring[s_log_tail];
+                s_log_tail = (s_log_tail + 1) % kLogRingBytes;
+            }
+            portEXIT_CRITICAL(&s_log_mux);
+            if (count == 0) {
+                break;
+            }
+            fwrite(chunk, 1, count, stdout);
+            fflush(stdout);
+        }
+    }
+}
+
+static void log_async_init() {
+    xTaskCreate(log_drain_task_run, "log_drain", 3072, nullptr, 2, &s_log_drain_task);
+    esp_log_set_vprintf(async_log_vprintf);
+}
 
 void tickTask(void *userParam) {
     init_uart_midi();
@@ -150,6 +208,7 @@ static bool join_ticker_during_hold(uint32_t hold_ms) {
 }
 
 extern "C" void app_main() {
+    log_async_init();
     printf("\n===== TICKER BOOT =====\n");
 
     ESP_ERROR_CHECK(nvs_flash_init());
