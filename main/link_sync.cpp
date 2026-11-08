@@ -551,6 +551,99 @@ void link_service_clock(int64_t nowUs) {
     }
 }
 
+struct LinkDiagSnapshot {
+    int peers;
+    double tempo;
+    double beat;
+};
+
+static void link_diag_dump(const LinkDiagSnapshot& snap) {
+    uint32_t sip = g_link_scan_last_ip;
+    ESP_LOGI(TAG_LINK, "Link diag: scanIP=%u.%u.%u.%u gw(try=%u ok=%u fail=%u) send-hook=%u dst=%u.%u.%u.%u:%u peers=%d bpm=%.2f beat=%.2f",
+             sip & 0xff, (sip >> 8) & 0xff, (sip >> 16) & 0xff, (sip >> 24) & 0xff,
+             g_link_gw_init_attempts, g_link_gw_init_ok, g_link_gw_init_fail,
+             g_link_send_hook_calls,
+             (g_link_send_last_dstip >> 24) & 0xff, (g_link_send_last_dstip >> 16) & 0xff,
+             (g_link_send_last_dstip >> 8) & 0xff, g_link_send_last_dstip & 0xff,
+             g_link_send_last_dport,
+             snap.peers, snap.tempo, snap.beat);
+    const MetroStats ms = metro_stats();
+    ESP_LOGI(TAG_LINK, "Metro: fired=%u late last=%lldus worst=%lldus mean=%.0fus rms=%.0fus",
+             (unsigned)ms.fired, (long long)ms.last, (long long)ms.worst, ms.mean, ms.rms);
+    ESP_LOGI(TAG_LINK, "Link rx: total=%u bad=%u alive=%u resp=%u bye=%u unk=%u self=%u grp=%u ok=%u fail=%u",
+             g_link_rx_total, g_link_rx_badmagic, g_link_rx_alive, g_link_rx_response,
+             g_link_rx_byebye, g_link_rx_unknown, g_link_rx_self, g_link_rx_group,
+             g_link_rx_state_ok, g_link_rx_state_fail);
+    ESP_LOGI(TAG_LINK, "Link rx last: %u.%u.%u.%u:%u len=%u type=0x%x alivesrc=%u.%u.%u.%u:%u err=%s",
+             (g_link_rx_last_ip >> 24) & 0xff, (g_link_rx_last_ip >> 16) & 0xff,
+             (g_link_rx_last_ip >> 8) & 0xff, g_link_rx_last_ip & 0xff,
+             g_link_rx_last_port, g_link_rx_last_len, g_link_rx_last_type,
+             (g_link_rx_alive_ip >> 24) & 0xff, (g_link_rx_alive_ip >> 16) & 0xff,
+             (g_link_rx_alive_ip >> 8) & 0xff, g_link_rx_alive_ip & 0xff,
+             g_link_rx_alive_port, g_link_rx_fail_msg);
+    ESP_LOGI(TAG_LINK, "Link msr: start=%u to=%u.%u.%u.%u:%u rx=%u type=%u len=%u match=%u mism=%u parse=%u fin=%u fail=%u",
+             g_link_msr_start,
+             (g_link_msr_start_ip >> 24) & 0xff, (g_link_msr_start_ip >> 16) & 0xff,
+             (g_link_msr_start_ip >> 8) & 0xff, g_link_msr_start_ip & 0xff,
+             g_link_msr_start_port,
+             g_link_msr_rx, g_link_msr_rx_last_type, g_link_msr_rx_last_len,
+             g_link_msr_match, g_link_msr_mismatch, g_link_msr_parsefail,
+             g_link_msr_finish, g_link_msr_fail);
+    ESP_LOGI(TAG_LINK, "Link ping: rx=%u last=%u.%u.%u.%u:%u type=%u len=%u pongtx=%u fail=%u to=%u.%u.%u.%u:%u",
+             g_link_ping_rx,
+             (g_link_ping_rx_ip >> 24) & 0xff, (g_link_ping_rx_ip >> 16) & 0xff,
+             (g_link_ping_rx_ip >> 8) & 0xff, g_link_ping_rx_ip & 0xff,
+             g_link_ping_rx_port, g_link_ping_rx_last_type, g_link_ping_rx_last_len,
+             g_link_pong_tx, g_link_pong_tx_fail,
+             (g_link_pong_tx_ip >> 24) & 0xff, (g_link_pong_tx_ip >> 16) & 0xff,
+             (g_link_pong_tx_ip >> 8) & 0xff, g_link_pong_tx_ip & 0xff,
+             g_link_pong_tx_port);
+    ESP_LOGI(TAG_LINK, "Link msr2: pingtx=%u pingfail=%u rtt(n=%u last=%uus max=%uus) pts=%u nodata=%u failpts(last=%u max=%u) pongerr=%s",
+             g_link_msr_pings, g_link_msr_ping_fail,
+             g_link_msr_rtt_count, g_link_msr_rtt_last, g_link_msr_rtt_max,
+             g_link_msr_datapoints, g_link_msr_nodata,
+             g_link_msr_fail_pts_last, g_link_msr_fail_pts_max,
+             g_link_pong_fail_msg);
+    ESP_LOGI(TAG_LINK, "Link sess: self=%08x%08x peer=%08x%08x peer_mep=%u.%u.%u.%u:%u",
+             (unsigned)g_link_self_sess_hi, (unsigned)g_link_self_sess_lo,
+             (unsigned)g_link_peer_sess_hi, (unsigned)g_link_peer_sess_lo,
+             (g_link_peer_mep_ip >> 24) & 0xff, (g_link_peer_mep_ip >> 16) & 0xff,
+             (g_link_peer_mep_ip >> 8) & 0xff, g_link_peer_mep_ip & 0xff,
+             g_link_peer_mep_port);
+    ESP_LOGI(TAG_LINK, "Link offlink: drop=%u last=%u.%u.%u.%u:%u",
+             g_link_peer_mep_offlink,
+             (g_link_peer_mep_offlink_ip >> 24) & 0xff, (g_link_peer_mep_offlink_ip >> 16) & 0xff,
+             (g_link_peer_mep_offlink_ip >> 8) & 0xff, g_link_peer_mep_offlink_ip & 0xff,
+             g_link_peer_mep_offlink_port);
+    ESP_LOGI(TAG_LINK, "Link send: last=%u.%u.%u.%u:%u mc=%u mc20808=%u uc=%u ok=%u okretry=%u fail=%u giveup=%u errno=%u heap=%u min=%u blk=%u",
+             (g_link_send_dst_ip >> 24) & 0xff, (g_link_send_dst_ip >> 16) & 0xff,
+             (g_link_send_dst_ip >> 8) & 0xff, g_link_send_dst_ip & 0xff,
+             g_link_send_dst_port,
+             g_link_send_mc, g_link_send_mc_20808, g_link_send_uc,
+             g_link_send_ok_first, g_link_send_ok_retry, g_link_send_fail_attempt,
+             g_link_send_giveup, g_link_send_errno,
+             (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+}
+
+static LinkDiagSnapshot s_diag_snapshot;
+static TaskHandle_t s_diag_task = nullptr;
+
+static void link_diag_task_run(void*) {
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        link_diag_dump(s_diag_snapshot);
+    }
+}
+
+static void link_diag_request(int peers, double tempo, double beat) {
+    s_diag_snapshot = LinkDiagSnapshot{peers, tempo, beat};
+    if (s_diag_task == nullptr) {
+        xTaskCreate(link_diag_task_run, "link_diag", 4096, nullptr, 2, &s_diag_task);
+    }
+    xTaskNotifyGive(s_diag_task);
+}
+
 void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force_start,
                         bool& was_playing,
                         const ableton::Link::SessionState& state, const std::chrono::microseconds& time)
@@ -676,75 +769,10 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     extern volatile uint32_t g_link_send_giveup;
     extern volatile uint32_t g_link_send_errno;
     static int64_t s_hookLogAt = 0;
-    int64_t nowH = esp_timer_get_time();
+    const int64_t nowH = esp_timer_get_time();
     if (nowH - s_hookLogAt > 5000000) {
         s_hookLogAt = nowH;
-        uint32_t sip = g_link_scan_last_ip;
-        ESP_LOGI(TAG_LINK, "Link diag: scanIP=%u.%u.%u.%u gw(try=%u ok=%u fail=%u) send-hook=%u dst=%u.%u.%u.%u:%u peers=%d bpm=%.2f beat=%.2f",
-                 sip & 0xff, (sip >> 8) & 0xff, (sip >> 16) & 0xff, (sip >> 24) & 0xff,
-                 g_link_gw_init_attempts, g_link_gw_init_ok, g_link_gw_init_fail,
-                 g_link_send_hook_calls,
-                 (g_link_send_last_dstip >> 24) & 0xff, (g_link_send_last_dstip >> 16) & 0xff,
-                 (g_link_send_last_dstip >> 8) & 0xff, g_link_send_last_dstip & 0xff,
-                 g_link_send_last_dport,
-                 g_link->numPeers(), state.tempo(), state.beatAtTime(time, LINK_QUANTUM));
-        const MetroStats ms = metro_stats();
-        ESP_LOGI(TAG_LINK, "Metro: fired=%u late last=%lldus worst=%lldus mean=%.0fus rms=%.0fus",
-                 (unsigned)ms.fired, (long long)ms.last, (long long)ms.worst, ms.mean, ms.rms);
-        ESP_LOGI(TAG_LINK, "Link rx: total=%u bad=%u alive=%u resp=%u bye=%u unk=%u self=%u grp=%u ok=%u fail=%u",
-                 g_link_rx_total, g_link_rx_badmagic, g_link_rx_alive, g_link_rx_response,
-                 g_link_rx_byebye, g_link_rx_unknown, g_link_rx_self, g_link_rx_group,
-                 g_link_rx_state_ok, g_link_rx_state_fail);
-        ESP_LOGI(TAG_LINK, "Link rx last: %u.%u.%u.%u:%u len=%u type=0x%x alivesrc=%u.%u.%u.%u:%u err=%s",
-                 (g_link_rx_last_ip >> 24) & 0xff, (g_link_rx_last_ip >> 16) & 0xff,
-                 (g_link_rx_last_ip >> 8) & 0xff, g_link_rx_last_ip & 0xff,
-                 g_link_rx_last_port, g_link_rx_last_len, g_link_rx_last_type,
-                 (g_link_rx_alive_ip >> 24) & 0xff, (g_link_rx_alive_ip >> 16) & 0xff,
-                 (g_link_rx_alive_ip >> 8) & 0xff, g_link_rx_alive_ip & 0xff,
-                 g_link_rx_alive_port, g_link_rx_fail_msg);
-        ESP_LOGI(TAG_LINK, "Link msr: start=%u to=%u.%u.%u.%u:%u rx=%u type=%u len=%u match=%u mism=%u parse=%u fin=%u fail=%u",
-                 g_link_msr_start,
-                 (g_link_msr_start_ip >> 24) & 0xff, (g_link_msr_start_ip >> 16) & 0xff,
-                 (g_link_msr_start_ip >> 8) & 0xff, g_link_msr_start_ip & 0xff,
-                 g_link_msr_start_port,
-                 g_link_msr_rx, g_link_msr_rx_last_type, g_link_msr_rx_last_len,
-                 g_link_msr_match, g_link_msr_mismatch, g_link_msr_parsefail,
-                 g_link_msr_finish, g_link_msr_fail);
-        ESP_LOGI(TAG_LINK, "Link ping: rx=%u last=%u.%u.%u.%u:%u type=%u len=%u pongtx=%u fail=%u to=%u.%u.%u.%u:%u",
-                 g_link_ping_rx,
-                 (g_link_ping_rx_ip >> 24) & 0xff, (g_link_ping_rx_ip >> 16) & 0xff,
-                 (g_link_ping_rx_ip >> 8) & 0xff, g_link_ping_rx_ip & 0xff,
-                 g_link_ping_rx_port, g_link_ping_rx_last_type, g_link_ping_rx_last_len,
-                 g_link_pong_tx, g_link_pong_tx_fail,
-                 (g_link_pong_tx_ip >> 24) & 0xff, (g_link_pong_tx_ip >> 16) & 0xff,
-                 (g_link_pong_tx_ip >> 8) & 0xff, g_link_pong_tx_ip & 0xff,
-                 g_link_pong_tx_port);
-        ESP_LOGI(TAG_LINK, "Link msr2: pingtx=%u pingfail=%u rtt(n=%u last=%uus max=%uus) pts=%u nodata=%u failpts(last=%u max=%u) pongerr=%s",
-                 g_link_msr_pings, g_link_msr_ping_fail,
-                 g_link_msr_rtt_count, g_link_msr_rtt_last, g_link_msr_rtt_max,
-                 g_link_msr_datapoints, g_link_msr_nodata,
-                 g_link_msr_fail_pts_last, g_link_msr_fail_pts_max,
-                 g_link_pong_fail_msg);
-        ESP_LOGI(TAG_LINK, "Link sess: self=%08x%08x peer=%08x%08x peer_mep=%u.%u.%u.%u:%u",
-                 (unsigned)g_link_self_sess_hi, (unsigned)g_link_self_sess_lo,
-                 (unsigned)g_link_peer_sess_hi, (unsigned)g_link_peer_sess_lo,
-                 (g_link_peer_mep_ip >> 24) & 0xff, (g_link_peer_mep_ip >> 16) & 0xff,
-                 (g_link_peer_mep_ip >> 8) & 0xff, g_link_peer_mep_ip & 0xff,
-                 g_link_peer_mep_port);
-        ESP_LOGI(TAG_LINK, "Link offlink: drop=%u last=%u.%u.%u.%u:%u",
-                 g_link_peer_mep_offlink,
-                 (g_link_peer_mep_offlink_ip >> 24) & 0xff, (g_link_peer_mep_offlink_ip >> 16) & 0xff,
-                 (g_link_peer_mep_offlink_ip >> 8) & 0xff, g_link_peer_mep_offlink_ip & 0xff,
-                 g_link_peer_mep_offlink_port);
-        ESP_LOGI(TAG_LINK, "Link send: last=%u.%u.%u.%u:%u mc=%u mc20808=%u uc=%u ok=%u okretry=%u fail=%u giveup=%u errno=%u heap=%u min=%u blk=%u",
-                 (g_link_send_dst_ip >> 24) & 0xff, (g_link_send_dst_ip >> 16) & 0xff,
-                 (g_link_send_dst_ip >> 8) & 0xff, g_link_send_dst_ip & 0xff,
-                 g_link_send_dst_port,
-                 g_link_send_mc, g_link_send_mc_20808, g_link_send_uc,
-                 g_link_send_ok_first, g_link_send_ok_retry, g_link_send_fail_attempt,
-                 g_link_send_giveup, g_link_send_errno,
-                 (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(),
-                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+        link_diag_request(static_cast<int>(g_link->numPeers()), state.tempo(), state.beatAtTime(time, LINK_QUANTUM));
     }
 
     QuantumInfo quantumInfo = detectQuantumBoundary(state, time);
