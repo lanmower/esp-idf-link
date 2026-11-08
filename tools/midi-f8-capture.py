@@ -104,11 +104,15 @@ def main():
     parser.add_argument('--bpm', type=float, default=120.0)
     parser.add_argument('--out', required=True)
     parser.add_argument('--floor', type=int, default=0)
+    parser.add_argument('--raw', default=None)
     args = parser.parse_args()
     result = {}
     if args.floor:
         result['floor'] = floor(args.floor, 60e9 / (args.bpm * 24))
     events = capture(args.dev, args.seconds)
+    if args.raw:
+        with open(args.raw, 'w', encoding='utf-8') as fh:
+            json.dump([[t, name] for t, name, _ in events], fh)
     result['capture'] = analyse(events, args.seconds, args.bpm)
     with open(args.out, 'w', encoding='utf-8') as fh:
         json.dump(result, fh, indent=1)
