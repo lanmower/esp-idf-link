@@ -270,7 +270,6 @@ static bool s_phrase_baseline_captured = false;
 static gptimer_handle_t s_link_gptimer = nullptr;
 static esp_timer_handle_t s_buzzer_off_timer = nullptr;
 
-static esp_timer_handle_t s_evt_timer = nullptr;
 static volatile bool      s_evt_armed   = false;
 static volatile bool      s_evt_enabled = false;
 static volatile int64_t   s_evt_due_us   = 0;
@@ -402,10 +401,6 @@ void init_link_timer(TaskHandle_t task_handle) {
     buzzer_timer_args.name = "buzzer_off";
     ESP_ERROR_CHECK(esp_timer_create(&buzzer_timer_args, &s_buzzer_off_timer));
 
-    esp_timer_create_args_t evt_timer_args = {};
-    evt_timer_args.callback = link_event_cb;
-    evt_timer_args.name = "link_evt";
-    ESP_ERROR_CHECK(esp_timer_create(&evt_timer_args, &s_evt_timer));
 }
 
 static void send_midi_bytes(const uint8_t* buf, size_t len) {
@@ -458,16 +453,13 @@ static constexpr int64_t METRONOME_FLASH_BEAT_US = 10000;
 static constexpr int64_t METRONOME_FLASH_BAR_US = 25000;
 static int64_t s_clock_lead_us = 0;
 
+static int64_t s_evt_fire_us = 0;
+
 static void arm_event_timer(int64_t dueEspUs) {
     const int64_t leadUs = MIDI_CLOCK_LEAD_COMPENSATION ? s_clock_lead_us + MIDI_BYTE_TIME_US : 0;
-    int64_t delta = dueEspUs - leadUs - esp_timer_get_time();
-    if (delta < 0) delta = 0;
     s_evt_due_us = dueEspUs;
+    s_evt_fire_us = dueEspUs - leadUs;
     s_evt_armed  = true;
-    esp_timer_stop(s_evt_timer);
-    if (esp_timer_start_once(s_evt_timer, static_cast<uint64_t>(delta)) != ESP_OK) {
-        s_evt_armed = false;
-    }
 }
 
 static void schedule_next_event(const ableton::Link::SessionState& state) {
@@ -533,6 +525,12 @@ static void link_event_cb(void*) {
     } else {
         s_next_pulse_valid = false;
         set_buzzer_state(false);
+    }
+}
+
+void link_service_clock(int64_t nowUs) {
+    if (s_evt_armed && nowUs >= s_evt_fire_us) {
+        link_event_cb(nullptr);
     }
 }
 
@@ -769,7 +767,6 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
             schedule_next_event(state);
             ESP_LOGI(TAG_LINK, "Timeline events armed at beat %.1f", sessionBeat);
         } else {
-            esp_timer_stop(s_evt_timer);
             set_buzzer_state(false);
             ESP_LOGI(TAG_LINK, "Timeline events stopped");
         }

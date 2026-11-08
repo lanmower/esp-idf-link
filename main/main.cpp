@@ -68,6 +68,7 @@ void tickTask(void *userParam) {
         if (xTaskNotifyWait(0, ULONG_MAX, &ulNotifiedValue, pdMS_TO_TICKS(20)) != pdTRUE)
             continue;
 
+        link_service_clock(esp_timer_get_time());
         midi_bulk_pump();
         if (link_consume_session_reset())
             bounce_link_session("LRST");
@@ -178,6 +179,6 @@ extern "C" void app_main() {
     wifi_start_supervisor("ticker");
 
     network_midi_init();
-    xTaskCreate(tickTask, "tickTask", 10240, nullptr, 15, nullptr);
+    xTaskCreatePinnedToCore(tickTask, "tickTask", 10240, nullptr, 24, nullptr, 1);
     ESP_LOGI(TAG, "app_main done, tickTask running");
 }
