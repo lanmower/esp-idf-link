@@ -34,7 +34,7 @@ def probe(args):
     asyncio.set_event_loop(loop)
     link = aalink.Link(args.bpm, loop)
     link.enabled = True
-    fd = os.open(args.dev, os.O_RDONLY)
+    fd = None if args.no_midi else os.open(args.dev, os.O_RDONLY)
     samples = []
     f8 = []
     stop = threading.Event()
@@ -60,7 +60,8 @@ def probe(args):
         stop.set()
         if not args.no_midi:
             thread.join(timeout=2)
-        os.close(fd)
+        if fd is not None:
+            os.close(fd)
     return {'samples': samples, 'f8': list(f8), 'seconds': args.seconds}
 
 
