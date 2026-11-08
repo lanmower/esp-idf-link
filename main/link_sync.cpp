@@ -141,6 +141,23 @@ static void broadcast_ticker_timeline(const ableton::Link::SessionState& state,
     }
 }
 
+struct BroadcastCost { const char* name; int64_t maxUs; int64_t windowStartUs; };
+static BroadcastCost s_lclk_cost = {"LCLK", 0, 0};
+static BroadcastCost s_ttmp_cost = {"TTMP", 0, 0};
+
+static void report_broadcast_cost(BroadcastCost& cost, int64_t durationUs) {
+    const int64_t nowUs = esp_timer_get_time();
+    if (durationUs > cost.maxUs) cost.maxUs = durationUs;
+    if (nowUs - cost.windowStartUs >= 30000000) {
+        ESP_LOGI(TAG_LINK, "%s broadcast max %lld us over 30 s", cost.name, (long long)cost.maxUs);
+        cost.maxUs = 0;
+        cost.windowStartUs = nowUs;
+    }
+    if (durationUs > 1000) {
+        ESP_LOGW(TAG_LINK, "%s broadcast took %lld us", cost.name, (long long)durationUs);
+    }
+}
+
 #define LINK_TEMPO_PORT 20811
 static LtmpRequest s_ltmpRequest;
 static LtmpGate s_ltmpGate;
@@ -542,8 +559,14 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     static bool s_transport_running = false;
     static int64_t s_peer_lost_at_us = 0;
 
+    const int64_t lclkT0 = esp_timer_get_time();
     broadcast_link_clock(time.count());
+    const int64_t lclkDt = esp_timer_get_time() - lclkT0;
+    report_broadcast_cost(s_lclk_cost, lclkDt);
+    const int64_t ttmpT0 = esp_timer_get_time();
     broadcast_ticker_timeline(state, time.count());
+    const int64_t ttmpDt = esp_timer_get_time() - ttmpT0;
+    report_broadcast_cost(s_ttmp_cost, ttmpDt);
 
     if (g_link) {
         LtmpRequest req = ltmpTakeSnapshot(s_ltmpRequest, s_ltmpGate);
