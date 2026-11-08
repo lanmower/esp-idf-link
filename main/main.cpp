@@ -63,29 +63,51 @@ void tickTask(void *userParam) {
     uint32_t ulNotifiedValue;
     static uint32_t s_input_tick = 0;
     static constexpr uint32_t INPUT_POLL_TICKS = 8;
+    static int64_t s_last_wake_us = 0;
 
     while (true) {
         if (xTaskNotifyWait(0, ULONG_MAX, &ulNotifiedValue, pdMS_TO_TICKS(20)) != pdTRUE)
             continue;
 
-        link_service_clock(esp_timer_get_time());
+        const int64_t wakeUs = esp_timer_get_time();
+        const int64_t wakeGapUs = wakeUs - s_last_wake_us;
+        s_last_wake_us = wakeUs;
+        link_service_clock(wakeUs);
+        const int64_t serviceUs = esp_timer_get_time() - wakeUs;
         midi_bulk_pump();
         if (link_consume_session_reset())
             bounce_link_session("LRST");
 
+        const int64_t captureT0 = esp_timer_get_time();
         const auto time = g_link->clock().micros();
         const auto state = g_link->captureAppSessionState();
+        const int64_t captureUs = esp_timer_get_time() - captureT0;
 
+        int64_t syncUs = 0;
+        int64_t inputUs = 0;
+        int64_t processUs = 0;
         if (ulNotifiedValue & LINK_TICK_NOTIFY_BIT) {
+            const int64_t syncT0 = esp_timer_get_time();
             handle_link_sync(was_connected, start_wait_time, force_start,
                              was_playing, state, time);
+            syncUs = esp_timer_get_time() - syncT0;
             if (s_input_tick++ % INPUT_POLL_TICKS == 0) {
+                const int64_t inputT0 = esp_timer_get_time();
                 update_input_state(current_input_event);
+                inputUs = esp_timer_get_time() - inputT0;
             } else {
                 current_input_event.timestamp_us = esp_timer_get_time();
                 for (int i = 0; i < NUM_POTS; ++i) current_input_event.pot_moved[i] = false;
             }
+            const int64_t processT0 = esp_timer_get_time();
             process_state_event(current_input_event, state, time);
+            processUs = esp_timer_get_time() - processT0;
+        }
+        const int64_t totalUs = esp_timer_get_time() - wakeUs;
+        if (totalUs > 20000 || wakeGapUs > 20000) {
+            ESP_LOGW("TICK", "wake_gap %lld service %lld capture %lld sync %lld input %lld process %lld total %lld us",
+                     (long long)wakeGapUs, (long long)serviceUs, (long long)captureUs, (long long)syncUs,
+                     (long long)inputUs, (long long)processUs, (long long)totalUs);
         }
     }
 }
