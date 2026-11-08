@@ -149,12 +149,12 @@ static void report_broadcast_cost(BroadcastCost& cost, int64_t durationUs) {
     const int64_t nowUs = esp_timer_get_time();
     if (durationUs > cost.maxUs) cost.maxUs = durationUs;
     if (nowUs - cost.windowStartUs >= 30000000) {
-        ESP_LOGI(TAG_LINK, "%s broadcast max %lld us over 30 s", cost.name, (long long)cost.maxUs);
+        ESP_LOGI("LINK_SYNC", "%s broadcast max %lld us over 30 s", cost.name, (long long)cost.maxUs);
         cost.maxUs = 0;
         cost.windowStartUs = nowUs;
     }
     if (durationUs > 1000) {
-        ESP_LOGW(TAG_LINK, "%s broadcast took %lld us", cost.name, (long long)durationUs);
+        ESP_LOGW("LINK_SYNC", "%s broadcast took %lld us", cost.name, (long long)durationUs);
     }
 }
 
