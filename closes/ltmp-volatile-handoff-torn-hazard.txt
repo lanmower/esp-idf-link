@@ -1,0 +1,1 @@
+ltmp-volatile-handoff-torn-hazard resolved f1f379f latched LtmpRequest/LtmpGate snapshot in main/ltmp_request.h; main/link_sync.cpp ltmpTakeSnapshot 1 ltmpPublish 1; "ltmp request witness: 15 checks, 0 failed"; seven host witnesses all exit 0; CI run 42179192449 "success 6 total 6". Acceptance latched-snapshot branch met, no device action. 2026-11-08T04:30:03.090Z
