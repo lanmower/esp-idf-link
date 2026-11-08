@@ -210,3 +210,11 @@ Verified against current main/; facts formerly carried as code comments.
 - prd_add/prd_resolve: fields FLAT (nested payload body overflowed pre-0.2.267). prd_resolve REQUIRES bound witness: witness_dispatch_id, OR all four witness_exit_code (0), witness_output_sha256, witness_output_path (project-relative, re-hashed/re-read), witness_ts (RFC 3339); wants resolution, not reason.
 - git_show rev/stat/path (paged via offset/next_offset); git_log limit/range/path; bash/exec_js script in body/raw_body; session_id mandatory on every call.
 
+
+## Phase lock at 174 BPM (2026-11-08)
+- Measure: midi-f8-capture.py (raw F8, own process) + link-phase-probe.py --no-midi (aalink, 2 ms) over the same 60 s; analyse: python3 -I tools/link-phase-analyse.py samples.json f8.json. Lateness is taken from the circular beat-fraction centre; the old +-0.5-pulse wrap made a 0.25-pulse cluster read as 5.6 ms stdev. LOCKED = stdev < 1 ms and no 5 s segment-centre step > 0.05 pulse (the first segment is tempo-change acquisition).
+- Host beat residual is <= 0.3 ms over a run; the steps are ESP-side in the F8-to-grid relation: 0.07-0.25 pulse (1-3.5 ms at 174), mostly ~35 s after the tempo change.
+- Lock rate: before 4057302 (no log_drain) 2 of 11 runs LOCKED (00d6708 stdev 526; 8ee1e6a stdev 254), 1 borderline (8ee1e6a stdev 715, acquisition step only). From 4057302 on (HEAD 8f239a1 firmware = 72f2ef1 code) 0 of 8 LOCKED. Not significant (Fisher p ~0.5); not confirmed.
+- Unconfirmed candidate: log_drain (4057302) and link_diag (dc1921e) both at priority 2, equal to the Link task pinned to core 1 (00d6708); equal-priority time-slicing every 10 ms. Candidate fix: priority 1 for both. Not built, not pushed.
+- Stall fix 4057302 holds: HEAD runs show 0 F8 gaps over 20 ms; pre-fix builds show 2-33 gaps, max up to 116 ms.
+- Flash: sudo python3 -m esptool --chip esp32 --port /dev/ttyUSB0 --baud 460800 --before default-reset --after hard-reset write-flash ...; bins from a CI bin commit (HEAD = 8f239a1). Opening the console resets the board.
