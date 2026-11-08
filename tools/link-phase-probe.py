@@ -2,6 +2,7 @@
 import argparse
 import bisect
 import json
+import math
 import os
 import select
 import statistics
@@ -12,6 +13,16 @@ import time
 
 def _us(value):
     return value.total_seconds() * 1e6 if hasattr(value, "total_seconds") else float(value)
+
+
+def wrap(x):
+    return x - math.floor(x + 0.5)
+
+
+def circular_centre(fracs):
+    sin_mean = sum(math.sin(2 * math.pi * f) for f in fracs) / len(fracs)
+    cos_mean = sum(math.cos(2 * math.pi * f) for f in fracs) / len(fracs)
+    return math.atan2(sin_mean, cos_mean) / (2 * math.pi)
 
 
 def reader(fd, f8, stop):
@@ -72,7 +83,7 @@ def analyse(data):
     offsets = sorted(s[1] - s[0] / 1000.0 for s in samples)
     offset = offsets[len(offsets) // 2]
     peers_seen = sorted(set(s[4] for s in samples))
-    late = []
+    fracs = []
     tempos = []
     for m in f8:
         i = bisect.bisect_right(mono, m) - 1
@@ -82,10 +93,10 @@ def analyse(data):
         lf = m / 1000.0 + offset
         tempo = s[3]
         beat_f = s[2] + (lf - s[1]) * tempo / 60e6
-        k = round(beat_f * 24)
-        t_grid = s[1] + (k / 24.0 - s[2]) * 60e6 / tempo
-        late.append(lf - t_grid)
+        fracs.append((beat_f * 24) % 1.0)
         tempos.append(tempo)
+    centre = circular_centre(fracs) if fracs else 0.0
+    late = [wrap(f - centre) * 60e6 / (t * 24) for f, t in zip(fracs, tempos)]
     absolute = sorted(abs(x) for x in late)
     return {
         'f8_count': len(f8),
