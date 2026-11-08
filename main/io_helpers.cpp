@@ -2,6 +2,7 @@
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
 #include "io_helpers.h"
+#include "midi_bulk_queue.h"
 #include <cmath>
 #include <algorithm>
 #include <climits>
@@ -17,6 +18,11 @@ static constexpr int MIDI_LONGEST_BACK_TO_BACK_NRPN_RUN = 7;
 static constexpr int MIDI_UART_TX_BUFFER_BYTES = 256;
 static_assert(MIDI_UART_TX_BUFFER_BYTES >= MIDI_LONGEST_BACK_TO_BACK_NRPN_RUN * MIDI_NRPN_BYTE_COUNT,
               "MIDI_UART_TX_BUFFER_BYTES must hold the longest back-to-back NRPN run, or uart_write_bytes blocks its caller for the whole shift-out at MIDI_DIN_BAUD_RATE");
+static constexpr int MIDI_BULK_QUEUE_BYTES = 512;
+static constexpr int MIDI_BULK_PACE_TICKS = 2;
+static MidiBulkQueue<MIDI_BULK_QUEUE_BYTES> s_bulk_queue;
+static MidiBulkPacer s_bulk_pacer(MIDI_BULK_PACE_TICKS);
+static portMUX_TYPE s_bulk_mux = portMUX_INITIALIZER_UNLOCKED;
 static constexpr int MIDI_CONTROL_CHANGE_CMD = 0xB0;
 extern constexpr uint8_t MIDI_USER_CHANNEL_MIN = 1;
 extern constexpr uint8_t MIDI_USER_CHANNEL_MAX = 16;
@@ -372,10 +378,33 @@ void send_midi_message(const uint8_t *message, size_t size)
         ESP_LOGE("MIDI", "Invalid MIDI message buffer or size");
         return;
     }
-    int bytes_written = uart_write_bytes(MIDI_UART, (const char *)message, size);
-    if (bytes_written != (int)size)
+    midi_bulk_enqueue(message, size);
+}
+
+void midi_bulk_enqueue(const uint8_t *message, size_t size)
+{
+    portENTER_CRITICAL(&s_bulk_mux);
+    const bool accepted = s_bulk_queue.push(message, size);
+    portEXIT_CRITICAL(&s_bulk_mux);
+    if (!accepted)
     {
-        ESP_LOGE("MIDI", "Failed to write all MIDI bytes. Expected %d, wrote %d", size, bytes_written);
+        ESP_LOGE("MIDI", "Bulk MIDI queue full, dropped %d bytes", (int)size);
+    }
+}
+
+void midi_bulk_pump()
+{
+    if (!s_bulk_pacer.onTick())
+    {
+        return;
+    }
+    uint8_t byte = 0;
+    portENTER_CRITICAL(&s_bulk_mux);
+    const bool have = s_bulk_queue.pop(byte);
+    portEXIT_CRITICAL(&s_bulk_mux);
+    if (have)
+    {
+        uart_write_bytes(MIDI_UART, (const char *)&byte, 1);
     }
 }
 

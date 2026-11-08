@@ -25,6 +25,8 @@ bool read_controls(
 void send_midi_message(const uint8_t *message, size_t size);
 void send_midi_cc(uint8_t channel, uint8_t cc_num, uint8_t value);
 void send_midi_nrpn(uint8_t channel, uint8_t nrpn_msb, uint8_t nrpn_lsb, uint8_t value_msb);
+void midi_bulk_enqueue(const uint8_t *message, size_t size);
+void midi_bulk_pump();
 
 void update_input_state(InputEvent& event);
 

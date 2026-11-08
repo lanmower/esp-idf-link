@@ -32,6 +32,7 @@
 #include "types.h"
 
 #define BUZZER GPIO_NUM_13
+#define METRONOME_LED GPIO_NUM_25
 #define LINK_TICK_PERIOD 250
 #define NUM_POTS 2
 #define NUM_TOUCH_PADS 4

@@ -101,7 +101,7 @@ TX_PROBE_PORT 34999). Authoritative table: readme.md ## Network ports.
 MIDI emission: one path, no per-device clock code; bytes are constants in main.h (0xF8 clock, 0xFA start, 0xFC stop, 0xFB continue, 0xF2 SPP, CC123 all-notes-off); MIDI_PULSES_PER_QUARTER_NOTE=24, MIDI_SPP_UNITS_PER_BEAT=4 in link_sync.cpp. SPP + Start/Continue ONLY at the 16-bar boundary; Stop + CC123 on all 16 channels on transport stop and peer loss. SPP counts MIDI beats (sixteenths), 1 Link beat = 4 units, 14-bit LSB first; Start deferred to next phrase boundary; s_transport_running records what gear was last TOLD, not isPlaying().
 
 Anti-drift invariants (ca8f04b): a 24 ppqn slave can't drift in *tempo* (one 24th per F8), only lose *position*; DIN recovery = SPP/Start. Four link_sync.cpp holes fixed: (1) schedule_next_event() re-anchors s_next_pulse both ways (only "behind" was caught, so a backward forceBeatAtTime left it ahead and timeAtBeat()'s future deadline stalled the clock); (2) LTMP phase must RE-ARM (clear s_next_pulse_valid, set s_pending_realign, schedule_next_event()) — since 112e107 tempo-only shape re-arms too; (3) s_pending_realign set whenever the clock becomes enabled, not only 0->1 peer edge (the force_start path streamed F8, never SPP/Start); (4) link_sync_send_boot_panic() (Stop + CC123 x16) once at boot before Link exists.
-Keep SPP at EVERY phrase boundary then Start/Continue (SPP-before-Start mandatory). Bass loop at most 8 beats (2 bars, 32 steps); MIDI phrase 64 beats -> coincide every 8th loop (old "64-bar/256-beat bass phrase, every 4th MIDI phrase" is obsolete). Residual: all MIDI shares one 256-byte UART TX ring buffer, so a realtime byte queues behind bulk data, up to 256 B x 320 us = 82 ms late; doesn't accumulate (pulses absolutely scheduled from timeAtBeat) — jitter not drift, but delays Start. Bigger buffer = worse; do NOT raise MIDI_UART_TX_BUFFER_BYTES; real fix = separate realtime path.
+Keep SPP at EVERY phrase boundary then Start/Continue (SPP-before-Start mandatory). Bass loop at most 8 beats (2 bars, 32 steps); MIDI phrase 64 beats -> coincide every 8th loop (old "64-bar/256-beat bass phrase, every 4th MIDI phrase" is obsolete). MIDI bulk pacing (main/midi_bulk_queue.h, MIDI_BULK_PACE_TICKS=2): NRPN/CC drains one byte per 500 us into the 256 B ring, so F8 (direct, link_sync.cpp send_midi_bytes) waits <=1 byte (320 us). FA/FB/FC/F2 stay ordered behind bulk (SPP-before-Start). Witness: tools/midi-bulk-queue-witness.sh.
 
 ### MIDI DIN compatibility
 
@@ -165,6 +165,7 @@ GPIO from main/main.h — a pin can't be expressed by reading the macro.
 |Pot 1|ADC_CHANNEL_6|34|
 |Pot 2|ADC_CHANNEL_0|39|
 |Buzzer (LEDC)|BUZZER|13|
+|Metronome LED, plain (bar downbeat = longer flash)|METRONOME_LED|25|
 |MIDI UART2 TX / RX|MIDI_TX_PIN / MIDI_RX_PIN|17 / 16|
 
 Touch pads use the legacy driver/touch_pad.h API (IDF also ships touch_sensor); a pad reads LOW

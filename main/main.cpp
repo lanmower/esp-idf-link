@@ -68,6 +68,7 @@ void tickTask(void *userParam) {
         if (xTaskNotifyWait(0, ULONG_MAX, &ulNotifiedValue, pdMS_TO_TICKS(20)) != pdTRUE)
             continue;
 
+        midi_bulk_pump();
         if (link_consume_session_reset())
             bounce_link_session("LRST");
 

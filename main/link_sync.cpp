@@ -15,6 +15,7 @@
 #include "wifi_config.h"
 #include "ltmp_request.h"
 #include "phrase_boundary_guard.h"
+#include "io_helpers.h"
 
 extern const uint8_t MIDI_USER_CHANNEL_MIN;
 extern const uint8_t MIDI_USER_CHANNEL_MAX;
@@ -353,6 +354,12 @@ QuantumInfo detectQuantumBoundary(const ableton::Link::SessionState& state,
     return info;
 }
 
+static esp_timer_handle_t s_led_off_timer = nullptr;
+
+static void metronome_led_off_cb(void*) {
+    gpio_set_level(METRONOME_LED, 0);
+}
+
 void init_link_timer(TaskHandle_t task_handle) {
     gptimer_config_t timer_config = {};
     timer_config.clk_src = GPTIMER_CLK_SRC_APB;
@@ -381,6 +388,15 @@ void init_link_timer(TaskHandle_t task_handle) {
     ESP_ERROR_CHECK(gptimer_start(s_link_gptimer));
     ESP_LOGI(TAG_LINK, "Link GPTimer Initialized (Period: %d us)", LINK_TICK_PERIOD);
 
+    gpio_config_t led_cfg = {};
+    led_cfg.pin_bit_mask = 1ULL << static_cast<int>(METRONOME_LED);
+    led_cfg.mode = GPIO_MODE_OUTPUT;
+    ESP_ERROR_CHECK(gpio_config(&led_cfg));
+    esp_timer_create_args_t led_timer_args = {};
+    led_timer_args.callback = metronome_led_off_cb;
+    led_timer_args.name = "led_off";
+    ESP_ERROR_CHECK(esp_timer_create(&led_timer_args, &s_led_off_timer));
+
     esp_timer_create_args_t buzzer_timer_args = {};
     buzzer_timer_args.callback = buzzer_off_cb;
     buzzer_timer_args.name = "buzzer_off";
@@ -393,7 +409,11 @@ void init_link_timer(TaskHandle_t task_handle) {
 }
 
 static void send_midi_bytes(const uint8_t* buf, size_t len) {
-    uart_write_bytes(MIDI_UART, (const char*)buf, len);
+    if (len == 1 && buf[0] == MIDI_TIMING_CLOCK) {
+        uart_write_bytes(MIDI_UART, (const char*)buf, len);
+        return;
+    }
+    midi_bulk_enqueue(buf, len);
 }
 
 static void send_all_notes_off_all_channels() {
@@ -431,8 +451,16 @@ static void metronome_accent_for_beat(double beat, uint32_t& freq, int& ms) {
     else                 { freq = FREQ_NORMAL; ms = LENGTH_NORMAL; }
 }
 
+static constexpr int64_t MIDI_BYTE_TIME_US = 1000000 * 10 / MIDI_DIN_BAUD_RATE;
+static constexpr int64_t MIDI_CLOCK_LEAD_MAX_US = 1000;
+static constexpr bool MIDI_CLOCK_LEAD_COMPENSATION = true;
+static constexpr int64_t METRONOME_FLASH_BEAT_US = 10000;
+static constexpr int64_t METRONOME_FLASH_BAR_US = 25000;
+static int64_t s_clock_lead_us = 0;
+
 static void arm_event_timer(int64_t dueEspUs) {
-    int64_t delta = dueEspUs - esp_timer_get_time();
+    const int64_t leadUs = MIDI_CLOCK_LEAD_COMPENSATION ? s_clock_lead_us + MIDI_BYTE_TIME_US : 0;
+    int64_t delta = dueEspUs - leadUs - esp_timer_get_time();
     if (delta < 0) delta = 0;
     s_evt_due_us = dueEspUs;
     s_evt_armed  = true;
@@ -478,6 +506,11 @@ static void link_event_cb(void*) {
     s_fire_count++;
     s_fire_late_sum_us += (double)late;
     s_fire_late_sq_us  += (double)late * (double)late;
+    if (MIDI_CLOCK_LEAD_COMPENSATION) {
+        s_clock_lead_us += (late + MIDI_BYTE_TIME_US) / 16;
+        if (s_clock_lead_us < 0) s_clock_lead_us = 0;
+        if (s_clock_lead_us > MIDI_CLOCK_LEAD_MAX_US) s_clock_lead_us = MIDI_CLOCK_LEAD_MAX_US;
+    }
 
     if ((s_next_pulse % MIDI_PULSES_PER_QUARTER_NOTE) == 0) {
         const double beat = (double)s_next_pulse / MIDI_PULSES_PER_QUARTER_NOTE;
@@ -485,6 +518,11 @@ static void link_event_cb(void*) {
             set_buzzer_state(true, s_next_click_freq);
             esp_timer_stop(s_buzzer_off_timer);
             esp_timer_start_once(s_buzzer_off_timer, (uint64_t)s_next_click_ms * 1000);
+            const bool barDownbeat = s_next_click_freq == FREQ_16BEAT;
+            gpio_set_level(METRONOME_LED, 1);
+            esp_timer_stop(s_led_off_timer);
+            esp_timer_start_once(s_led_off_timer,
+                static_cast<uint64_t>(barDownbeat ? METRONOME_FLASH_BAR_US : METRONOME_FLASH_BEAT_US));
         }
     }
     s_next_pulse++;

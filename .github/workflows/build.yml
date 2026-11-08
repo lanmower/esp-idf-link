@@ -163,3 +163,6 @@ jobs:
 
       - name: First-take origin witness
         run: bash tools/first-take-origin-witness.sh
+
+      - name: MIDI bulk queue witness
+        run: bash tools/midi-bulk-queue-witness.sh
