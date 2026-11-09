@@ -15,6 +15,7 @@
 #include "wifi_config.h"
 #include "ltmp_request.h"
 #include "phrase_boundary_guard.h"
+#include "link_origin_guard.h"
 #include "io_helpers.h"
 
 extern const uint8_t MIDI_USER_CHANNEL_MIN;
@@ -849,6 +850,14 @@ void handle_link_sync(bool& was_connected, int64_t& start_wait_time, bool& force
     if (nowH - s_hookLogAt > 5000000) {
         s_hookLogAt = nowH;
         link_diag_request(static_cast<int>(g_link->numPeers()), state.tempo(), state.beatAtTime(time, LINK_QUANTUM));
+    }
+
+    static LinkOriginWatch s_origin_watch;
+    if (s_origin_watch.observe(state.beatAtTime(time, LINK_ORIGIN_WATCH_QUANTUM_BEATS), time.count(),
+                               state.tempo(), LINK_ORIGIN_SHIFT_BEATS)) {
+        s_pending_realign = true;
+        s_phrase_baseline_captured = false;
+        ESP_LOGI(TAG_LINK, "Link beat origin shifted -- realign at next phrase boundary");
     }
 
     QuantumInfo quantumInfo = detectQuantumBoundary(state, time);

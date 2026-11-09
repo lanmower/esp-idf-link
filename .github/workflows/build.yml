@@ -166,3 +166,6 @@ jobs:
 
       - name: MIDI bulk queue witness
         run: bash tools/midi-bulk-queue-witness.sh
+
+      - name: Link origin realign witness
+        run: bash tools/link-origin-realign-witness.sh
