@@ -22,7 +22,7 @@ Boot (main.cpp app_main): open SSID ticker; scan stagger by last STA-MAC byte (0
 
 Host election: both scan before the other AP exists -> 2 isolated L2 domains. HOLD_MAX_MS=6000 monotonic in STA MAC (mac_rank * HOLD_MAX_MS >> 24), rescan 1/s, stagger mac[5]*15 ms; ../aloopprime/src/net/autoap.sh mirrors (0-6 s, lowest-wins); invert both together.
 
-Supervisor (wifi_config.cpp, 2 s; RECONNECT_TRIES=30, IGMP re-assert 30 s, tx probe 10 s): STA reconnect 30x (~60 s) before re-hosting (flapping host). STA up = has IP (579d4ef): g_wifi_connected set only by IP_EVENT_STA_GOT_IP, cleared only by WIFI_EVENT_STA_DISCONNECTED, no IP_EVENT_STA_LOST_IP; Link drops a 0-address netif and erases the gateway -> peers 1->0 while associated, no Wi-Fi event; gate g_wifi_connected && sta_has_ip(); real 1->0 had IP + IGMP clean -> Link SESSION, not IP path. AP yields to strictly-lower ticker BSSID only with ZERO stations (ap_has_associated_stations()); compare STA MAC (2nd e4:65:b8:76:cf:c4, 1st e4:65:b8:77:0d:14; DHCP .10 10-23/.19 10-25, never key on IP), not SoftAP MAC ...:c5; Pi e4:5f:01:53:f0:f1 lower -> yields; self-BSSID guard esp_wifi_get_mac(WIFI_IF_AP), never esp_read_mac() eFuse (5faf01a) or AP->STA->AP flap/tick. IGMP re-joined on yield + AP role (d1b7f9a); proof WIFI: IP: 192.168.4.x. Hosting scan pinned to mesh channel: needs ensure_sta_started() -> WIFI_MODE_APSTA; all-channel scan dwells off-channel, breaks mid-scan DHCP; supervisor kTickerChannel, boot/hold kScanAllChannels; off-ch6 host unseen; AP->STA yields only after hosting once (STA-only soak exercises none).
+Supervisor (wifi_config.cpp, 2 s; RECONNECT_TRIES=30, IGMP re-assert 30 s): STA reconnects 30x (~60 s) before re-hosting. STA up = has IP (579d4ef): g_wifi_connected set by IP_EVENT_STA_GOT_IP, cleared by WIFI_EVENT_STA_DISCONNECTED; Link drops a 0-address netif and erases the gateway, so peers 1->0 with no Wi-Fi event (gate on sta_has_ip()). AP yields to a strictly-lower ticker BSSID only with zero stations; compare STA MAC (2nd e4:65:b8:76:cf:c4, 1st e4:65:b8:77:0d:14), never the IP or SoftAP MAC; self-BSSID guard esp_wifi_get_mac(WIFI_IF_AP), never esp_read_mac(). Hosting scan pinned to ch6 (needs WIFI_MODE_APSTA); all-channel scans break mid-scan DHCP. AP->STA yields only after hosting once.
 
 Reading peers=0: gw(ok=1) gateway up; dst= on a high port (192.168.4.1:54146) = announcement arrived, Link unicast-pinging -> failure is ping/pong NOT multicast. dst is HOST order (asio to_v4().to_uint() vs network-order ip4_addr_t::addr) -> htonl before IP2STR; pre-579d4ef images reversed it (99.168.4.1 trap).
 
@@ -38,12 +38,12 @@ ESP32 SoftAP won't carry Link multicast host<->stations, hence link_multicast_re
 
 ## Clock is hardware-scheduled, never tick-emitted
 
-Click + 24 ppqn come from an esp_timer one-shot armed to SessionState::timeAtBeat() of the NEXT pulse, never the 4 kHz gptimer tick (LINK_TICK_PERIOD 250 us); Link's ESP clock IS esp_timer_get_time(). Inputs sampled every 8 ticks = 2 ms, note step on EVERY tick (2b26efc). Skip-don't-catch-up: scheduler steps past due pulses (cap MAX_CATCHUP_PULSES_PER_SCHEDULE=1024), arms a strictly future deadline, bursts read as tempo spikes; MIDI_CLOCK_RESYNC_THRESHOLD log-only; schedule_next_event() re-anchors both ways (after 112e107 a 2..24-pulse backward jump no longer stalls); F8 only while clock enabled. Note path (BassEngine::process, main/bass_engine.cpp): 48 ticks/beat (12/sixteenth); negative beat releases active notes; first call/stall/backward jump past kMaxCatchUpTicks=48 calls allNotesOff(), sets m_lastTick=now-1 — resynchronises WITHOUT catching up then processes the current tick; LFO/filter phase uses absolute tick. Old kMaxAdvanceStepsPerProcess/m_lastPhrasePosSteps/5598ed6 rule removed with redesign.
+Click + 24 ppqn come from an esp_timer one-shot armed to SessionState::timeAtBeat() of the NEXT pulse, never the 4 kHz gptimer tick (LINK_TICK_PERIOD 250 us). Inputs sampled every 8 ticks (2 ms); note step every tick. The scheduler skips past due pulses (cap MAX_CATCHUP_PULSES_PER_SCHEDULE=1024) and arms a strictly future deadline; schedule_next_event() re-anchors both ways. BassEngine (main/bass_engine.cpp): 48 ticks/beat; a stall past kMaxCatchUpTicks=48 calls allNotesOff() and resynchronises without catching up.
 sdkconfig.defaults load-bearing: CONFIG_LWIP_MAX_SOCKETS=16 (max; default 10 exhausted by relay/LCLK/TTMP/tempo listener/discovery forward/4 HTTP -> EMFILE -> no discovery); CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=64 (ENOMEM = pool drained OR mailbox full); CONFIG_LWIP_UDP_RECVMBOX_SIZE=6, CONFIG_LWIP_STATS=y (mem.err/link.drop/link.memerr), CONFIG_ESP32_WIFI_DYNAMIC_TX_BUFFER_NUM=128 (f09e91c). CONFIG_LWIP_PBUF_POOL_SIZE is NOT a v6.1 symbol — don't re-add.
 
 ## Phrase boundary and SPP arithmetic (2026-11-05)
 
-PHRASE_BEATS 64.0 (16 bars), LINK_QUANTUM 16.0, 4 SPP units/beat, MIDI_SPP_UNITS_MASK 0x3FFF -> 16384 units = 4096 beats = 64 phrases; 4096 % 64 == 0 so the SPP wrap lands ON a boundary (move SPP off it -> jump). Do not treat beatAtTime as quantum-insensitive: it is PHASE-ENCODED (toPhaseEncodedBeats, Phase.hpp:76-81, ±quantum/2 from tl.toBeats(time)); deriving currentPhraseNumber from beatAtTime(time,16) put 6 of 7 phrase boundaries 48 beats off the true downbeat for non-64-aligned beatOrigins (16/32/48/-9.5). detectQuantumBoundary() (link_sync.cpp:316) now uses phraseBeat = beatAtTime(time,PHRASE_BEATS), currentPhraseNumber = floor(phraseBeat/PHRASE_BEATS) and SPP from that phraseBeat (link_sync.cpp:765); phaseAtTime IS quantum-sensitive (phrase detection phaseAtTime(time,PHRASE_BEATS), timeline broadcast LINK_QUANTUM). static_cast<uint16_t>(sessionBeat*4) was undefined past beat 16383.75 (~2h17m at 120 bpm, inside the certified 3 h soak) and for negative beats after LTMP phase reseat; 389f9d7 uses std::fmod against 16384.0 + negative wrap (in-range byte pairs unchanged). Keep SPP at EVERY phrase boundary; SPP-before-Start mandatory.
+PHRASE_BEATS 64.0 (16 bars), LINK_QUANTUM 16.0, 4 SPP units/beat, SPP mask 0x3FFF (16384 units = 4096 beats = 64 phrases, so the wrap lands on a boundary). beatAtTime is PHASE-ENCODED (toPhaseEncodedBeats, Phase.hpp:76-81): derive phrase numbers from beatAtTime(time, PHRASE_BEATS), never beatAtTime(time, 16) (detectQuantumBoundary, link_sync.cpp ~334-370). SPP at EVERY phrase boundary; SPP-before-Start mandatory; fmod wrap for negative beats (389f9d7).
 
 ## Firmware, flash and CI (USB only)
 
@@ -55,15 +55,7 @@ never hardcoded (31a6b99); never parse partitions_large.csv (every offset but nv
 - esptool 5.x: write-flash hyphenated; --verify dropped (it always verifies). SPIFFS
 storage flashes separately: flash_midi_data.sh builds a 0x19000 image from ./data at
 0x317000 (nvs 0x011000, phy_init 0x017000, app0 0x020000, app1 0x1A0000, storage 0x317000).
-- Linux flash (measured 2026-10-23): sudo pip install --break-system-packages esptool (no pip;
-python 3.14 PEP 668, ensurepip yields none), then
-sudo python3 -m esptool --chip esp32 --port /dev/ttyUSB0 --baud 460800 --before default-reset --after
-hard-reset write-flash --flash-mode dio 0x1000 build/bootloader/bootloader.bin 0x8000
-build/partition_table/partition-table.bin 0x20000 build/link-idf-example.bin — 1312688 B in 20.0 s,
-hash verified; default-reset works here (stub ran, MAC e4:65:b8:76:cf:c4). Check the MAC on
-every flash: on 2026-10-25 /dev/ttyUSB0 read e4:65:b8:77:0d:14 (1st unit), not
-e4:65:b8:76:cf:c4 (2nd, used for every certification); which board is attached changes, and the
-esptool MAC: line is the only proof.
+- Flash (Linux): sudo python3 -m esptool --chip esp32 --port /dev/ttyUSB0 --baud 460800 --before default-reset --after hard-reset write-flash --flash-mode dio 0x1000 bootloader.bin 0x8000 partition-table.bin 0x20000 app.bin, bins from a CI bin commit (git show <sha>:build/...). Check 'Hash of data verified' and the 'MAC:' line; the attached unit changes. Install: sudo pip install --break-system-packages esptool (python 3.14, PEP 668).
 
 Build shape: not in build — effect_arp.cpp, effect_filter.cpp, effect_handler.cpp, effect_sidechain.cpp, midi_file.cpp (no .cpp is #included). bass_engine/control_model must stay host-compilable (own headers + <algorithm> <cmath> <cstring>, no ESP-IDF; MinGW needs -D_USE_MATH_DEFINES); tools/bass_loop_witness.cpp extends via tools/hoststub/. .gitattributes pins EOL (7e8dacd: lf shell/py/cmake/csv/sdkconfig/Dockerfile, crlf *.bat *.cmd, binary *.bin *.elf *.mid); CRLF shell script dies in Linux CI. CI host-witness runs tools/control-model-witness.sh, tools/bass-loop-witness.sh. No local ESP-IDF needed — GitHub Actions is the toolchain: push -> build ~3-5 min -> green main commits three .bin -> git pull -> flash ~25 s -> console/telemetry, ~6 min/edit; never defer a change for want of a local toolchain; CI publishes no ELF (panic backtraces can't be symbolised).
 
@@ -119,17 +111,14 @@ Keep SPP at EVERY phrase boundary then Start/Continue (SPP-before-Start mandator
 - Pi clock resets to 2024-04-09 every boot (no RTC); final device offline, wall time log-only; don't step it during a certification run (926-day PREEMPT_RT jump perturbs). Pi root is tmpfs: no logs/last reboot/pstore survive; SSH keys regenerate each boot.
 - ip_forward on Pi = 0 -> nothing routes to 192.168.4.0/24, route add pointless; enabling exposes the open SSID to ICS — don't unless asked.
 
-## Live state 2026-10-23: two-device mesh, measured with mc-420
+## Live state 2026-10-23: two-device mesh (mc-420)
 
-Device 54e3d17, compile Oct 13 2026 13:49:32, ELF b65e475f9. Acceptance: retention >=95% after t+60 s from cold boot, bpm spread <=0.05, |phase_err_beats| <= 0.03, eff_speed spread <=0.005, gaps <=10%.
-Cold boot peers=1 in 14-23 s; measure from t+60 s. 10 min 07:20:52Z: 600 samples, 0 gaps, 540 post-acq 100.0%, spreads 0. 30 min 07:35:28Z: 1798 samples, 1 gap, 99.7%; drop at t=1560.4 s was mc-420 rc-service aloop restart with IP held + IGMP clean = Link SESSION (44ce414), recovery 5387 ms. ICMP ~1% loss is not the metric (retention 100%); ICMP 1 Hz + status reply (20813 since a100df8) discriminates IP path vs Link state.
-3 h 08:12:36Z-11:12:36Z PASS all terms, two captures: 10791 samples, 0 gaps, 10731 post-acq, 100.0%, spreads 0, zero post-acq drops; ESP 2162 Link diag = 2162 peers=1, single peers=0 is boot, zero peerloss/sendfail; mc-420 agrees (10587, 100%, 0 drops). Certification run: 3 h, no unexplained event.
-Metro jitter worst 13798 us/mean 264/rms 822; ENOMEM send failure unreproduced in 1500 s soak df18c36 (one err=12 burst in an IGMP re-join); session bounce re-joins 2540 ms, only on-demand LRST remains. Host-AP failover certified on 4806b18/2a5162f (100 s outage, peer back 103838/113678 ms; witness .gm/witness-out/mesh-failover-2a5162f-20261025.txt); relay fixes: g_relay_stop latch, select()+20 ms, esp_netif_destroy_default_wifi() + 200 ms settle; WIFI_NO_TEARDOWN_ROLE_SWITCH default 0, never run on a device.
+Device 54e3d17 (ELF b65e475f9). Acceptance: retention >=95% after t+60 s from cold boot, bpm spread <=0.05, |phase_err_beats| <=0.03, eff_speed spread <=0.005, gaps <=10%. 3 h run 08:12:36Z-11:12:36Z: 10791 samples, 0 gaps, 100.0% post-acq, zero unexplained events. ICMP ~1% loss is not the metric; the 20813 status reply discriminates IP path from Link state. Host-AP failover certified 4806b18/2a5162f (witness .gm/witness-out/mesh-failover-2a5162f-20261025.txt). WIFI_NO_TEARDOWN_ROLE_SWITCH default 0, never run on a device.
 
 ## Phrase-predictability campaign (2026-11-05)
 
-Witnesses tracked, all in CI host-witness (build.yml): phrase-predictability-witness.sh + .cpp (guarded MIRROR, parity guard over main/ + vendored Link, refuses drift), phrase_scheduler_fuzz.py (1000 seeds), phrase_telemetry_analyzer.py (1 Hz scoring + self-test), plus control-model/bass-loop witnesses. Campaign PRDs live in gm's PRD store, not here. Peer loss after the 8 s force_start latch used to leave gear stopped (Stop+CC123, no realign edge); link_sync.cpp now sets s_pending_realign on 1->0 so Start/Continue fires at the next 64-beat boundary.
-30-min 1 Hz baseline 19:59:38Z-20:29:38Z: 1798 samples, zero gaps, post-t+60 s retention 100%, bpm/phase_err_beats/eff_speed spreads 0, no anomaly; 56 phrase boundaries, mean spacing 31.999937 s vs 32.0 s expected, max error 0.176821 s; witness .gm/witness-out/phrase-telemetry-report-20261105.txt (FINAL, self-test passed).
+Witnesses run in CI host-witness (build.yml): phrase-predictability-witness.sh/.cpp (guarded MIRROR, parity guard over main/ and vendored Link), phrase_scheduler_fuzz.py (1000 seeds), phrase_telemetry_analyzer.py (self-test), control-model and bass-loop witnesses. 30-min 1 Hz baseline: zero gaps, 56 phrase boundaries, mean spacing 31.999937 s vs 32.0 s. Peer loss after the 8 s force_start latch sets s_pending_realign on 1->0 (fccce9c).
+
 
 ## Bass sequencer: eight-beat loop, pads and dials
 
@@ -191,14 +180,14 @@ pot1 = note length (0..2), pot2 = velocity (0..1).
 
 IDF 6.x breaks (each re-breaks on a bump): esp_netif_next() -> esp_netif_next_unsafe() (6.1, Link ScanIpIfAddrs.hpp); driver/adc.h removed -> hall_sensor_read() stub main/io_helpers.cpp; CONFIG_LWIP_PBUF_POOL_SIZE dropped. Comment sweep (INVARIANT 3): the 2026-10-11 "0 comments" count (82038c4, 5342086) is stale — new witnesses/headers carry comments; re-measure before quoting a number.
 
-## mc-420, aloopprime, gm PRDs
+## mc-420 and the sibling trees
 
-mc-420 (Pi-side peer) reachable by SendMessage; sibling /config/workspace/mc-420; reassoc-watch.js logs only Date.now() deltas -> reconstruct absolute times; Pi ssh credentials are read-only probing, never commit. The fixed SSH host key is kept out of git (owner 2026-10-26); boot_tree_apkovl rebuilds drop it unless the key is wired into the build.
-../aloopprime is fetch-only (origin.pushurl = no-push): git_finalize commits, gm refuses push push_disabled_by_config; local commits intended, don't edit .git/config. Campaign PRD rows live in gm's PRD store, not here.
+mc-420 is the Pi-side peer (aloop); sibling /config/workspace/mc-420 is reachable by SendMessage. ../aloopprime is fetch-only (origin.pushurl = no-push): git_finalize commits, gm refuses push; never edit .git/config. Pi ssh credentials are read-only probing, never commit; the fixed SSH host key stays out of git (owner 2026-10-26). Campaign PRD rows live in gm's PRD store, not here.
+
 
 ## Comment-sweep facts (INVARIANT 4, 2026-11-05)
 Verified against current main/; facts formerly carried as code comments.
-- g_role_epoch (wifi_config.cpp:73) bumps before role teardown; relay snapshots it before an esp_netif_tcpip_exec emit and re-checks after, dropping work if the role moved. Relay waits on select() with RELAY_SELECT_TIMEOUT_US=20 ms, not SO_RCVTIMEO; wifi_stop_link_relay waits 250 x 20 ms = 5 s and clears g_relay_stop on a failed stop. relay_wake_recv() was vestigial (127.0.0.1 wake, loopback off) and is removed.
+- g_role_epoch (wifi_config.cpp:73) bumps before role teardown; the relay re-checks it after its esp_netif_tcpip_exec emit and drops work if the role moved. relay_wake_recv() was vestigial and is removed.
 - After AP->STA yield the supervisor zeroes igmp_reassert_countdown so the next 2 s tick re-asserts IGMP (else IGMP_REASSERT_PERIOD_TICKS=15 x 2 s = 30 s). wifi_supervisor_task stack 8192 bytes (tie-break runs stop/destroy/start/connect/join inline). Flag-on WIFI_NO_TEARDOWN_ROLE_SWITCH gates console witnesses role: and ap cfg: (docs/netif-redesign-plan.md H3/H2).
 - main.cpp INPUT_POLL_TICKS=8 x LINK_TICK_PERIOD 250 us = 2 ms: touch/pot reads every 8 ticks, note step every tick. state_machine.cpp DOUBLE_TAP_WINDOW_US=300 ms; TAP_SETTLE_US=40 ms debounces pad-count changes (flicker would end and re-seed the recorder).
 - tools/failover-outage.sh runs ON THE PI as root (mc-420), busybox-safe, default 100 s: autoap stop -> kill hostapd -> hold -> autoap start; EXIT trap with started=0 restores the AP once; ESP judged from its own serial log; outage-only iw scan only between STOP and START.
@@ -211,10 +200,11 @@ Verified against current main/; facts formerly carried as code comments.
 - git_show rev/stat/path (paged via offset/next_offset); git_log limit/range/path; bash/exec_js script in body/raw_body; session_id mandatory on every call.
 
 
-## Phase lock at 174 BPM (2026-11-08)
-- Measure: midi-f8-capture.py (raw F8, own process) + link-phase-probe.py --no-midi (aalink, 2 ms) over the same 60 s; analyse: python3 -I tools/link-phase-analyse.py samples.json f8.json. Lateness is taken from the circular beat-fraction centre; the old +-0.5-pulse wrap made a 0.25-pulse cluster read as 5.6 ms stdev. LOCKED = stdev < 1 ms and no 5 s segment-centre step > 0.05 pulse (the first segment is tempo-change acquisition).
-- Host beat residual is <= 0.3 ms over a run; the steps are ESP-side in the F8-to-grid relation: 0.07-0.25 pulse (1-3.5 ms at 174), mostly ~35 s after the tempo change.
-- Lock rate: before 4057302 (no log_drain) 2 of 11 runs LOCKED (00d6708 stdev 526; 8ee1e6a stdev 254), 1 borderline (8ee1e6a stdev 715, acquisition step only). From 4057302 on (HEAD 8f239a1 firmware = 72f2ef1 code) 0 of 8 LOCKED. Not significant (Fisher p ~0.5); not confirmed.
-- Unconfirmed candidate: log_drain (4057302) and link_diag (dc1921e) both at priority 2, equal to the Link task pinned to core 1 (00d6708); equal-priority time-slicing every 10 ms. Candidate fix: priority 1 for both. Not built, not pushed.
-- Stall fix 4057302 holds: HEAD runs show 0 F8 gaps over 20 ms; pre-fix builds show 2-33 gaps, max up to 116 ms.
-- Flash: sudo python3 -m esptool --chip esp32 --port /dev/ttyUSB0 --baud 460800 --before default-reset --after hard-reset write-flash ...; bins from a CI bin commit (HEAD = 8f239a1). Opening the console resets the board.
+## Transport realign on a Link origin shift, and phase lock (2026-11-08/09)
+
+- Link origin shift (fc5acfa; witness fix 166a2e8; CI run 42597578792 green on build and host-witness; CI bin 69ba16c flashed, Hash verified, MAC e4:65:b8:77:0d:14): handle_link_sync (link_sync.cpp, before detectQuantumBoundary) feeds main/link_origin_guard.h the origin-relative beat beatAtTime(time, 1e9) = beat minus beat origin. It stays continuous under setTempo and clock-offset correction and restarts at any forced beat. A jump above 1/24 beat sets s_pending_realign and resets s_phrase_baseline_captured, so Start or Continue (with SPP) fires at the next phrase boundary, never at the jump. Witness: tools/link-origin-realign-witness.cpp (real Link headers, CI); tools/link-origin-parity.py fails on the pre-fix source (six PARITY FAIL lines).
+- DIN evidence, host shift +5.5 beats (tools/link-origin-shift-sim.py): pre-fix only SPP, no FA/FB/FC (.gm/bisect/owner-first-loop-passive/prefix); post-fix SPP and FB together at the first phrase boundary after the shift, about 46 beats later (.../postfix).
+- The ESP reads no MIDI: MIDI_RX is configured (io_helpers.cpp:86-87) but never read. Inbound control is Link state plus UDP 20811 LTMP/LRST (link_sync.cpp:225-275). F8/SPP/Start/Continue/Stop are outputs only.
+- Beep: one per beat in link_event_cb (s_next_pulse % 24 == 0), in the same callback as the F8 clock byte. Accent by 16-beat cycle (2093/1568/1319/1047 Hz; 20 ms or 1 ms). Audio on Scarlett input index 1 shows one onset per beat (43 in 25 s, median gap 0.4999 s at 120 BPM). Accent pitch and absolute F8 alignment are NOT verified by audio.
+- Phase lock: midi-f8-capture.py and link-phase-probe.py --no-midi over the same 60 s; analyse with tools/link-phase-analyse.py (circular centre; LOCKED = stdev < 1 ms and no 5 s centre step > 0.05 pulse). Host beat residual <= 0.3 ms; the F8-to-grid steps are ESP-side, 1-3.5 ms at 174 BPM, mostly ~35 s after a tempo change. Locked in 2 of 11 runs before 4057302 and 0 of 8 after (not significant). Unconfirmed candidate: log_drain (4057302) and link_diag (dc1921e) at priority 2, time-sliced with the Link task every 10 ms; the fix would be priority 1. Not built.
+- Stall fix 4057302 holds: HEAD runs show 0 F8 gaps over 20 ms; pre-fix builds show 2-33 gaps, up to 116 ms.
