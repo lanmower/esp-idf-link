@@ -104,8 +104,8 @@ void runScenarios()
     const Timeline forced001 = forceBeatLikeLink(tempoChanged, shiftUs, 0.01);
     const Sweep s001 = sweep([&](std::int64_t t) { return t < shiftUs ? tempoChanged : forced001; },
                              0, endUs, 1000);
-    check("origin shift of 0.01 beat (below one pulse) is not detected",
-          s001.shifts == 0);
+    check("forced origin re-anchor of 0.01 beat is flagged once (the origin moved; X restarts at the anchor)",
+          s001.shifts == 1 && s001.firstUs == shiftUs);
 
     const Timeline negativeBase = makeTimeline(120.0, -2.885, 0);
     const Timeline forcedNegative = forceBeatLikeLink(negativeBase, shiftUs, 5.5);

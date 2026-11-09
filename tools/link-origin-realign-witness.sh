@@ -15,6 +15,8 @@ g++ -std=c++17 -Wall -Wextra -Werror -Wno-multichar -O1 \
   -o "$tmp/link_origin_realign_witness" \
   "$here/link-origin-realign-witness.cpp"
 cd "$root"
-"$tmp/link_origin_realign_witness" > "$tmp/out.txt"
+status=0
+"$tmp/link_origin_realign_witness" > "$tmp/out.txt" || status=$?
 cat "$tmp/out.txt"
+test "$status" -eq 0
 grep -q "LINK ORIGIN REALIGN WITNESS: PASS" "$tmp/out.txt"
