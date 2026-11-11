@@ -185,9 +185,30 @@ static void checkResetAllSeedState() {
     }
 }
 
+static void checkSidechainMidiValue() {
+    g_state.m_bpm = 145.0;
+    BassEngine boot;
+    boot.selectSingle(3);
+    const int bootBeat = notesInBar(boot, 0);
+    BassEngine minimum;
+    minimum.selectSingle(3);
+    const int atMinimum = notesInBar(minimum, 0, 0, 0.0f / 127.0f, 0, kBarUs);
+    BassEngine middle;
+    middle.selectSingle(3);
+    const int atMiddle = notesInBar(middle, 0, 0, 64.0f / 127.0f, 0, kBarUs);
+    BassEngine maximum;
+    maximum.selectSingle(3);
+    const int atMaximum = notesInBar(maximum, 0, 0, 127.0f / 127.0f, 0, kBarUs);
+    CHECK("the boot default plays the beat in full", bootBeat >= 15);
+    CHECK("sidechain MIDI 0 plays the beat in full", atMinimum == bootBeat);
+    CHECK("sidechain MIDI 64 plays part of the beat", atMiddle > 0 && atMiddle < atMinimum);
+    CHECK("sidechain MIDI 127 silences the beat", atMaximum == 0);
+}
+
 int main() {
     checkControlIndices();
     checkEngineSounds();
+    checkSidechainMidiValue();
     checkWindowShortensPromptly();
     checkGateZeroIsSilent();
     checkDropOutIsSilent();
