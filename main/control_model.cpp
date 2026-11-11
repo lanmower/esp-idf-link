@@ -46,12 +46,10 @@ uint32_t euclidean(int k, int n) {
     return bits;
 }
 
-uint32_t fakeSidechainGate() {
-    uint32_t bits = 0;
-    for (int i = 0; i < 32; i++) {
-        if (i % 4 != 0) bits |= (1u << i);
-    }
-    return bits;
+int reverseBits5(int v) {
+    int r = 0;
+    for (int b = 0; b < 5; b++) r |= ((v >> b) & 1) << (4 - b);
+    return r;
 }
 
 }
@@ -97,31 +95,13 @@ uint32_t stepPattern(int index) {
     return euclidean(index + 1, 32);
 }
 
-uint32_t tranceGate(int seriesIndex, uint32_t entrySeed) {
+uint32_t tranceGate(int seriesIndex) {
     if (seriesIndex < 0) seriesIndex = 0;
     if (seriesIndex >= kGateSeriesCount) seriesIndex = kGateSeriesCount - 1;
 
-    if (seriesIndex == 0) {
-        return fakeSidechainGate();
-    }
-    if (seriesIndex <= 8) {
-        const uint32_t base = euclidean(seriesIndex, 8);
-        uint32_t bits = 0;
-        for (int i = 0; i < 32; i++) {
-            if (base & (1u << (i % 8))) bits |= (1u << i);
-        }
-        return bits;
-    }
-    if (seriesIndex <= 24) {
-        return euclidean(seriesIndex - 9 + 3, 32);
-    }
-    uint32_t state = entrySeed * 2654435761u + static_cast<uint32_t>(seriesIndex) * 40503u + 1u;
-    const uint32_t threshold = static_cast<uint32_t>((seriesIndex - 25 + 1) * 64);
     uint32_t bits = 0;
-    for (int i = 0; i < 32; i++) {
-        state = state * 1664525u + 1013904223u;
-        const uint32_t r = state >> 22;
-        if (r < threshold) bits |= (1u << i);
+    for (int step = 0; step < 32; step++) {
+        if (reverseBits5(step) < 32 - seriesIndex) bits |= (1u << step);
     }
     return bits;
 }

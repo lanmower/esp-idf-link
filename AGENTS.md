@@ -131,7 +131,7 @@ ctl::LoopTrack.
 |0|scale / width|gate width / arp speed|
 |1|pitch offset / 32-step rhythm|random octave / random drop-out|
 |2|LFO type / LFO speed (mod wheel CC 1)|LFO width / filter shift (CC 74)|
-|3|trance-gate series / octave|loop window / chromatic aberration|
+|3|sidechain gate / octave|loop window / chromatic aberration|
 
 - Loop at most eight beats (2 bars, 32 steps): ctl::kLoopBars=2; window dial reads LIVE value never the track (a recorded window reverted at the very turnaround it should apply, so the loop never shortened); shortened window takes effect at next turnaround of NEW length.
 - Single tap selects single settings, starts sequencer; double tap + hold routes dials to double settings. Fill: two pads mark passed steps filled, three mark removed; no rhythm copy, unheld steps follow it; fill/unfill taps don't start sequencer; four pads reset settings/recordings/fill to defaults and stop sequencer.

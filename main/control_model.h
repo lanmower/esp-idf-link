@@ -42,8 +42,8 @@ float aberrationForDial(float v);
 constexpr int kRhythmPatternCount = 32;
 uint32_t stepPattern(int index);
 
-constexpr int kGateSeriesCount = 32;
-uint32_t tranceGate(int seriesIndex, uint32_t entrySeed);
+constexpr int kGateSeriesCount = 33;
+uint32_t tranceGate(int seriesIndex);
 
 uint32_t hash32(uint32_t a, uint32_t b, uint32_t c);
 float    hashUnit(uint32_t a, uint32_t b, uint32_t c);

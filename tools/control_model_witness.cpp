@@ -55,27 +55,22 @@ static void checkStepPatterns() {
 }
 
 static void checkTranceGates() {
-    CHECK("32 gate series", kGateSeriesCount == 32);
-    bool repetitive = true;
-    for (int s = 0; s <= 8; s++) {
-        const uint32_t g = tranceGate(s, 7u);
-        for (int i = 0; i < 24; i++) {
-            if (((g >> i) & 1u) != ((g >> (i + 8)) & 1u)) repetitive = false;
-        }
+    CHECK("33 gate levels", kGateSeriesCount == 33);
+    CHECK("dial minimum is fully open", tranceGate(gateSeriesForDial(0.0f)) == 0xFFFFFFFFu);
+    CHECK("dial maximum is silent", tranceGate(gateSeriesForDial(1.0f)) == 0u);
+    CHECK("the dial sweeps every level", gateSeriesForDial(0.0f) == 0 && gateSeriesForDial(1.0f) == kGateSeriesCount - 1);
+
+    bool oneOnsetPerLevel = true;
+    uint32_t prev = tranceGate(0);
+    for (int level = 1; level < kGateSeriesCount; level++) {
+        const uint32_t g = tranceGate(level);
+        if ((g & ~prev) != 0u || popcount32(prev) - popcount32(g) != 1) oneOnsetPerLevel = false;
+        prev = g;
     }
-    CHECK("series 0 to 8 repeat every 8 steps", repetitive);
-
-    const uint32_t sc = tranceGate(0, 7u);
-    CHECK("series 0 mutes the first sixteenth of every beat", !(sc & 0x1u) && !(sc & (1u << 4)));
-    CHECK("series 0 sounds every other sixteenth", popcount32(sc) == 24);
-
-    CHECK("series 8 is fully open", popcount32(tranceGate(8, 0u)) == 32);
-
-    CHECK("series 9 is polyrhythmic with three onsets", popcount32(tranceGate(9, 0u)) == 3);
-    CHECK("series 24 is polyrhythmic with 18 onsets", popcount32(tranceGate(24, 0u)) == 18);
-    CHECK("a random series is deterministic for a seed", tranceGate(27, 1234u) == tranceGate(27, 1234u));
-    CHECK("a new seed gives a new random pattern", tranceGate(27, 1234u) != tranceGate(27, 1235u));
-    CHECK("random density rises with the index", popcount32(tranceGate(31, 9u)) > popcount32(tranceGate(25, 9u)));
+    CHECK("each level removes exactly one onset, never adds one", oneOnsetPerLevel);
+    CHECK("level 16 is every eighth", tranceGate(16) == 0x55555555u);
+    CHECK("level 24 is every quarter", tranceGate(24) == 0x11111111u);
+    CHECK("level 31 keeps only the downbeat", tranceGate(31) == 0x1u);
 }
 
 static void checkHashes() {

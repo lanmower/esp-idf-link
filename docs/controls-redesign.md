@@ -16,7 +16,7 @@ Pads are numbered 0 to 3. Dial 0 is the first pot, dial 1 the second.
 | 1 | double tap, held | random octave up and down, by intensity | random note drop-out, by intensity |
 | 2 | single tap | LFO type (mod wheel, CC 1) | LFO speed |
 | 2 | double tap, held | LFO width, -100 to +100 percent | filter shift, -100 to +100 percent (CC 74) |
-| 3 | single tap | trance-gate series (32, repetitive to random) | octave, -3 to +3 |
+| 3 | single tap | sidechain gate (33 levels, full to silent) | octave, -3 to +3 |
 | 3 | double tap, held | loop window, 1-2 bars (4-8 beats) | chromatic aberration, by intensity |
 
 A single tap selects the pad's single settings and starts the sequencer. A double tap, while held, sends the dials to
@@ -46,14 +46,14 @@ that pad's double settings. Releasing the pad returns them to the single setting
 4. **Fill and reset.** Two pads held record fill, marking each step the loop passes while held. Three pads held
    unfill, removing each step passed. Four pads reset: they clear every recording and fill, and return every setting
    to its default. Nothing is copied from the rhythm; steps never held keep following it.
-5. **Fake sidechain** is series 0 of the volume-modulation dial: it skips the first sixteenth of every
-   beat. It is part of the dial's range, not always on, so a fully open gate is reachable.
-6. **Volume-modulation dial range:** series 0 fake sidechain, 1-8 repetitive tilings (8 is fully open,
-   every sixteenth), 9-24 polyrhythmic, 25-31 random. Every sixteenth is one dial position away.
-7. **Random patterns** are seeded when a setting is touched, so each new change gives a new pattern, and the same
+5. **Sidechain** is the volume-modulation dial: at its minimum every sixteenth sounds, at its maximum the beat is silent.
+6. **Sidechain levels:** the dial has 33 levels (`floor(v * 33)`, capped at 32). Each level removes exactly one
+   sixteenth and never adds one, in an order that keeps the downbeat longest: level 16 is every eighth, level 24 every
+   quarter, level 31 only the downbeat, level 32 silent.
+7. **Random octave, drop-out and aberration patterns** are seeded when a setting is touched, so each new change gives a new pattern, and the same
    entry gives the same pattern.
 8. **Defaults at boot:** scale 0, width 0, pitch offset 0, rhythm 31 (every sixteenth), LFO sine with the speed dial
-   at 0.25 (`lfoCyclesPerBarForDial(0.25)` = 1.1875 cycles per bar), volume modulation series 8 (fully open),
+   at 0.25 (`lfoCyclesPerBarForDial(0.25)` = 1.1875 cycles per bar), sidechain at 0 (fully open),
    octave 0, gate width 50 percent, arp 16ths, no random octave
    or drop-out, LFO width 0, filter centred, loop 2 bars (8 beats), no aberration. Those defaults are a gated
    sixteenth-note roll, because the rhythm is every sixteenth and the gate is fully open.

@@ -64,7 +64,7 @@ BassEngine::BassEngine() {
     defaults[SET_RHYTHM]     = 0.97f;
     defaults[SET_LFO_TYPE]   = 0.0f;
     defaults[SET_LFO_SPEED]  = 0.25f;
-    defaults[SET_SERIES]     = 0.25f;
+    defaults[SET_SERIES]     = 0.0f;
     defaults[SET_OCTAVE]     = 0.5f;
     defaults[SET_GATE]       = 0.5f;
     defaults[SET_ARP]        = 0.5f;
@@ -334,8 +334,7 @@ bool BassEngine::soundsAt(int step) const {
 bool BassEngine::stepSounds(int step) const {
     const uint32_t rhythm = ctl::stepPattern(ctl::rhythmForDial(m_frame[SET_RHYTHM]));
     if (!((rhythm >> (step % 32)) & 1u)) return false;
-    const uint32_t series = ctl::tranceGate(ctl::gateSeriesForDial(m_frame[SET_SERIES]),
-                                            m_entrySeed[SET_SERIES]);
+    const uint32_t series = ctl::tranceGate(ctl::gateSeriesForDial(m_frame[SET_SERIES]));
     if (!((series >> (step % 32)) & 1u)) return false;
     return true;
 }

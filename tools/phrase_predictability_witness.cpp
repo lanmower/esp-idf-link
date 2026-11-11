@@ -1421,14 +1421,12 @@ static void checkSeedDeterminism() {
     CHECK("SHIPPED hash32 differs for a different input",
           ctl::hash32(1, 2, 3) != ctl::hash32(1, 2, 4));
 
-    CHECK_EQ("SHIPPED tranceGate random series same seed -> identical",
-             ctl::tranceGate(27, 1234u), ctl::tranceGate(27, 1234u));
-    CHECK("SHIPPED tranceGate random series different seed -> differs",
-          ctl::tranceGate(27, 1234u) != ctl::tranceGate(27, 1235u));
-    CHECK_EQ("SHIPPED tranceGate series 31 same seed -> identical",
-             ctl::tranceGate(31, 999u), ctl::tranceGate(31, 999u));
-    CHECK_EQ("SHIPPED tranceGate series 0 is seed-independent",
-             ctl::tranceGate(0, 7u), ctl::tranceGate(0, 8u));
+    CHECK_EQ("SHIPPED tranceGate level 0 is fully open",
+             ctl::tranceGate(0), 0xFFFFFFFFu);
+    CHECK_EQ("SHIPPED tranceGate top level is silent",
+             ctl::tranceGate(ctl::kGateSeriesCount - 1), 0u);
+    CHECK_EQ("SHIPPED tranceGate level 16 is every eighth",
+             ctl::tranceGate(16), 0x55555555u);
 }
 
 static void checkWindowStructural() {
