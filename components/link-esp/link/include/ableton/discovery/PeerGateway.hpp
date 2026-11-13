@@ -63,7 +63,7 @@ public:
   }
 
 private:
-  using PeerTimeout = std::pair<std::chrono::system_clock::time_point, NodeId>;
+  using PeerTimeout = std::pair<typename Timer::TimePoint, NodeId>;
   using PeerTimeouts = std::vector<PeerTimeout>;
 
   struct Impl : std::enable_shared_from_this<Impl>

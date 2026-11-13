@@ -21,6 +21,7 @@
 
 #include <ableton/platforms/asio/AsioWrapper.hpp>
 #include <ableton/util/SafeAsyncHandler.hpp>
+#include <asio/steady_timer.hpp>
 #include <functional>
 
 namespace ableton
@@ -30,22 +31,14 @@ namespace platforms
 namespace asio
 {
 
-// This implementation is based on the boost::asio::system_timer concept.
-// Since boost::system_timer doesn't support move semantics, we create a wrapper
-// with a unique_ptr to get a movable type. It also handles an inconvenient
-// aspect of asio timers, which is that you must explicitly guard against the
-// handler firing after cancellation. We handle this by use of the SafeAsyncHandler
-// utility. AsioTimer therefore guarantees that a handler will not be called after
-// the destruction of the timer, or after the timer has been canceled.
-
 class AsioTimer
 {
 public:
   using ErrorCode = ::asio::error_code;
-  using TimePoint = std::chrono::system_clock::time_point;
+  using TimePoint = std::chrono::steady_clock::time_point;
 
   AsioTimer(::asio::io_service& io)
-    : mpTimer(new ::asio::system_timer(io))
+    : mpTimer(new ::asio::steady_timer(io))
     , mpAsyncHandler(std::make_shared<AsyncHandler>())
   {
   }
@@ -71,7 +64,7 @@ public:
   {
   }
 
-  void expires_at(std::chrono::system_clock::time_point tp)
+  void expires_at(TimePoint tp)
   {
     mpTimer->expires_at(std::move(tp));
   }
@@ -99,7 +92,7 @@ public:
 
   TimePoint now() const
   {
-    return std::chrono::system_clock::now();
+    return std::chrono::steady_clock::now();
   }
 
 private:
@@ -123,7 +116,7 @@ private:
     std::function<void(const ErrorCode)> mpHandler;
   };
 
-  std::unique_ptr<::asio::system_timer> mpTimer;
+  std::unique_ptr<::asio::steady_timer> mpTimer;
   std::shared_ptr<AsyncHandler> mpAsyncHandler;
 };
 

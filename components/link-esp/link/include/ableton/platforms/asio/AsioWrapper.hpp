@@ -69,6 +69,7 @@
 #endif
 
 #include <asio.hpp>
+#include <asio/steady_timer.hpp>
 #include <asio/system_timer.hpp>
 
 #if defined(LINK_PLATFORM_WINDOWS)

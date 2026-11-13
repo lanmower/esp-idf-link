@@ -172,3 +172,6 @@ jobs:
 
       - name: Link peer endpoint relearn witness
         run: bash tools/link-peer-endpoint-relearn-witness.sh
+
+      - name: Link measurement timer witness
+        run: bash tools/link-measurement-timer-witness.sh
