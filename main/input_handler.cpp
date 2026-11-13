@@ -75,6 +75,10 @@ bool read_inputs(InputEvent& current_event)
         }
     }
 
+    for (int i = 0; i < NUM_POTS; ++i) {
+        g_live_pot_value[i].store(current_event.pot_value[i], std::memory_order_relaxed);
+    }
+
     for (int i = 0; i < NUM_TOUCH_PADS; ++i) {
         current_event.pad_held[i] = current_pad_touched[i];
         current_event.pad_pressed_this_tick[i] = current_pad_pressed_this_tick[i];

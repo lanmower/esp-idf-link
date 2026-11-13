@@ -10,6 +10,8 @@
 #include <esp_adc/adc_oneshot.h>
 #include <esp_adc/adc_cali.h>
 
+std::atomic<int> g_live_pot_value[NUM_POTS]{};
+
 static constexpr int MIDI_UART_RX_BUFFER_BYTES = 512;
 static constexpr int MIDI_CC_MESSAGE_BYTES = 3;
 static constexpr int MIDI_NRPN_CC_MESSAGE_COUNT = 6;
@@ -515,6 +517,7 @@ void update_input_state(InputEvent& event)
                 event.pot_delta[i] = 0;
             }
             event.pot_value[i] = scaled_value;
+            g_live_pot_value[i].store(scaled_value, std::memory_order_relaxed);
             event.pot_moved[i] = (abs(delta) > MIDI_CC_THRESHOLD);
         }
     }

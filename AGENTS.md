@@ -81,7 +81,7 @@ TX_PROBE_PORT 34999). Authoritative table: readme.md ## Network ports.
 |20810|esp -> group ~50 Hz|LCLK + Link-clock micros|phase for peers behind a unicast-RX wall|
 |20811|looper -> esp|LTMP 12 B tempo-only / 28 B tempo+phase; LRST 4 B|set tempo/phase; session bounce|
 |20812|esp -> group ~10 Hz|TTMP + microsPerBeat + beatOrigin microbeats + timeOrigin micros|esp -> looper timeline|
-|20813|req/resp|any 1..64 B -> one-line JSON|status: peers/bpm/playing/beat/phase/quantum/ap/metro (was 20812)|
+|20813|req/resp|any 1..64 B -> one-line JSON|status: peers/bpm/playing/beat/phase/quantum/ap/metro/pot0/pot1 (was 20812)|
 |34999|esp -> gw / group|diagnostic|log_tx_probe every 10 s + log_send_failure_probe; nothing replies|
 
 - Every multicast send must iterate netifs and set IP_MULTICAST_IF per interface (esp_netif_next_unsafe), else a raw socket exits the wrong interface on a dual-netif device.

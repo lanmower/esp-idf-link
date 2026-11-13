@@ -2,9 +2,12 @@
 #define IO_HELPERS_H
 
 #include "main.h"
+#include <atomic>
 #include <esp_adc/adc_cali.h>
 #include <esp_adc/adc_cali_scheme.h>
 #include "state_machine.h"
+
+extern std::atomic<int> g_live_pot_value[NUM_POTS];
 
 void init_uart_midi();
 void init_adc();

@@ -17,6 +17,7 @@
 #include "phrase_boundary_guard.h"
 #include "link_origin_guard.h"
 #include "io_helpers.h"
+#include "live_pot_status.h"
 
 extern const uint8_t MIDI_USER_CHANNEL_MIN;
 extern const uint8_t MIDI_USER_CHANNEL_MAX;
@@ -195,11 +196,13 @@ static void status_responder_task(void*) {
         auto st = g_link->captureAppSessionState();
         const auto now = g_link->clock().micros();
         const MetroStats ms = metro_stats();
+        const int pot0 = g_live_pot_value[0].load(std::memory_order_relaxed);
+        const int pot1 = g_live_pot_value[1].load(std::memory_order_relaxed);
         int len = snprintf(reply, sizeof reply,
             "{\"link\":true,\"peers\":%u,\"bpm\":%.3f,\"playing\":%s,"
             "\"beat\":%.3f,\"phase\":%.3f,\"quantum\":%.1f,\"ap\":%s,"
             "\"metro\":{\"fired\":%u,\"late_last_us\":%lld,\"late_worst_us\":%lld,"
-            "\"late_mean_us\":%.1f,\"late_rms_us\":%.1f}}\n",
+            "\"late_mean_us\":%.1f,\"late_rms_us\":%.1f}",
             (unsigned)g_link->numPeers(),
             st.tempo(),
             st.isPlaying() ? "true" : "false",
@@ -208,6 +211,12 @@ static void status_responder_task(void*) {
             (double)LINK_QUANTUM,
             wifi_is_ap_active() ? "true" : "false",
             (unsigned)ms.fired, (long long)ms.last, (long long)ms.worst, ms.mean, ms.rms);
+        if (len < 0) len = 0;
+        if (len > (int)sizeof reply) len = (int)sizeof reply;
+        if ((std::size_t)len < sizeof reply) {
+            const int suffix = live_pot_status_suffix(reply + len, sizeof reply - (std::size_t)len, pot0, pot1);
+            if (suffix > 0) len += suffix;
+        }
         if (len > (int)sizeof reply) len = (int)sizeof reply;
         sendto(rs, reply, len, 0, (struct sockaddr*)&src, sl);
     }
