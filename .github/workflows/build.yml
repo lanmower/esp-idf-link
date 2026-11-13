@@ -169,3 +169,6 @@ jobs:
 
       - name: Link origin realign witness
         run: bash tools/link-origin-realign-witness.sh
+
+      - name: Link peer endpoint relearn witness
+        run: bash tools/link-peer-endpoint-relearn-witness.sh

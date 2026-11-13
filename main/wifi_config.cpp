@@ -21,6 +21,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "link_peer_endpoint_guard.h"
+#include "main.h"
 
 static const ip4_addr_t LINK_DISCOVERY_MULTICAST_GROUP = {
     .addr = PP_HTONL(LWIP_MAKEU32(LINK_MCAST_OCTET_A, LINK_MCAST_OCTET_B,
@@ -535,6 +537,21 @@ static void capture_announce_fields(const uint8_t* d, unsigned len)
     }
 }
 
+static bool link_peer_endpoint_on_sta_subnet(uint32_t mepIp, uint32_t* subnetHost, uint32_t* maskHost)
+{
+    esp_netif_ip_info_t info = {};
+    if (!g_sta_netif || esp_netif_get_ip_info(g_sta_netif, &info) != ESP_OK || info.ip.addr == 0)
+        return false;
+    const uint32_t staIpHost = ntohl(info.ip.addr);
+    if (mepIp == 0 || mepIp == staIpHost) return false;
+    const uint32_t mepNetwork = htonl(mepIp);
+    const uint32_t staNetwork = info.ip.addr & info.netmask.addr;
+    if ((mepNetwork & info.netmask.addr) != staNetwork) return false;
+    *subnetHost = ntohl(staNetwork);
+    *maskHost = ntohl(info.netmask.addr);
+    return true;
+}
+
 extern "C" void wifi_link_ping_rx(unsigned srcip, unsigned srcport, unsigned mtype, unsigned len)
 {
     g_link_ping_rx = g_link_ping_rx + 1;
@@ -630,6 +647,20 @@ extern "C" void wifi_link_rx_datagram(unsigned srcip, unsigned srcport, unsigned
     }
     g_link_rx_last_type = (unsigned)data[8] | ((unsigned)data[9] << 8);
     capture_announce_fields(data, len);
+    static LinkPeerEndpointWatch s_peer_endpoint_watch;
+    uint32_t subnetHost = 0;
+    uint32_t maskHost = 0;
+    const uint32_t mepIp = g_link_peer_mep_ip;
+    const uint16_t mepPort = (uint16_t)g_link_peer_mep_port;
+    if (mepIp != 0 && mepPort != 0 &&
+        link_peer_endpoint_on_sta_subnet(mepIp, &subnetHost, &maskHost) &&
+        s_peer_endpoint_watch.observe(mepIp, mepPort, esp_timer_get_time(),
+                                      subnetHost, maskHost)) {
+        ESP_LOGI(TAG, "Link peer measurement endpoint changed to %u.%u.%u.%u:%u -- resetting Link session",
+                 (mepIp >> 24) & 0xff, (mepIp >> 16) & 0xff,
+                 (mepIp >> 8) & 0xff, mepIp & 0xff, mepPort);
+        link_request_session_reset();
+    }
 }
 
 extern "C" void wifi_link_rx_note(unsigned kind, unsigned srcip, unsigned srcport)
