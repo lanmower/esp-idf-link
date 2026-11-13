@@ -19,3 +19,10 @@ Phase A / link-measurement-timer-pacing:
 - tools/link-measurement-timer-witness.sh | host witness runner | witness: bash tools/link-measurement-timer-witness.sh
 - .github/workflows/build.yml | host-witness step | witness: gh run list --commit <pushed-sha>
 - /dev/ttyUSB0 | one flash and joined-state verification | witness: esptool Hash of data verified, console peers=1, Pi telemetry synced=true
+
+Phase A / link-measurement-esp-timer:
+
+- components/link-esp/link/include/ableton/platforms/asio/AsioTimer.hpp | ESP esp_timer one-shot for 250 ms pings | witness: bash tools/link-measurement-timer-witness.sh
+- tools/link-measurement-timer-parity.py | parity guard that fails on Asio-only timer code | witness: bash tools/link-measurement-timer-witness.sh
+- .github/workflows/build.yml | CI build of the ESP timer branch | witness: gh run view <build-run-id>
+- /dev/ttyUSB0 | one flash and joined-state verification | witness: esptool Hash of data verified, console peers=1, Pi telemetry synced=true
