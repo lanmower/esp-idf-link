@@ -41,3 +41,7 @@ Phase A / live-pot-status:
 - AGENTS.md | status table updated | witness: bash tools/live-pot-status-witness.sh
 - .github/workflows/build.yml | host-witness step | witness: gh run list --commit <pushed-sha>
 - /dev/ttyUSB0 | one flash and UDP 20813 status verification | witness: esptool Hash of data verified, status JSON pot0/pot1
+
+Phase A / link-measurement-pacing-250ms:
+
+- components/link-esp/link/include/ableton/link/Measurement.hpp | 125 ms retry timer, 250 ms ping cadence, pong-reset retry budget | witness: bash tools/link-measurement-pacing-witness.sh

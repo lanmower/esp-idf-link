@@ -176,5 +176,8 @@ jobs:
       - name: Link measurement timer witness
         run: bash tools/link-measurement-timer-witness.sh
 
+      - name: Link measurement pacing witness
+        run: bash tools/link-measurement-pacing-witness.sh
+
       - name: Live pot status witness
         run: bash tools/live-pot-status-witness.sh

@@ -21,6 +21,7 @@
 
 #include <ableton/discovery/Payload.hpp>
 #include <ableton/link/PayloadEntries.hpp>
+#include <ableton/link/MeasurementPacing.hpp>
 #include <ableton/link/PeerState.hpp>
 #include <ableton/link/SessionId.hpp>
 #include <ableton/link/v1/Messages.hpp>
@@ -48,8 +49,11 @@ struct Measurement
   using Callback = std::function<void(std::vector<Point>)>;
   using Micros = std::chrono::microseconds;
 
-  static const std::size_t kNumberDataPoints = 100;
-  static const std::size_t kNumberMeasurements = 12;
+  static const std::size_t kNumberDataPoints = LINK_MEASUREMENT_NUMBER_DATA_POINTS;
+  static const std::size_t kNumberMeasurements = LINK_MEASUREMENT_NUMBER_MEASUREMENTS;
+
+  static_assert(LINK_MEASUREMENT_TIMER_MS * 2 == LINK_MEASUREMENT_PING_CADENCE_MS,
+    "one ping cadence must contain two measurement retry windows");
 
   Measurement(const PeerState& state,
     Callback callback,
@@ -102,7 +106,7 @@ struct Measurement
     void resetTimer()
     {
       mTimer.cancel();
-      mTimer.expires_from_now(std::chrono::milliseconds(250));
+      mTimer.expires_from_now(std::chrono::milliseconds(LINK_MEASUREMENT_TIMER_MS));
       mTimer.async_wait([this](const typename Timer::ErrorCode e) {
         if (!e)
         {
@@ -202,6 +206,7 @@ struct Measurement
           }
           else
           {
+            mMeasurementsStarted = 0;
             resetTimer();
           }
         }
