@@ -178,3 +178,6 @@ jobs:
 
       - name: Live pot status witness
         run: bash tools/live-pot-status-witness.sh
+
+      - name: Pot ADC maximum witness
+        run: bash tools/pot-adc-max-witness.sh

@@ -2,6 +2,7 @@
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
 #include "io_helpers.h"
+#include "pot_adc_scale.h"
 #include "midi_bulk_queue.h"
 #include <cmath>
 #include <algorithm>
@@ -504,7 +505,7 @@ void update_input_state(InputEvent& event)
             const float SMOOTH_FACTOR = 0.5f;
             uint32_t pot_value = last_pot_values[i] * (1.0f - SMOOTH_FACTOR) + adc_reading * SMOOTH_FACTOR;
             last_pot_values[i] = pot_value;
-            int scaled_value = (int)((pot_value * MIDI_VALUE_MAX) / ADC_RAW_MAX);
+            int scaled_value = pot_adc_to_midi(pot_value, ADC_RAW_MAX, MIDI_VALUE_MAX);
             int delta = scaled_value - static_cast<int>(last_smoothed_pot_values[i]);
             if (abs(delta) > MIDI_CC_THRESHOLD) {
                 event.pot_delta[i] = delta;

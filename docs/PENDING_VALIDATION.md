@@ -49,3 +49,14 @@ Phase A / link-measurement-pacing-250ms:
 Phase A / link-measurement-pacing-regression-revert:
 
 - 5fa78fd flashed firmware regressed: 0.286 s/ping vs 0.509 pre-fix, 0.583 s/pong vs 0.524 pre-fix, nodata +93 in 60 s, join ~349.7 s with LRST bounce vs 22.881 s on f748a68; reason = faster ESP pings flood the Pi measurement responder.
+
+Phase A / sidechain-pot-adc-top-clamp:
+
+- main/pot_adc_scale.h | pure ADC-to-MIDI top clamp and rounded scaling | witness: bash tools/pot-adc-max-witness.sh
+- main/io_helpers.cpp | steady-state pot mapping uses the shared scale, both pots reach 127 | witness: bash tools/pot-adc-max-witness.sh
+- tools/pot-adc-max-witness.cpp | host witness: physical maximum reports 127 and 127 yields zero gate note-ons | witness: bash tools/pot-adc-max-witness.sh
+- tools/pot-adc-max-parity.py | parity guard that fails on the old truncating source | witness: bash tools/pot-adc-max-witness.sh
+- tools/pot-adc-max-witness.sh | host witness runner | witness: bash tools/pot-adc-max-witness.sh
+- .github/workflows/build.yml | host-witness step | witness: gh run list --commit <pushed-sha>
+- build/link-idf-example.bin | CI build from the pushed SHA | witness: gh run view <build-run-id>
+- /dev/ttyUSB0 | one flash and Pi-side UDP 20813 pot0=127 verification | witness: esptool Hash of data verified, status JSON pot0=127, peers=1
