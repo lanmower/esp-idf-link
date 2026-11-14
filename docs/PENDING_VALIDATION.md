@@ -45,3 +45,7 @@ Phase A / live-pot-status:
 Phase A / link-measurement-pacing-250ms:
 
 - components/link-esp/link/include/ableton/link/Measurement.hpp | 125 ms retry timer, 250 ms ping cadence, pong-reset retry budget | witness: bash tools/link-measurement-pacing-witness.sh
+
+Phase A / link-measurement-pacing-regression-revert:
+
+- 5fa78fd flashed firmware regressed: 0.286 s/ping vs 0.509 pre-fix, 0.583 s/pong vs 0.524 pre-fix, nodata +93 in 60 s, join ~349.7 s with LRST bounce vs 22.881 s on f748a68; reason = faster ESP pings flood the Pi measurement responder.

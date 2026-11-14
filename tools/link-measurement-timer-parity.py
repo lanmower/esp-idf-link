@@ -29,12 +29,8 @@ if "typename Timer::TimePoint" not in peer:
     failures.append("PeerGateway peer timeout does not use Timer::TimePoint")
 if "std::chrono::system_clock::time_point" in peer:
     failures.append("PeerGateway still uses system_clock::time_point")
-if "#include <ableton/link/MeasurementPacing.hpp>" not in measurement:
-    failures.append("Measurement.hpp does not include the pacing constants")
-if "mTimer.expires_from_now(std::chrono::milliseconds(LINK_MEASUREMENT_TIMER_MS));" not in measurement:
-    failures.append("Measurement no longer arms its ping timer from the pacing constant")
-if "mMeasurementsStarted = 0;" not in measurement:
-    failures.append("an accepted pong does not reset the measurement retry budget")
+if "mTimer.expires_from_now(std::chrono::milliseconds(250));" not in measurement:
+    failures.append("Measurement no longer uses the 250 ms ping timer")
 
 for line in failures:
     print("PARITY FAIL: " + line)
